@@ -1,5 +1,20 @@
 # Milestone report
 
+## Roadmap change: optional Tiger Brokers API, read-only (2026-10-04, owner-approved)
+
+**Tiger Brokers OpenAPI** is now an optional provider, used read-only. Spec: §1.3, §2.2 S4/S6/**new S8**, §4, §7, §8, §9, §10, §11 (M5 and M8 rows).
+
+- **M5: holdings sync.** It's opt-in (`holdings_source: tiger`). It imports positions in the strategy universe only (QTUM + pure-plays). Sleeve cash stays manual. If a sync fails, the last snapshot is kept with a stale banner. Manual entry remains the default.
+- **M8: implied volatility from Tiger option chains** if configured, otherwise from yfinance.
+- **Unchanged:** the intelligence phase's inputs. Tiger has no news, fundamentals or short-interest data (`get_short_interest` is marked "Currently Unavailable" in its docs).
+- **Safety (S8):**
+  - The key can place orders, so only `providers/tiger.py` may import `tigeropen`, and only through an allow-list of read calls.
+  - A lint check bans order methods and stray imports.
+  - Credentials go to the worker only.
+  - Positions and the account number never reach prompts or logs.
+  - If Tiger offers a read-only key scope, M5 will use it.
+- **Dependency:** `tigeropen` (Apache-2.0) is approved. The API is free with a funded account; real-time quotes are a paid add-on and aren't needed.
+
 ## Roadmap change: Portfolio phase added (2026-10-04, owner-approved)
 
 Two new milestones go **straight after M3**, before the intelligence phase. Both cost $0 in LLM spend. Spec: §1.1, §1.3, §2.2 S2, §6.5, §6.6, §7, §8, §9, §11 of `AETHER_BUILD_PROMPT.md`.
