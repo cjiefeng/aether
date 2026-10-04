@@ -20,7 +20,7 @@ RANGES: dict[str, int] = {"1m": 30, "3m": 91, "6m": 182, "1y": 365, "2y": 730}
 DEFAULT_RANGE = "1y"
 BASKET = "Pure-play basket"
 
-# Freshness. A stand-in for a holiday calendar until M7 brings exchange_calendars.
+# Freshness. A stand-in for a holiday calendar until M9 brings exchange_calendars.
 PRICES_JOB_MAX_AGE = timedelta(hours=30)
 SYMBOL_MAX_LAG_DAYS = 4
 HOLDINGS_MAX_LAG_DAYS = 4

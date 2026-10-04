@@ -1,5 +1,41 @@
 # Milestone report
 
+## Roadmap change: Portfolio phase added (2026-10-04, owner-approved)
+
+Two new milestones go **straight after M3**, before the intelligence phase. Both cost $0 in LLM spend. Spec: §1.1, §1.3, §2.2 S2, §6.5, §6.6, §7, §8, §9, §11 of `AETHER_BUILD_PROMPT.md`.
+
+- **M4: Backtest lab + model strategies.** Walk-forward backtests of rule-based QTUM-core + pure-play strategies; full risk/return metric set (CAGR, vol, downside deviation, max DD, VaR/CVaR95, Sharpe, Sortino, Calmar, alpha/beta vs QQQ and QTUM, capture, turnover); one recommended model strategy per profile (safe / medium / aggressive); Strategies page.
+- **M5: Password, holdings & rebalance.** Site-wide password login; Holdings page (saved via the command queue); deterministic rebalance plan toward the selected profile, with daily caps and a no-trade band so targets stay stable unless a materiality-≥4 event or a market-wide shock overrides them.
+
+**Owner decisions**
+1. The pages present **model strategies**, with the "not financial advice" footer.
+2. **No cash or T-bill sleeve.** A safer profile means more QTUM. Banner: "Backtest for reference only. Historical returns are not future gains."
+3. **Backtests use dividend-adjusted (total-return) prices.** This revisits M1 decision 2 for backtests only; `prices_daily` stays split-adjusted.
+4. **No IP allow-list; add a password page** instead. This amends S2 ("no login").
+5. **numpy becomes a declared dependency.** No scipy.
+6. **Profile limits and stability settings** are the proposed defaults in §6.5 and §6.6, kept in `config/strategies.yaml` for review.
+
+**Renumbering.** Earlier entries below keep their original numbers.
+
+| Old | New | Milestone |
+|---|---|---|
+| — | **M4** | Backtest lab + model strategies |
+| — | **M5** | Password, holdings & rebalance |
+| M4 | M6 | News & research ingest |
+| M5 | M7 | Classifier |
+| M6 | M8 | Catalysts + market structure |
+| M7 | M9 | Scorecards, reactions, theme (positions drift moved to M5) |
+| M8 | M10 | Conclusions, track record, brief |
+| M9 | M11 | Escalation, ops & deploy |
+
+**Old numbers in code and config.** The comments and docs that used the old numbers (`Makefile`, README, `config/rubric.yaml`, `config/sources.yaml`, `classify/`, `risk/flags.py`, `db/models.py`, `jobs.py`, `market.py`, `ticker.html`) were updated in this change. Only comments and text changed.
+
+**Known limits, shown in the UI:**
+- Only about 2 years of price history (the Massive free-tier limit). QNT and INFQ have much less.
+- The universe is small and concentrated.
+- The risk-free rate is 0.
+- The password travels over plain HTTP on the LAN.
+
 ## M3: Alerts → MVP done (2026-10-04)
 
 Phase 1 (risk watcher MVP, $0 LLM) is complete once you've signed off FACTS.md (checklist below).

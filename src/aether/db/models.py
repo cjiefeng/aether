@@ -374,9 +374,9 @@ earnings_calendar = Table(
     sqlite_with_rowid=False,
 )
 
-# --------------------------------------------------------------------------- events (M2 → M5)
-# EDGAR filings are the first event origin (deterministic RISK rules, spec §5.2 step 1). M4 adds
-# RSS/web-search events and M5 LLM classifications to the same tables.
+# --------------------------------------------------------------------------- events (M2 → M7)
+# EDGAR filings are the first event origin (deterministic RISK rules, spec §5.2 step 1). M6 adds
+# RSS/web-search events and M7 LLM classifications to the same tables.
 
 EVENT_CLASSES = ("SIGNAL", "NOISE", "RISK")
 EVENT_CATEGORIES = (
