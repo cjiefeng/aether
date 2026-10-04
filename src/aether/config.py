@@ -6,19 +6,13 @@ commentary cannot sneak into config (and from there into prompts).
 
 from __future__ import annotations
 
-import ipaddress
 from decimal import Decimal
-from functools import cached_property
 from pathlib import Path
 from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
-
-DEFAULT_ALLOWED_CIDRS = "127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
 
 class Settings(BaseSettings):
@@ -29,10 +23,6 @@ class Settings(BaseSettings):
     db_path: Path = Field(default=Path("data/aether.db"), validation_alias="AETHER_DB_PATH")
     config_dir: Path = Field(default=Path("config"), validation_alias="AETHER_CONFIG_DIR")
     bind: str = Field(default="0.0.0.0:8000", validation_alias="AETHER_BIND")
-    allowed_cidrs_raw: str = Field(
-        default=DEFAULT_ALLOWED_CIDRS, validation_alias="AETHER_ALLOWED_CIDRS"
-    )
-    trusted_proxy: str | None = Field(default=None, validation_alias="AETHER_TRUSTED_PROXY")
     csrf_secret: SecretStr | None = Field(default=None, validation_alias="AETHER_CSRF_SECRET")
     log_level: str = Field(default="INFO", validation_alias="AETHER_LOG_LEVEL")
     command_rate_limit_per_hour: int = Field(
@@ -58,7 +48,6 @@ class Settings(BaseSettings):
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
 
     @field_validator(
-        "trusted_proxy",
         "csrf_secret",
         "anthropic_api_key",
         "classifier_model",
@@ -75,23 +64,6 @@ class Settings(BaseSettings):
         # docker compose passes unset vars as "" — treat them as absent.
         return None if v == "" else v
 
-    @field_validator("allowed_cidrs_raw")
-    @classmethod
-    def _validate_cidrs(cls, v: str) -> str:
-        parse_cidrs(v)
-        return v
-
-    @field_validator("trusted_proxy")
-    @classmethod
-    def _validate_proxy(cls, v: str | None) -> str | None:
-        if v is not None:
-            ipaddress.ip_address(v)
-        return v
-
-    @cached_property
-    def allowed_cidrs(self) -> tuple[IPNetwork, ...]:
-        return parse_cidrs(self.allowed_cidrs_raw)
-
     @property
     def resolved_backup_dir(self) -> Path:
         return self.backup_dir or self.db_path.parent / "backups"
@@ -100,13 +72,6 @@ class Settings(BaseSettings):
     def bind_host_port(self) -> tuple[str, int]:
         host, _, port = self.bind.rpartition(":")
         return host or "0.0.0.0", int(port)  # noqa: S104
-
-
-def parse_cidrs(raw: str) -> tuple[IPNetwork, ...]:
-    nets = tuple(ipaddress.ip_network(p.strip(), strict=True) for p in raw.split(",") if p.strip())
-    if not nets:
-        raise ValueError("AETHER_ALLOWED_CIDRS must contain at least one network")
-    return nets
 
 
 # --------------------------------------------------------------------------- YAML config

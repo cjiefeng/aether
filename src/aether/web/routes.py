@@ -46,6 +46,6 @@ def command_ping(request: Request) -> Response:
     limit = state.settings.command_rate_limit_per_hour
     if count_recent_commands(state.ro_engine) >= limit:
         return HTMLResponse(f"Rate limited: max {limit} commands/hour.", status_code=429)
-    client_ip = str(request.scope.get("state", {}).get("client_ip", "unknown"))
+    client_ip = request.client.host if request.client else "unknown"
     command_id = enqueue_command(state.command_engine, "ping", {}, requested_by=client_ip)
     return HTMLResponse(f"Queued command #{command_id}.", status_code=202)

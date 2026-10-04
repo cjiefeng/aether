@@ -1,10 +1,9 @@
-"""M0 acceptance: CIDR allow-list (403), CSRF (403), rate limit, security headers, health page."""
+"""M0 acceptance: CSRF (403), rate limit, security headers, health page."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from starlette.testclient import TestClient
 
 from aether.config import Settings
@@ -46,56 +45,6 @@ def test_healthz_json(client: TestClient) -> None:
 def test_healthz_503_without_db(tmp_path: Path) -> None:
     with make_client(make_settings(tmp_path / "nope.db")) as c:
         assert c.get("/healthz").status_code == 503
-
-
-# --- S2 network allow-list -------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("ip", ["8.8.8.8", "100.64.0.1", "2001:db8::1", "testclient"])
-def test_outside_allowed_cidrs_is_403(settings: Settings, ip: str) -> None:
-    with make_client(settings, ip=ip) as c:
-        for path in ("/", "/health", "/healthz", "/static/app.css"):
-            r = c.get(path)
-            assert r.status_code == 403, path
-            assert r.headers["x-frame-options"] == "DENY"
-        assert c.post("/commands/ping").status_code == 403
-
-
-@pytest.mark.parametrize(
-    "ip", ["127.0.0.1", "10.1.2.3", "172.20.0.5", "192.168.4.38", "::ffff:192.168.1.7"]
-)
-def test_inside_allowed_cidrs(settings: Settings, ip: str) -> None:
-    with make_client(settings, ip=ip) as c:
-        assert c.get("/healthz").status_code == 200
-
-
-def test_custom_cidrs(migrated_db: Path) -> None:
-    s = make_settings(migrated_db, allowed_cidrs_raw="192.168.4.0/24")
-    with make_client(s, ip="192.168.4.20") as c:
-        assert c.get("/healthz").status_code == 200
-    with make_client(s, ip="192.168.5.20") as c:
-        assert c.get("/healthz").status_code == 403
-
-
-def test_xff_ignored_without_trusted_proxy(settings: Settings) -> None:
-    with make_client(settings, ip="8.8.8.8") as c:
-        assert c.get("/healthz", headers={"X-Forwarded-For": "192.168.1.5"}).status_code == 403
-
-
-def test_xff_spoof_from_lan_cannot_escalate(migrated_db: Path) -> None:
-    s = make_settings(migrated_db, trusted_proxy="10.0.0.2")
-    with make_client(s, ip="192.168.1.9") as c:  # not the proxy: header ignored, LAN peer used
-        assert c.get("/healthz", headers={"X-Forwarded-For": "8.8.8.8"}).status_code == 200
-
-
-def test_xff_honoured_from_trusted_proxy(migrated_db: Path) -> None:
-    s = make_settings(migrated_db, trusted_proxy="10.0.0.2")
-    with make_client(s, ip="10.0.0.2") as c:
-        # right-most hop is what the proxy saw; a client-supplied left entry is ignored
-        h_bad = {"X-Forwarded-For": "192.168.1.5, 8.8.8.8"}
-        h_ok = {"X-Forwarded-For": "8.8.8.8, 192.168.1.5"}
-        assert c.get("/healthz", headers=h_bad).status_code == 403
-        assert c.get("/healthz", headers=h_ok).status_code == 200
 
 
 # --- S2 CSRF + rate limit --------------------------------------------------------------------

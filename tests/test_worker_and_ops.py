@@ -84,6 +84,7 @@ def test_backup_is_consistent_and_private(
         con.close()
 
 
+@pytest.mark.filterwarnings("ignore:A test tried to use socket")
 def test_network_is_blocked() -> None:
     with pytest.raises(Exception, match=r"(?i)socket"):
         socket.create_connection(("example.com", 80), timeout=1)

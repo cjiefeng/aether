@@ -24,3 +24,6 @@ Start every session by reading this file, `AETHER_BUILD_PROMPT.md` (the spec), `
 
 ## Milestone close-out
 Tests green, `make lint` clean, `make secrets-scan` clean, README updated, a MILESTONE_REPORT.md entry (built / decisions / open questions / facts / owner checklist), then commit, push and stop.
+
+## Deploy
+`./deploy.sh` (not a make target) fast-forwards to `origin/main` and runs `docker compose up -d --build --wait`. There's no IP allow-list (removed by the owner); the dashboard relies on the LAN boundary + CSRF.

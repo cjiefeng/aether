@@ -1,4 +1,4 @@
-"""S2: security headers on every response, including 403s from the allow-list."""
+"""S2: security headers on every response, including error responses."""
 
 from __future__ import annotations
 

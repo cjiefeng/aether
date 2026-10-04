@@ -45,18 +45,11 @@ def test_sources_tiers() -> None:
     assert src.tier_for("random-blog.example") == "T3"
 
 
-def test_settings_reject_bad_cidrs() -> None:
-    with pytest.raises(ValidationError):
-        Settings(allowed_cidrs_raw="192.168.1.1/24")  # host bits set
-    with pytest.raises(ValidationError):
-        Settings(allowed_cidrs_raw="")
-
-
 def test_settings_empty_env_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
-    monkeypatch.setenv("AETHER_TRUSTED_PROXY", "")
+    monkeypatch.setenv("SEC_USER_AGENT", "")
     s = Settings()
-    assert s.anthropic_api_key is None and s.trusted_proxy is None
+    assert s.anthropic_api_key is None and s.sec_user_agent is None
 
 
 def test_secrets_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:

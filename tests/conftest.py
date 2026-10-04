@@ -10,14 +10,14 @@ import pytest
 from sqlalchemy import Engine
 from starlette.testclient import TestClient
 
-from aether.config import DEFAULT_ALLOWED_CIDRS, Settings
+from aether.config import Settings
 from aether.db import migrate
 from aether.db.engine import ensure_db_file, make_ro_engine, make_rw_engine
 from aether.web.app import create_app
 
 REPO = Path(__file__).resolve().parent.parent
 CONFIG_DIR = REPO / "config"
-LAN_IP = "192.168.1.10"
+LAN_IP = "192.168.1.10"  # synthetic client address
 
 
 @pytest.fixture
@@ -50,8 +50,6 @@ def make_settings(db_path: Path, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "db_path": db_path,
         "config_dir": CONFIG_DIR,
-        "allowed_cidrs_raw": DEFAULT_ALLOWED_CIDRS,
-        "trusted_proxy": None,
         "csrf_secret": "x" * 32,  # synthetic, low-entropy test value
         "command_rate_limit_per_hour": 10,
     }

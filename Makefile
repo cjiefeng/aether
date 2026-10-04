@@ -7,27 +7,13 @@ GITLEAKS_IMAGE := ghcr.io/gitleaks/gitleaks:v8.30.1
 GITLEAKS := docker run --rm -v "$(CURDIR):/repo" -w /repo $(GITLEAKS_IMAGE)
 PIP_AUDIT := pip-audit==2.9.0
 
-.PHONY: help up down logs ps build dev-image lock test lint fmt typecheck eval migrate backup \
-        secrets-scan smoke facts check-env hooks record-cassette
+.PHONY: help down logs ps dev-image lock test lint fmt typecheck eval migrate backup \
+        secrets-scan smoke facts hooks record-cassette
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1 | sort | xargs
 
-## --- stack ---------------------------------------------------------------
-check-env:
-	@if [ -f .env ]; then \
-	  perms="$$(ls -l .env | cut -c2-10)"; \
-	  if [ "$$perms" != "rw-------" ]; then \
-	    echo "ERROR: .env must be mode 0600 (is $$perms). Run: chmod 600 .env" >&2; exit 1; \
-	  fi; \
-	fi
-
-build:
-	$(DC) build worker
-
-up: check-env
-	$(DC) up -d --build
-
+## --- stack (deploy/start with ./deploy.sh) --------------------------------
 down:
 	$(DC) down
 

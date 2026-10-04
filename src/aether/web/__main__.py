@@ -20,7 +20,7 @@ def main() -> None:
         create_app(settings),
         host=host,
         port=port,
-        # The CIDR middleware is the only authority on client IPs; never let uvicorn rewrite them.
+        # Never let uvicorn rewrite the client address from X-Forwarded-For.
         proxy_headers=False,
         server_header=False,
         log_level=settings.log_level.lower(),

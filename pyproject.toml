@@ -27,6 +27,7 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML>=6.0",
+    "httpx2>=2.13.1",
 ]
 
 [build-system]
@@ -65,7 +66,4 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-ra --disable-socket --allow-unix-socket"
 pythonpath = ["src", "."]
-filterwarnings = [
-    "error::sqlalchemy.exc.SAWarning",
-    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
-]
+filterwarnings = ["error::sqlalchemy.exc.SAWarning"]
