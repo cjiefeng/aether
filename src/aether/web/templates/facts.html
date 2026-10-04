@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Facts · Aether{% endblock %}
+{% block content %}
+<h1>Facts registry</h1>
+
+<section class="card">
+  <p>Every factual claim seeded into Aether, with its sources and status.
+    Only <span class="badge fact-signed_off">Signed off</span> facts reach LLM prompts as facts; the rest are passed with an UNCONFIRMED label.</p>
+  <p>
+    {% for key, label in labels.items() %}
+      <span class="badge fact-{{ key }}">{{ label }}</span> {{ counts[key] }}{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </p>
+  <p class="muted small">To sign off: review each claim against its sources, set <code>status: signed_off</code> in
+    <code>config/facts.yaml</code>, run <code>make facts</code> (regenerates FACTS.md), commit through a PR and deploy.
+    The worker syncs the registry at startup. This page is read-only.</p>
+</section>
+
+{% if facts %}
+{% for f in facts %}
+<section class="card" id="{{ f.id }}">
+  <div class="card-head">
+    <h2><code>{{ f.id }}</code></h2>
+    <span class="badge fact-{{ f.status }}">{{ labels[f.status] }}</span>
+  </div>
+  <p>{{ f.claim }}</p>
+  <table class="compact">
+    <tr><th>Sources</th><td>
+      {% for u in f.sources %}<div>{{ u|extlink(u) }}</div>{% else %}<span class="bad">No source</span>{% endfor %}
+    </td></tr>
+    <tr><th>Retrieved</th><td>{{ f.retrieved_at or "—" }}</td></tr>
+    {% if f.notes %}<tr><th>Notes</th><td>{{ f.notes }}</td></tr>{% endif %}
+    {% if f.open_question %}<tr><th>Open question</th><td class="warn">{{ f.open_question }}</td></tr>{% endif %}
+  </table>
+</section>
+{% endfor %}
+<p class="muted small">Synced from <code>config/facts.yaml</code> at {{ facts[0].synced_at }}.</p>
+{% else %}
+<p class="banner stale">No facts synced yet. The worker loads <code>config/facts.yaml</code> at startup.</p>
+{% endif %}
+{% endblock %}

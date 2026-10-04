@@ -190,6 +190,26 @@ class Rubric(_Strict):
         return v
 
 
+class AlertsConfig(_Strict):
+    """`config/alerts.yaml`: what reaches Telegram (M3). Numbers only."""
+
+    risk_event_min_materiality: Materiality
+    # Only events published this recently alert, so a backfill never floods the chat.
+    event_lookback_days: int = Field(gt=0, le=30)
+    reminder_days: tuple[int, ...] = Field(min_length=1)  # lock-up / earnings T-N reminders
+    job_failing_hours: int = Field(gt=0)
+    pending_expiry_hours: int = Field(gt=0)
+    max_attempts: int = Field(ge=1)
+    max_sends_per_run: int = Field(ge=1)
+
+    @field_validator("reminder_days")
+    @classmethod
+    def _reminders(cls, v: tuple[int, ...]) -> tuple[int, ...]:
+        if any(d < 0 for d in v) or len(set(v)) != len(v):
+            raise ValueError("reminder_days must be distinct, non-negative day counts")
+        return tuple(sorted(v, reverse=True))
+
+
 def _load_yaml(path: Path) -> object:
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -205,6 +225,10 @@ def load_sources(config_dir: Path) -> Sources:
 
 def load_rubric(config_dir: Path) -> Rubric:
     return Rubric.model_validate(_load_yaml(config_dir / "rubric.yaml"))
+
+
+def load_alerts_config(config_dir: Path) -> AlertsConfig:
+    return AlertsConfig.model_validate(_load_yaml(config_dir / "alerts.yaml"))
 
 
 def get_settings() -> Settings:

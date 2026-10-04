@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Alerts · Aether{% endblock %}
+{% block content %}
+<h1>Alerts</h1>
+
+<section class="card">
+  <h2>Delivery</h2>
+  {% if not delivery.last_run %}
+    <p class="banner stale">The alerts job hasn't run yet.</p>
+  {% elif delivery.channel == "telegram" %}
+    <p>Telegram (owner-only private chat). Last run {{ delivery.last_run }}: <span class="{{ 'ok' if delivery.status == 'ok' else 'bad' }}">{{ delivery.status }}</span>.</p>
+  {% else %}
+    <p class="banner stale">Dashboard only: Telegram is off{% if delivery.note %} ({{ delivery.note }}){% endif %}. Last run {{ delivery.last_run }}.</p>
+  {% endif %}
+  {% if delivery.channel == "telegram" and delivery.note %}<p class="bad">{{ delivery.note }}</p>{% endif %}
+  <p class="muted small">RISK events (materiality ≥ threshold in <code>config/alerts.yaml</code>), insider-selling clusters,
+    lock-up and earnings reminders (T−7, T−1) and jobs failing for more than 24h. Each alert fires once (dedupe key).</p>
+  <button hx-post="/commands/test-alert" hx-target="#test-result" hx-swap="innerHTML">Send test alert</button>
+  <span id="test-result"></span>
+</section>
+
+<section class="card">
+  <h2>Recent alerts</h2>
+  {% include "_alerts.html" %}
+</section>
+{% endblock %}

@@ -82,6 +82,11 @@
 </section>
 
 <section class="card">
+  <div class="card-head"><h2>Recent alerts</h2><a href="/alerts">All alerts</a></div>
+  {% include "_alerts.html" %}
+</section>
+
+<section class="card">
   <h2>RISK filings, last 30 days</h2>
   {% if risk_events %}
   <table>

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from aether import market, sec_view
+from aether.alerts import view as alerts_view
 from aether.config import load_rubric
 from aether.db import health
 from aether.db.commands import count_recent_commands, enqueue_command
@@ -83,6 +84,7 @@ def overview(request: Request) -> HTMLResponse:
             "flags": open_flags(engine, rubric.risk_flags, today, pure),
             "risk_events": sec_view.recent_events(engine, days=30),
             "sec_fresh": sec_view.sec_freshness(engine),
+            "alerts": alerts_view.recent_alerts(engine, limit=5),
         },
     )
 
@@ -123,6 +125,30 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             "sec": sec,
             "code_labels": sec_view.CODE_LABELS,
         },
+    )
+
+
+@router.get("/alerts", response_class=HTMLResponse)
+def alerts_page(request: Request) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    return _render(
+        request,
+        "alerts.html",
+        {
+            "alerts": alerts_view.recent_alerts(engine, limit=100),
+            "delivery": alerts_view.delivery_status(engine),
+        },
+    )
+
+
+@router.get("/facts", response_class=HTMLResponse)
+def facts_page(request: Request) -> HTMLResponse:
+    rows = alerts_view.facts_rows(request.app.state.ro_engine)
+    counts = {k: sum(1 for f in rows if f.status == k) for k in alerts_view.STATUS_LABELS}
+    return _render(
+        request,
+        "facts.html",
+        {"facts": rows, "counts": counts, "labels": alerts_view.STATUS_LABELS},
     )
 
 
@@ -204,3 +230,8 @@ def command_refresh_prices(request: Request) -> Response:
 @router.post("/commands/refresh-edgar")
 def command_refresh_edgar(request: Request) -> Response:
     return _enqueue(request, "refresh_edgar")
+
+
+@router.post("/commands/test-alert")
+def command_test_alert(request: Request) -> Response:
+    return _enqueue(request, "test_alert")

@@ -1,0 +1,357 @@
+"""What should alert right now (spec M3). Pure reads; nothing here writes or touches the network.
+
+Each candidate carries a stable `dedupe_key`; the outbox (`alerts.dedupe_key UNIQUE`) makes every
+alert fire at most once however often this runs.
+
+- `risk_event:{event_id}`: a non-quarantined RISK event at or above the materiality threshold,
+  published within the lookback window.
+- `insider_cluster:{symbol}:{cluster start}`: ≥N insiders selling within the window (rubric), with
+  a per-symbol cooldown of one window so a sliding cluster doesn't re-alert.
+- `lockup:{accession}:T-{n}` / `earnings:{symbol}:{date}:T-{n}`: the tightest reminder that
+  applies (T-7, then T-1); a missed day still alerts, a late first run doesn't send both.
+- `job_failing:{job}:{first failure}` and later `job_recovered:{job}:{first failure}`.
+
+Message text is plain text built from DB fields; Telegram gets no parse_mode, so nothing in a
+filing title is interpreted.
+"""
+
+from __future__ import annotations
+
+import json
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from typing import Any
+
+from sqlalchemy import Connection, Engine, select
+
+from aether.config import AlertsConfig, RiskFlagParams
+from aether.db.models import (
+    alerts,
+    earnings_calendar,
+    event_classifications,
+    event_tickers,
+    events,
+    facts,
+    filings,
+    job_runs,
+    lockups,
+    tickers,
+)
+from aether.db.types import to_iso
+from aether.providers.prices import US_EASTERN
+from aether.risk.flags import cluster_in_window, load_sales
+
+MAX_TEXT = 4096
+
+
+@dataclass(frozen=True)
+class AlertCandidate:
+    kind: str
+    dedupe_key: str
+    text: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    event_id: int | None = None
+
+
+def _clip(text: str, n: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def us_today(now: datetime) -> date:
+    return now.astimezone(US_EASTERN).date()
+
+
+def reminder_due(days_left: int, reminder_days: tuple[int, ...]) -> int | None:
+    """The tightest T-N reminder that applies (None if the date is further out than every N)."""
+    due = [n for n in reminder_days if days_left <= n]
+    return min(due) if due else None
+
+
+# --------------------------------------------------------------------------- RISK events
+
+
+def risk_events(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[AlertCandidate]:
+    since = to_iso(now - timedelta(days=cfg.event_lookback_days))
+    rows = conn.execute(
+        select(
+            events.c.id,
+            events.c.title,
+            events.c.url,
+            events.c.published_at,
+            events.c.trust_tier,
+            event_classifications.c.category,
+            event_classifications.c.materiality,
+            event_classifications.c.rationale,
+            event_tickers.c.symbol,
+        )
+        .join(event_classifications, event_classifications.c.event_id == events.c.id)
+        .outerjoin(event_tickers, event_tickers.c.event_id == events.c.id)
+        .where(
+            event_classifications.c["class"] == "RISK",
+            event_classifications.c.materiality >= cfg.risk_event_min_materiality,
+            events.c.quarantined == 0,
+            events.c.injection_suspected == 0,
+            events.c.published_at >= since,
+        )
+        .order_by(events.c.published_at, events.c.id)
+    ).all()
+    symbols: dict[int, list[str]] = defaultdict(list)
+    first: dict[int, Any] = {}
+    for r in rows:
+        if r.symbol:
+            symbols[r.id].append(r.symbol)
+        first.setdefault(r.id, r)
+    out = []
+    for eid, r in first.items():
+        syms = ", ".join(sorted(symbols[eid])) or "—"
+        lines = [
+            f"RISK · {syms} · {r.category.replace('_', ' ')} (materiality {r.materiality}/5)",
+            _clip(r.title, 300),
+        ]
+        if r.rationale:
+            lines.append(_clip(r.rationale, 400))
+        lines += [f"Published {r.published_at[:10]} · source tier {r.trust_tier}", r.url]
+        out.append(
+            AlertCandidate(
+                kind="risk_event",
+                dedupe_key=f"risk_event:{eid}",
+                text="\n".join(lines),
+                payload={
+                    "symbols": sorted(symbols[eid]),
+                    "category": r.category,
+                    "materiality": r.materiality,
+                },
+                event_id=eid,
+            )
+        )
+    return out
+
+
+# --------------------------------------------------------------------------- insider clusters
+
+
+def insider_clusters(engine: Engine, params: RiskFlagParams, now: datetime) -> list[AlertCandidate]:
+    # Own connections, never nested: the worker's engine begins every transaction IMMEDIATE.
+    today = us_today(now)
+    window = params.insider_cluster_window_days
+    cooldown_since = to_iso(now - timedelta(days=window))
+    with engine.connect() as conn:
+        syms = list(
+            conn.execute(
+                select(tickers.c.symbol).where(tickers.c.type == "pure_play", tickers.c.active == 1)
+            ).scalars()
+        )
+        cooling = {
+            key.split(":")[1]
+            for key in conn.execute(
+                select(alerts.c.dedupe_key).where(
+                    alerts.c.kind == "insider_cluster", alerts.c.created_at >= cooldown_since
+                )
+            ).scalars()
+        }
+    out = []
+    for sym in syms:
+        if sym in cooling:
+            continue
+        c = cluster_in_window(
+            load_sales(engine, sym, today - timedelta(days=window)),
+            today,
+            window,
+            params.insider_cluster_min_insiders,
+        )
+        if c is None:
+            continue
+        names = _clip(", ".join(c.insiders), 600)
+        out.append(
+            AlertCandidate(
+                kind="insider_cluster",
+                dedupe_key=f"insider_cluster:{sym}:{c.start.isoformat()}",
+                text="\n".join(
+                    [
+                        f"RISK · {sym} · insider selling cluster",
+                        f"{c.n_insiders} insiders sold {c.shares:,} shares between "
+                        f"{c.start.isoformat()} and {c.end.isoformat()} "
+                        f"({c.plan_sales} of {c.sales} sales under 10b5-1 plans).",
+                        f"Insiders: {names}",
+                        "Source: SEC Form 4 filings (T1)",
+                    ]
+                ),
+                payload={"symbol": sym, "start": c.start.isoformat(), "end": c.end.isoformat()},
+            )
+        )
+    return out
+
+
+# --------------------------------------------------------------------------- reminders
+
+
+def _fact_status_for(conn: Connection, url: str) -> tuple[str, str] | None:
+    """(fact id, status) of a registry fact citing this URL, if any (lock-up gating)."""
+    for fid, srcs, status in conn.execute(select(facts.c.id, facts.c.source_urls, facts.c.status)):
+        if url in json.loads(srcs):
+            return fid, status
+    return None
+
+
+def lockup_reminders(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[AlertCandidate]:
+    today = us_today(now)
+    out = []
+    for r in conn.execute(
+        select(
+            lockups.c.accession,
+            lockups.c.symbol,
+            lockups.c.prospectus_date,
+            lockups.c.lockup_days,
+            lockups.c.expiry_date,
+            lockups.c.early_release_possible,
+            filings.c.form,
+            filings.c.url,
+        )
+        .join(filings, filings.c.accession == lockups.c.accession)
+        .where(lockups.c.expiry_date >= today.isoformat())
+    ).all():
+        days_left = (date.fromisoformat(r.expiry_date) - today).days
+        n = reminder_due(days_left, cfg.reminder_days)
+        if n is None:
+            continue
+        fact = _fact_status_for(conn, r.url)
+        if fact is None:
+            fact_line = "Not in the facts registry: derived from the prospectus text only."
+        elif fact[1] == "signed_off":
+            fact_line = f"Fact {fact[0]}: signed off."
+        else:
+            fact_line = f"Fact {fact[0]}: UNCONFIRMED ({fact[1]}); owner sign-off pending."
+        lines = [
+            f"RISK · {r.symbol} · lock-up expiry in {days_left} day(s): {r.expiry_date}",
+            f"{r.lockup_days}-day lock-up from the {r.form} dated {r.prospectus_date}."
+            + (" The underwriters may release shares early." if r.early_release_possible else ""),
+            "Lock-ups usually end at the open of the next trading day.",
+            fact_line,
+            r.url,
+        ]
+        out.append(
+            AlertCandidate(
+                kind="lockup_reminder",
+                dedupe_key=f"lockup:{r.accession}:T-{n}",
+                text="\n".join(lines),
+                payload={"symbol": r.symbol, "expiry_date": r.expiry_date, "reminder": n},
+            )
+        )
+    return out
+
+
+def earnings_reminders(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[AlertCandidate]:
+    today = us_today(now)
+    out = []
+    for sym, d, source in conn.execute(
+        select(earnings_calendar.c.symbol, earnings_calendar.c.date, earnings_calendar.c.source)
+        .where(
+            earnings_calendar.c.status == "scheduled",
+            earnings_calendar.c.date >= today.isoformat(),
+        )
+        .order_by(earnings_calendar.c.date)
+    ).all():
+        days_left = (date.fromisoformat(d) - today).days
+        n = reminder_due(days_left, cfg.reminder_days)
+        if n is None:
+            continue
+        out.append(
+            AlertCandidate(
+                kind="earnings_reminder",
+                dedupe_key=f"earnings:{sym}:{d}:T-{n}",
+                text="\n".join(
+                    [
+                        f"Earnings · {sym} · scheduled {d} (in {days_left} day(s))",
+                        f"Source: {source} calendar (unofficial; confirm on the company IR site).",
+                    ]
+                ),
+                payload={"symbol": sym, "date": d, "reminder": n},
+            )
+        )
+    return out
+
+
+# --------------------------------------------------------------------------- job health
+
+
+def job_health(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[AlertCandidate]:
+    cutoff = now - timedelta(hours=cfg.job_failing_hours)
+    runs: dict[str, list[Any]] = defaultdict(list)
+    for r in conn.execute(
+        select(job_runs.c.job, job_runs.c.status, job_runs.c.started_at, job_runs.c.error)
+        .where(job_runs.c.status != "running")
+        .order_by(job_runs.c.id)
+    ).all():
+        runs[r.job].append(r)
+
+    out: list[AlertCandidate] = []
+    for job, rs in sorted(runs.items()):
+        last_ok = max((i for i, r in enumerate(rs) if r.status == "ok"), default=-1)
+        failures = rs[last_ok + 1 :]
+        if not failures:
+            continue
+        first = failures[0].started_at
+        if datetime.fromisoformat(first) > cutoff:
+            continue
+        err = _clip(failures[-1].error or "no error recorded", 300)
+        out.append(
+            AlertCandidate(
+                kind="job_failing",
+                dedupe_key=f"job_failing:{job}:{first}",
+                text="\n".join(
+                    [
+                        f"Ops · job {job} failing for more than {cfg.job_failing_hours}h",
+                        f"Failing since {first}: {len(failures)} failed run(s), no successful "
+                        "run since.",
+                        f"Last error: {err}",
+                        "Dashboard data from this job is stale.",
+                    ]
+                ),
+                payload={"job": job, "first_failure": first},
+            )
+        )
+
+    # Recovery: a job_failing alert whose job has since completed an ok run.
+    recovered = set(
+        conn.execute(select(alerts.c.dedupe_key).where(alerts.c.kind == "job_recovered")).scalars()
+    )
+    for payload in conn.execute(
+        select(alerts.c.payload).where(alerts.c.kind == "job_failing")
+    ).scalars():
+        p = json.loads(payload)
+        job, first = p.get("job"), p.get("first_failure")
+        rkey = f"job_recovered:{job}:{first}"
+        if not job or not first or rkey in recovered:
+            continue
+        ok_after = [r for r in runs.get(job, []) if r.status == "ok" and r.started_at > first]
+        if ok_after:
+            out.append(
+                AlertCandidate(
+                    kind="job_recovered",
+                    dedupe_key=rkey,
+                    text=f"Ops · job {job} recovered: ok run at {ok_after[0].started_at} "
+                    f"(failing since {first}).",
+                    payload={"job": job, "first_failure": first},
+                )
+            )
+    return out
+
+
+def collect(
+    engine: Engine, cfg: AlertsConfig, params: RiskFlagParams, now: datetime
+) -> list[AlertCandidate]:
+    with engine.connect() as conn:
+        out = [
+            *risk_events(conn, cfg, now),
+            *lockup_reminders(conn, cfg, now),
+            *earnings_reminders(conn, cfg, now),
+            *job_health(conn, cfg, now),
+        ]
+    out += insider_clusters(engine, params, now)
+    return [c if len(c.text) <= MAX_TEXT else _truncate(c) for c in out]
+
+
+def _truncate(c: AlertCandidate) -> AlertCandidate:
+    return AlertCandidate(c.kind, c.dedupe_key, c.text[: MAX_TEXT - 1] + "…", c.payload, c.event_id)
