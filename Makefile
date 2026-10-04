@@ -65,7 +65,7 @@ facts:
 	$(DEV) $(UV) python -m aether.facts render
 
 record-cassette:
-	$(DEV) $(UV) python scripts/record_cassette.py "$(NAME)" "$(URL)" --user-agent "$(or $(UA),aether-cassette-recorder)"
+	$(DEV) $(UV) python scripts/record_cassette.py "$(NAME)" "$(URL)" --user-agent "$(or $(UA),aether-cassette-recorder)" $(if $(GZIP),--gzip,)
 
 ## --- security ------------------------------------------------------------
 secrets-scan:

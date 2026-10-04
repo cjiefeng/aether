@@ -74,9 +74,41 @@
 </section>
 
 <section class="card">
+  <h2>Open risk flags</h2>
+  {% if sec_fresh.edgar_stale %}
+  <p class="banner stale">{% if sec_fresh.edgar_last_ok %}SEC filings stale since {{ sec_fresh.edgar_last_ok }}.{% else %}No successful EDGAR run yet.{% endif %}</p>
+  {% endif %}
+  {% include "_flags.html" %}
+</section>
+
+<section class="card">
+  <h2>RISK filings, last 30 days</h2>
+  {% if risk_events %}
+  <table>
+    <thead><tr><th>Date</th><th>Symbol</th><th>Filing</th><th>Category</th><th>Materiality</th></tr></thead>
+    <tbody>
+    {% for e in risk_events %}
+      <tr>
+        <td class="nowrap">{{ e.published_at[:10] }}</td>
+        <td><a href="/t/{{ e.symbol }}">{{ e.symbol }}</a></td>
+        <td>{{ e.url|extlink(e.title) }}</td>
+        <td>{{ e.category|replace("_", " ") }}</td>
+        <td>{{ e.materiality }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endif %}
+  <p class="muted small">Deterministic rules on SEC form types, 8-K items and Form 4 codes (T1 sources).</p>
+</section>
+
+<section class="card">
   <h2>Refresh</h2>
-  <p class="muted">Queue an immediate price fetch (CSRF-protected, rate-limited).</p>
+  <p class="muted">Queue an immediate fetch (CSRF-protected, rate-limited).</p>
   <button hx-post="/commands/refresh-prices" hx-target="#refresh-result" hx-swap="innerHTML">Refresh prices</button>
+  <button hx-post="/commands/refresh-edgar" hx-target="#refresh-result" hx-swap="innerHTML">Refresh SEC filings</button>
   <span id="refresh-result"></span>
 </section>
 {% endblock %}

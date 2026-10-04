@@ -1,5 +1,5 @@
 # Source trust tiers (spec S1). Anything not listed is T3.
-# T1 = SEC EDGAR + each company's own IR domain (IR domains added in M2/M4 once verified).
+# T1 = SEC EDGAR + each company's own IR domain (IR domains are added in M4, with the IR RSS feeds, once verified).
 # T2 = allow-listed industry/financial press (RSS feed URLs added and verified in M4).
 domains:
   - {domain: sec.gov, tier: T1}

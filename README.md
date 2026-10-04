@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M1** (market data). Daily prices for all 13 tickers with a 2-year backfill, a daily QTUM holdings snapshot and an Overview page with price charts. There are no filings or LLM usage yet.
+Status: **M2** (SEC EDGAR + deterministic risk). M1's prices and QTUM holdings, plus SEC filings, Form 4 insider trades, XBRL fundamentals, capital structure, lock-ups, earnings dates, deterministic RISK rules and open risk flags on the dashboard. There's no LLM usage yet.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -22,7 +22,8 @@ Only **Docker** (with Compose v2), **make** and **git**. Python, uv, the linters
 ```bash
 cp .env.example .env
 chmod 600 .env          # deploy.sh refuses to start if .env is readable by others
-# edit .env: MASSIVE_API_KEY (price fallback, free tier) and SEC_USER_AGENT (from M2)
+# edit .env: SEC_USER_AGENT="Your Name you@example.com" (required for EDGAR) and
+#            MASSIVE_API_KEY (price fallback, free tier)
 make hooks              # enable the gitleaks pre-commit hook (runs in Docker)
 ./deploy.sh             # pull latest main, build, start, wait until healthy
 ```
@@ -41,6 +42,26 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
 - **Stooq is not used.** It's the spec's original fallback, but it now serves a bot challenge and disallows crawlers in `robots.txt`.
 - yfinance / Yahoo data is for **personal use only** (S6). Massive's free tier is for individual use.
 
+## SEC EDGAR + deterministic risk (M2)
+
+| Data | Source | When |
+|---|---|---|
+| Filings since 2025-01-01 for the five pure-plays (QTUM is an ETF, so it has none) | SEC `submissions` API (CIKs in `config/watchlist.yaml`) | Every 30 min 21:00–05:00 SGT on US weekdays, 09:00 and 17:00 SGT every day, a startup run if stale, and **Refresh SEC filings** on the Overview |
+| Form 4 insider transactions (code, shares, price, 10b5-1 flag) | Raw ownership XML of each Form 4 | With the filings |
+| Lock-ups (final prospectus 424B4/424B1), ATM programs (424B5/424B2), going-concern language (10-K/10-Q) | Primary-document text, deterministic regex extractors; each stores a ≤600-char excerpt | When a new filing of that form lands |
+| Fundamentals and XBRL-tagged warrants/convertibles | SEC XBRL `companyfacts` | When a new 10-K/10-Q lands (or no fundamentals yet) |
+| Earnings dates | Past: 8-K Item 2.02 filing dates. Upcoming: yfinance calendar | Daily 07:15 SGT |
+
+- **SEC fair access.** Every request carries `SEC_USER_AGENT`, is throttled to 5 req/s (SEC allows 10) and retried with backoff on 429/5xx. The header is only sent to `www.sec.gov` / `data.sec.gov`, and URLs are built from CIK + accession, never taken from payloads. Without `SEC_USER_AGENT` the `edgar` job fails and the dashboard shows "stale since …".
+- **Deterministic rules** (`classify/rules.py`, parameters in `config/rubric.yaml`). Each rule creates an `events` row (origin `edgar`, tier T1) with an `event_classifications` row that records the `rule_id`:
+  - `S-3`/`S-3ASR`/`S-1`/`424B*` → `dilution`
+  - Form 4 open-market sales → `insider_selling` (lower materiality when every sale is under a 10b5-1 plan)
+  - 8-K Item 2.02 → `earnings_release`, 3.02 → `dilution`, 5.02 → `exec_departure`, 3.01 → `delisting_or_compliance`
+  - `NT 10-K/Q` → `delisting_or_compliance`
+  - unhedged going-concern statements → `going_concern`
+- **Open risk flags** (`risk/flags.py`): a lock-up ending within 60 days, an insider-selling cluster (3 or more insiders in 30 days), an ATM program filed in the last year, a shelf filed in the last three years, and going-concern language in the latest periodic report. The M3 alerts will use these.
+- Ingest is idempotent: filings key on accession and events on the filing URL. Each document is fetched once (`filings.parsed`), and form-based events never wait on a document download. Network I/O happens first, then one short write transaction.
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -48,10 +69,15 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
   - A chart comparing QTUM, an equal-weighted pure-play basket, SOXX and QQQ, rebased to 100 on a log scale, with ranges from 1M to 2Y.
   - A ticker table (last close, 1d/30d change, distance from the 52-week high, as-of date, provider).
   - The watchlist's weight in QTUM.
-- `/t/<SYMBOL>`: price and volume chart plus a summary. Filings arrive in M2.
+  - Open risk flags and RISK filings from the last 30 days.
+- `/t/<SYMBOL>`: price and volume chart plus a summary. For pure-plays it also shows:
+  - open risk flags, lock-ups (with the prospectus excerpt) and earnings dates
+  - classified SEC events, a shares-outstanding chart (XBRL) and the capital-structure table
+  - Form 4 insider transactions (10b5-1 badge) and the filings list with each rule hit.
+  All SEC links go to EDGAR.
 - `/health`: DB, schema and last run per job.
 
-Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*` as JSON. There are no inline scripts, so the CSP stays strict.
+Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*` and `/api/dilution/*` as JSON. There are no inline scripts, so the CSP stays strict.
 
 ## Deploying
 
@@ -85,15 +111,19 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `make lock` | Re-resolve `uv.lock` |
 | `make eval` | Classifier evals (from M5) |
 | `make smoke` | Live check against the running stack (never part of acceptance) |
-| `make record-cassette NAME=… URL=…` | Record one live HTTP response as a test fixture (manual) |
+| `make record-cassette NAME=… URL=… [UA=…] [GZIP=1]` | Record one live HTTP response as a test fixture (manual; SEC needs `UA`, large documents use `GZIP=1`) |
 
 ## Layout
 
 ```
 src/aether/
   config.py       env settings + typed YAML loaders (identifiers only; unknown keys rejected)
-  providers/      typed provider interfaces: yfinance, Massive, failover
-  ingest/         prices (backfill/incremental) and QTUM holdings snapshot
+  providers/      typed provider interfaces: yfinance, Massive, failover; SEC EDGAR client
+  ingest/         prices, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar
+  edgar/          pure parsers: submissions, Form 4 XML, filing text extractors, XBRL
+  classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M5)
+  risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
+  sec_view.py     read-side SEC queries for the dashboard
   market.py       read-side computations for the dashboard (basket, rebasing, staleness)
   runs.py         run_job: every job gets a job_runs row
   facts.py        facts registry: status gating, DB sync, FACTS.md rendering
@@ -103,7 +133,7 @@ src/aether/
   jobs.py         APScheduler wiring (Asia/Singapore, max_instances=1)
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
-config/           watchlist.yaml, sources.yaml, facts.yaml
+config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```
 
@@ -111,5 +141,5 @@ tests/            pytest suite; fixtures/cassettes for recorded HTTP
 
 - SQLite lives in the named Docker volume `aether-data` at `/data/aether.db`, which is local disk inside the Docker VM. **Never** put the DB on NFS, SMB or a macOS bind mount, because file locking breaks.
 - Backups land in the same volume (`/data/backups`). Copy them off the machine if you want real disaster recovery.
-- Secrets come from `.env` only (`MASSIVE_API_KEY` included) and are passed to the `worker` service only. The Massive key is sent in an `Authorization` header, never in a URL. `.env`, `config/positions.yaml` and `data/` are git- and docker-ignored.
+- Secrets come from `.env` only (`MASSIVE_API_KEY` and `SEC_USER_AGENT` included) and are passed to the `worker` service only. The Massive key is sent in an `Authorization` header, never in a URL. `.env`, `config/positions.yaml` and `data/` are git- and docker-ignored.
 - If a secret ever leaks: rotate it (Anthropic Console → new key; Telegram `/revoke`), then update `.env`.

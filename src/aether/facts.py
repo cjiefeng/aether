@@ -35,6 +35,7 @@ class Fact(BaseModel):
     retrieved_at: str | None
     status: FactStatus
     notes: str | None = None
+    open_question: str | None = None  # what is still unverified; listed in FACTS.md
 
     @field_validator("sources")
     @classmethod
@@ -126,8 +127,8 @@ def render_markdown(facts: Sequence[Fact]) -> str:
         if f.notes:
             out.append(f"- `{f.id}`: {f.notes}")
     out += ["", "## Open questions", ""]
-    open_qs = [f for f in facts if not f.sources]
-    out += [f"- `{f.id}`: {f.notes or f.claim}" for f in open_qs] or ["- None."]
+    open_qs = [f for f in facts if not f.sources or f.open_question]
+    out += [f"- `{f.id}`: {f.open_question or f.notes or f.claim}" for f in open_qs] or ["- None."]
     out.append("")
     return "\n".join(out)
 

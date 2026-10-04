@@ -4,7 +4,8 @@ STRICT tables accept only INTEGER/REAL/TEXT/BLOB/ANY, so columns use only `Integ
 `Text`, `LargeBinary` and `Micros`. Never use String/Boolean/Float/DateTime here: they render
 VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
-Each milestone adds its own tables plus a migration (M0: infra, M1: market data). Keep this
+Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
+events). Keep this
 file and `migrations/versions/*` in sync (a test compares them).
 """
 
@@ -17,10 +18,13 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     PrimaryKeyConstraint,
     Table,
     Text,
+    UniqueConstraint,
+    text,
 )
 
 from aether.db.types import Micros
@@ -131,8 +135,7 @@ alerts = Table(
     "alerts",
     metadata,
     Column("id", Integer, primary_key=True),
-    # FK to events(id) is added by the migration that creates `events` (M4).
-    Column("event_id", Integer),
+    Column("event_id", Integer, ForeignKey("events.id")),
     Column("kind", Text, nullable=False),
     Column("channel", Text, nullable=False),
     Column("sent_at", Text),
@@ -184,4 +187,302 @@ qtum_holdings = Table(
     CheckConstraint("weight >= -100 AND weight <= 100", name="weight"),
     sqlite_strict=True,
     sqlite_with_rowid=False,
+)
+
+# --------------------------------------------------------------------------- M2: SEC EDGAR
+
+DATE_GLOB = "'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+
+
+def _date_ck(col: str, nullable: bool = False) -> CheckConstraint:
+    expr = f"{col} GLOB {DATE_GLOB}"
+    if nullable:
+        expr = f"{col} IS NULL OR {expr}"
+    return CheckConstraint(expr, name=f"{col}_date")
+
+
+def _excerpt_ck(col: str = "excerpt") -> CheckConstraint:
+    # S6: excerpts only (~500 chars), never full bodies.
+    return CheckConstraint(f"{col} IS NULL OR length({col}) <= 600", name=f"{col}_len")
+
+
+filings = Table(
+    "filings",
+    metadata,
+    Column("accession", Text, primary_key=True),  # 0001234567-26-000123
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("cik", Text, nullable=False),
+    Column("form", Text, nullable=False),
+    Column("filed_at", Text, nullable=False),  # YYYY-MM-DD
+    Column("accepted_at", Text),  # SEC acceptance timestamp, UTC ISO
+    Column("report_date", Text),
+    Column("items", Text, nullable=False, server_default="[]"),  # JSON array, 8-K items
+    Column("primary_doc", Text),
+    Column("primary_doc_description", Text),
+    Column("url", Text, nullable=False),
+    Column("is_xbrl", Integer, nullable=False, server_default="0"),
+    Column("parsed", Text),  # JSON: extractor results; NULL = document not processed (yet)
+    Column("fetched_at", Text, nullable=False),
+    CheckConstraint("accession GLOB '[0-9]*-[0-9][0-9]-[0-9]*'", name="accession_format"),
+    _date_ck("filed_at"),
+    _json_ck("items"),
+    _json_ck("parsed", nullable=True),
+    _bool_ck("is_xbrl"),
+    Index(None, "symbol", "filed_at"),
+    Index(None, "form"),
+    sqlite_strict=True,
+)
+
+insider_txns = Table(
+    "insider_txns",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("accession", Text, ForeignKey("filings.accession"), nullable=False),
+    Column("seq", Integer, nullable=False),  # order within the Form 4
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("insider_cik", Text),
+    Column("insider", Text, nullable=False),
+    Column("role", Text),
+    Column("security", Text),
+    Column("txn_date", Text, nullable=False),
+    Column("code", Text, nullable=False),  # SEC transaction code: S, P, M, F, A, G, ...
+    Column("acquired_disposed", Text),
+    Column("shares", Integer),  # rounded to whole shares
+    Column("price", REAL),
+    Column("is_10b5_1", Integer, nullable=False, server_default="0"),
+    Column("is_derivative", Integer, nullable=False, server_default="0"),
+    UniqueConstraint("accession", "seq"),
+    CheckConstraint("length(code) = 1", name="code_len"),
+    CheckConstraint(
+        "acquired_disposed IS NULL OR acquired_disposed IN ('A','D')", name="acquired_disposed"
+    ),
+    _date_ck("txn_date"),
+    _bool_ck("is_10b5_1"),
+    _bool_ck("is_derivative"),
+    Index(None, "symbol", "txn_date"),
+    sqlite_strict=True,
+)
+
+fundamentals_q = Table(
+    "fundamentals_q",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("period_end", Text, nullable=False),
+    Column("concept", Text, nullable=False),  # "us-gaap:Revenues", "dei:EntityCommon..."
+    Column("period_days", Integer, nullable=False),  # 0 = instant; ~91 = quarter; ~365 = FY
+    Column("value_micros", Micros),  # USD amounts
+    Column("value_int", Integer),  # share counts
+    Column("unit", Text, nullable=False),
+    Column("fy", Integer),
+    Column("fp", Text),
+    Column("form", Text),
+    Column("accession", Text),
+    Column("filed", Text),
+    PrimaryKeyConstraint("symbol", "period_end", "concept", "period_days"),
+    CheckConstraint("(value_micros IS NULL) + (value_int IS NULL) = 1", name="one_value"),
+    CheckConstraint("period_days >= 0", name="period_days"),
+    _date_ck("period_end"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+CAPITAL_INSTRUMENTS = ("convertible", "warrant", "earnout", "atm", "shelf")
+
+capital_structure = Table(
+    "capital_structure",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("as_of", Text, nullable=False),
+    Column("instrument", Text, nullable=False),
+    Column("source_accession", Text, nullable=False),
+    Column("amount_micros", Micros),
+    Column("shares_underlying", Integer),
+    Column("strike_micros", Micros),
+    Column("source", Text, nullable=False),
+    Column("concept", Text),  # XBRL concept when source = 'xbrl'
+    Column("excerpt", Text),
+    PrimaryKeyConstraint("symbol", "as_of", "instrument", "source_accession"),
+    CheckConstraint(
+        "instrument IN (" + ",".join(f"'{i}'" for i in CAPITAL_INSTRUMENTS) + ")",
+        name="instrument",
+    ),
+    CheckConstraint("source IN ('xbrl','filing_text','form')", name="source"),
+    _date_ck("as_of"),
+    _excerpt_ck(),
+    sqlite_strict=True,
+)
+
+lockups = Table(
+    "lockups",
+    metadata,
+    Column("accession", Text, ForeignKey("filings.accession"), primary_key=True),
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("prospectus_date", Text, nullable=False),
+    Column("lockup_days", Integer, nullable=False),
+    Column("expiry_date", Text, nullable=False),
+    Column("early_release_possible", Integer, nullable=False, server_default="0"),
+    Column("excerpt", Text, nullable=False),
+    CheckConstraint("lockup_days BETWEEN 1 AND 1095", name="lockup_days"),
+    _date_ck("prospectus_date"),
+    _date_ck("expiry_date"),
+    _bool_ck("early_release_possible"),
+    _excerpt_ck(),
+    sqlite_strict=True,
+)
+
+earnings_calendar = Table(
+    "earnings_calendar",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("date", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("source", Text, nullable=False),
+    Column("source_url", Text),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("symbol", "date"),
+    CheckConstraint("status IN ('scheduled','reported')", name="status"),
+    CheckConstraint("source IN ('8k_2.02','yfinance')", name="source"),
+    _date_ck("date"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# --------------------------------------------------------------------------- events (M2 → M5)
+# EDGAR filings are the first event origin (deterministic RISK rules, spec §5.2 step 1). M4 adds
+# RSS/web-search events and M5 LLM classifications to the same tables.
+
+EVENT_CLASSES = ("SIGNAL", "NOISE", "RISK")
+EVENT_CATEGORIES = (
+    # SIGNAL
+    "qbi_stage_change",
+    "roadmap_hit",
+    "roadmap_slip",
+    "logical_qubit_milestone",
+    "verified_advantage",
+    "revenue_quality",
+    "contract_with_value",
+    "m_and_a",
+    "earnings_release",
+    # NOISE
+    "physical_qubit_count",
+    "partnership_no_value",
+    "analyst_rating",
+    "synthetic_benchmark",
+    "listicle_or_momentum",
+    # RISK
+    "dilution",
+    "insider_selling",
+    "lockup_expiry",
+    "short_interest_spike",
+    "resource_estimate_shift",
+    "pqc_deadline_change",
+    "exec_departure",
+    "going_concern",
+    "short_report",
+    "guidance_cut",
+    "delisting_or_compliance",
+)
+TRUST_TIERS = ("T1", "T2", "T3")
+
+
+def _in_ck(col: str, values: tuple[str, ...], name: str | None = None) -> CheckConstraint:
+    return CheckConstraint(
+        f"{col} IN (" + ",".join(f"'{v}'" for v in values) + ")", name=name or col
+    )
+
+
+events = Table(
+    "events",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("url_hash", LargeBinary, nullable=False, unique=True),  # sha256(canonical url)
+    Column("simhash", Integer),  # signed 64-bit (db.types.u64_to_i64)
+    Column("title", Text, nullable=False),
+    Column("url", Text, nullable=False),
+    Column("source_domain", Text, nullable=False),
+    Column("trust_tier", Text, nullable=False),
+    Column("independent_source_count", Integer, nullable=False, server_default="1"),
+    Column("published_at", Text, nullable=False),  # UTC ISO
+    Column("excerpt", Text),
+    Column("origin", Text, nullable=False),
+    Column("accession", Text, ForeignKey("filings.accession")),  # origin = 'edgar'
+    Column("injection_suspected", Integer, nullable=False, server_default="0"),
+    Column("quarantined", Integer, nullable=False, server_default="0"),
+    Column("raw", Text, nullable=False, server_default="{}"),
+    Column("created_at", Text, nullable=False),
+    _in_ck("trust_tier", TRUST_TIERS),
+    _in_ck("origin", ("rss", "edgar", "web_search", "manual")),
+    CheckConstraint("independent_source_count >= 1", name="independent_source_count"),
+    _excerpt_ck(),
+    _bool_ck("injection_suspected"),
+    _bool_ck("quarantined"),
+    _json_ck("raw"),
+    Index(None, "published_at"),
+    Index(None, "accession"),
+    sqlite_strict=True,
+)
+
+event_sources = Table(
+    "event_sources",
+    metadata,
+    Column("event_id", Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False),
+    Column("url", Text, nullable=False),
+    Column("domain", Text, nullable=False),
+    Column("trust_tier", Text, nullable=False),
+    PrimaryKeyConstraint("event_id", "url"),
+    _in_ck("trust_tier", TRUST_TIERS),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+event_tickers = Table(
+    "event_tickers",
+    metadata,
+    Column("event_id", Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    PrimaryKeyConstraint("event_id", "symbol"),
+    Index(None, "symbol"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+event_classifications = Table(
+    "event_classifications",
+    metadata,
+    Column(
+        "event_id",
+        Integer,
+        ForeignKey("events.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("class", Text, nullable=False),
+    Column("category", Text, nullable=False),
+    Column("materiality_raw", Integer, nullable=False),
+    Column("materiality", Integer, nullable=False),  # after trust-tier caps
+    Column("direction", Integer, nullable=False),
+    Column("confidence", REAL, nullable=False),
+    Column("rationale", Text),
+    Column("evidence_quote", Text),
+    Column("rule_id", Text),
+    Column("model", Text),
+    Column("prompt_version", Text),
+    Column("created_at", Text, nullable=False),
+    _in_ck("class", EVENT_CLASSES, name="class"),
+    _in_ck("category", EVENT_CATEGORIES),
+    CheckConstraint("materiality_raw BETWEEN 1 AND 5", name="materiality_raw"),
+    CheckConstraint("materiality BETWEEN 1 AND 5", name="materiality"),
+    CheckConstraint("direction IN (-1, 0, 1)", name="direction"),
+    CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence"),
+    CheckConstraint(
+        "rule_id IS NOT NULL OR (model IS NOT NULL AND prompt_version IS NOT NULL)",
+        name="provenance",
+    ),
+    _excerpt_ck("evidence_quote"),
+    Index(None, "class", "materiality"),
+    Index(
+        "ix_event_classifications_materiality_not_noise",
+        "materiality",
+        sqlite_where=text("class != 'NOISE'"),
+    ),
+    sqlite_strict=True,
 )

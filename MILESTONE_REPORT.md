@@ -1,5 +1,110 @@
 # Milestone report
 
+## M2: SEC EDGAR + deterministic risk (2026-10-04)
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Fixture tests flag known S-3/424B/Form 4 for ≥2 tickers | ✅ | `tests/test_ingest_edgar.py::test_ingest_flags_dilution_insiders_and_qnt_lockup` replays recorded SEC responses. `dilution`: QBTS S-3ASR + 424B7, IONQ 424B5, QNT 424B4. `insider_selling`: real Form 4 sales for RGTI and IONQ. The 10b5-1-only sale gets the lower materiality, and a tax-withholding Form 4 (code F) produces no event. |
+| QNT lock-up date extracted from a recorded prospectus fixture | ✅ | `tests/test_edgar_parsers.py::test_qnt_lockup_from_recorded_424b4`: the recorded 424B4 ("Prospectus dated June 3, 2026", "180 days after the date of this prospectus") gives **2026-11-30**, with early release possible. The ingest test checks the `lockups` row and that the 60-day open flag fires on 2026-10-04 but not on 2026-09-01. |
+| Verify every `FACTS.md` seed against its source | ✅ | All 8 facts are now `verified_by_claude`, each with a primary source. Corrections and discrepancies are listed under "Facts" below. |
+| Idempotent re-runs | ✅ | `test_ingest_is_idempotent`: a second run leaves row counts in all six tables unchanged, and parsed documents aren't fetched again. |
+| Tests green, no network | ✅ | `make test`: 183 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 53 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks. The recorded fixtures don't contain the SEC User-Agent (checked with grep). |
+
+### What was built
+- **Schema** (`0003_edgar`, hand-written, every table STRICT):
+  - `filings`, `insider_txns`, `fundamentals_q` (WITHOUT ROWID; PK includes `period_days` so quarter, FY and instant values can share a period end), `capital_structure`, `lockups` and `earnings_calendar` (WITHOUT ROWID).
+  - The event tables `events`, `event_sources`, `event_tickers` (WITHOUT ROWID) and `event_classifications`. The last has CHECKs on class, category (all §5.1 categories), materiality 1–5, direction and confidence, a provenance CHECK (`rule_id` or model + prompt_version), and the §7 partial index `materiality WHERE class != 'NOISE'`.
+  - `alerts.event_id` now has a foreign key to `events.id`, added through a batch rebuild that keeps STRICT.
+- **`providers/edgar.py`**: the SEC client.
+  - Refuses to start without a contact User-Agent, and sends it only to `www.sec.gov` / `data.sec.gov` over https.
+  - Builds URLs from CIK + accession only and validates primary-document names (no traversal).
+  - Throttles to 5 req/s and retries 429/5xx with backoff. A 404 fails immediately.
+- **`edgar/`** (pure parsers):
+  - `submissions.py`: `filings.recent` plus older `files[]` pages.
+  - `form4.py`: stdlib XML, rejects any DTD. Reads the code, A/D, shares (whole shares, half-even rounding), price, the `aff10b5One` flag or a 10b5-1 footnote (a negated footnote doesn't count), and joint filers.
+  - `text.py`: HTML → text, plus the lock-up, going-concern and ATM extractors. Each stores a ≤600-char excerpt and returns nothing rather than guess.
+  - `xbrl.py`: companyfacts → quarter/FY/instant facts (no YTD values) and warrant/convertible rows.
+- **`ingest/edgar.py`** (job `edgar`):
+  - Fetches submissions since 2025-01-01, then documents only for Form 4, 424B4/B1, 424B5/B2 and 10-K/10-Q (at most 400 per run, newest first), then companyfacts when a new periodic report lands.
+  - Writes everything in one `write_tx`.
+  - **Form-based events fire on first sight**, so a failed document download never hides a dilution filing. Parsing adds the Form 4 sales, the going-concern finding and the lock-up excerpt later.
+- **`classify/rules.py` + `config/rubric.yaml`**: form, 8-K item (2.02, 3.01, 3.02, 5.02), Form 4 and going-concern rules. The YAML holds numbers and identifiers only (`extra=forbid`, and a form may appear in only one rule). Titles and rationales are built from filing metadata.
+- **`risk/flags.py`**: open flags for a lock-up within 60 days, an insider cluster (≥3 distinct insiders by CIK in a 30-day window, with the 10b5-1 count), an ATM ≤365 days old, a shelf ≤3 years old, and going concern in the latest 10-K/10-Q.
+- **`ingest/earnings_calendar.py`** (job `earnings_calendar`, 07:15 SGT): reported dates from 8-K Item 2.02 filings and scheduled dates from the yfinance calendar. Future scheduled rows are replaced on every run.
+- **Jobs**:
+  - `edgar` runs every 30 min from 21:00 to 05:00 SGT on US weekdays, and at 09:00 and 17:00 SGT, with a startup catch-up.
+  - A `refresh_edgar` dashboard command (CSRF, rate limit, a lock shared with the cron job, added to the command allow-list).
+- **Dashboard**:
+  - Overview: an "Open risk flags" card and a "RISK filings, last 30 days" card.
+  - Ticker page (pure-plays): flags, lock-ups with the prospectus excerpt, earnings dates, classified SEC events, a shares-outstanding chart (`/api/dilution/<sym>`), the capital-structure table, Form 4 transactions (10b5-1 badge) and the filings list with rule badges.
+  - All EDGAR links go through `extlink`. There's still no inline script or style.
+- **Tooling**: `make record-cassette … UA=… GZIP=1` writes `.json.gz` cassettes (the QNT 424B4 is 4.5 MB of HTML, 410 KB gzipped). `tests/cassettes.py` loads either format.
+
+### Decisions (deviations from the spec)
+1. **The event tables are created in M2**, with EDGAR as the first event origin, instead of in M4/M5. M4 and M5 will extend these tables rather than create them.
+2. **There's a new `lockups` table** (not in §7) so each extracted date carries its excerpt and accession. M6 catalysts will link to it.
+3. **`fundamentals_q` stores either `value_micros` or `value_int`** (a CHECK enforces exactly one), and `period_days` is part of the PK.
+4. **An 8-K with several ruled items gets one classification**: the highest materiality wins, and the other matches are named in the rationale. Item 5.02 covers both departures and appointments; the rule follows the spec (`exec_departure`) at materiality 2.
+5. **Going concern is deliberately conservative.** Only an unhedged "substantial doubt … going concern" sentence counts. Risk-factor boilerplate ("could raise substantial doubt") never does.
+6. **Insider share counts are rounded to whole shares** (half-even), because §7 calls for INTEGER share counts.
+7. **The EDGAR schedule ignores NYSE holidays** until M7 brings an exchange calendar. On a holiday it just makes a few extra polls.
+8. **Rubric materialities are initial values for your review.** Changing `rubric.yaml` doesn't reclassify filings that were already classified, except when their document is parsed again.
+9. **No new dependencies.** XML and HTML parsing use the stdlib, and upcoming earnings dates come from yfinance, which was already a dependency.
+
+### Facts (all 8 checked against primary sources; none signed off)
+- `ionq_revenue_fy2025_guidance_2026` ✅ $130.0M FY2025 (8-K Ex. 99.1, 2026-02-25); FY26 guidance $280–290M, midpoint $285M (8-K Ex. 99.1, 2026-08-05).
+- `ionq_acquire_skywater` ✅ Merger agreement dated 2026-01-25 (8-K Item 1.01). Closing is stated in IonQ's Q2 release.
+- `qnt_ipo` **corrected**: the 424B4 dated 2026-06-03 shows Nasdaq "QNT", 28.0M Class A shares at $60.00, and Honeywell Entities at **47.8%** of voting power (47.0% with the option exercised).
+  - **Discrepancy**: the seed said ≈49.1%.
+  - The ~$14.3B "top of range" market cap predates pricing and isn't in the 424B4, so it was dropped.
+- `qnt_lockup_expiry` **resolved**: 180 days after 2026-06-03 = **2026-11-30**. The underwriters can release shares early.
+- `infq_listing` ✅ De-SPAC with Churchill Capital Corp X, consummated 2026-02-13 (closing 8-K filed 2026-02-17). Trades on the NYSE, with warrants `INFQ WS` at $11.50. Registration-rights holders have a 180-day transfer restriction with a $12.00 VWAP early release.
+- `darpa_qbi_stage_b` ✅ All 11 names match darpa.mil ("as of Nov. 6, 2025").
+- `ibm_roadmap_ftqc` ✅ Matches the IBM blog post (2025-06-10).
+- `pqc_deadlines` **refined**: NIST IR 8547 is still an initial public draft. Its "deprecated after 2030" applies only to 112-bit strength, and everything is "disallowed after 2035". The EU roadmap v1.1 sets high-risk use cases at end-2030 and medium-risk at end-2035 (checked in the roadmap PDF).
+- **New `open_question` field** in `facts.yaml`. FACTS.md lists the open questions.
+
+### Open questions
+- **INFQ earn-out shares**: the closing 8-K doesn't mention any. Read the S-4 / proxy.
+- **SkyWater closing date and consideration**: check IonQ's closing 8-K (Item 2.01).
+- **The exact first day QNT lock-up shares can be sold** (2026-11-30 or 12-01), and any announced early release.
+- **QNT and INFQ don't tag `dei:EntityCommonStockSharesOutstanding` in companyfacts** (seen for QNT), so their shares-outstanding chart uses balance-sheet and weighted-average concepts where tagged. Fully diluted counts are M7.
+- **Company IR domains (T1) are not configured yet.** They arrive with the IR RSS feeds in M4.
+- **Capital-structure extraction from filing text is limited to ATM amounts.** Convertibles, warrants and earn-outs beyond XBRL tags need the M5+ LLM extraction (T1, cross-checked against XBRL), as the spec plans.
+
+### Live check (isolated compose project `aether-m2` on port 8090; your stack wasn't touched)
+- **First EDGAR backfill**: 984 filings since 2025-01-01 across the five pure-plays (IONQ 284, QBTS 307, INFQ 172, RGTI 170, QNT 51). This **matches an independent count** from the raw submissions JSON. 354 documents were parsed with 364 SEC requests in about 90 s, with no parse errors.
+- **Results**:
+  - 627 Form 4 transactions, 452 XBRL facts, 254 rule events: 151 insider_selling, 45 dilution, 29 earnings_release, 26 exec_departure, 3 delisting_or_compliance.
+  - The QNT lock-up is 2026-11-30, and its 60-day flag is open.
+  - ATM programs found, each with a stated size: IONQ $500M (2025-02-27), QBTS $150M (2025-01-10) and $400M (2025-06-10), RGTI $350M (2025-05-30).
+- **Two fixes came out of the live run** (both with tests):
+  - The going-concern extractor had flagged QBTS's FY2024 10-K. That 10-K only *refers back to* earlier disclosures ("we disclosed that there was substantial doubt …"). Retrospective and "alleviated" statements no longer count; the re-run has no going-concern flags.
+  - ATM detection now requires a stated aggregate amount near the at-the-market wording. Base-prospectus boilerplate had produced two ATM rows with no amount.
+- **Rules added after reviewing the pages**:
+  - 8-K Item 3.02 (unregistered equity sale) → `dilution` (materiality 3). QNT's 2026-09-08 8-K (Items 1.01/3.02) was unflagged before this.
+  - Titles no longer repeat the form ("QNT 424B4", not "QNT 424B4 (424B4)").
+- **Pages**: Overview, `/t/QNT` and `/t/RGTI` render (lock-up card, flags, Form 4 table, shares-outstanding chart, filings) with **no console or CSP errors**.
+- **Known first-deploy gap**: the `earnings_calendar` startup run can finish before the first EDGAR backfill, so past (8-K 2.02) dates appear after the next 07:15 run.
+
+### Owner checklist
+- [ ] `SEC_USER_AGENT` is now set in `.env`. **`chmod 600 .env`**: it's currently 0644, and `./deploy.sh` refuses to run until it's fixed.
+- [ ] Review `config/rubric.yaml`: the materiality per form/item, and the thresholds (60-day lock-up window, 3 insiders / 30 days, ATM 365 days, shelf 3 years).
+- [ ] Review FACTS.md, especially the `qnt_ipo` discrepancy (Honeywell 47.8% vs the seed's 49.1%). Sign-off happens at the end of M3.
+- [ ] After merging, run `./deploy.sh`. The worker migrates to `0003_edgar` and backfills EDGAR (a few minutes on the first run).
+
+### How to verify
+```bash
+make test            # 183 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/t/QNT
+```
+
 ## M1: Market data (2026-10-04)
 
 ### Acceptance criteria

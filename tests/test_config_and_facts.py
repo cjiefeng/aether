@@ -57,12 +57,15 @@ def test_secrets_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "synthetic-not-a-real" not in repr(Settings())
 
 
-def test_facts_all_unverified_and_sourced() -> None:
+def test_facts_verified_in_m2_but_not_signed_off() -> None:
     facts = load_facts(CONFIG_DIR)
     assert len(facts) == 8
-    assert {f.status for f in facts} == {"unverified"}
+    # M2 verified every seed against a primary source; only the owner signs off (end of M3).
+    assert {f.status for f in facts} == {"verified_by_claude"}
+    assert all(f.sources and f.retrieved_at for f in facts)
     lockup = next(f for f in facts if f.id == "qnt_lockup_expiry")
-    assert lockup.sources == () and "UNKNOWN" in lockup.claim
+    assert "2026-11-30" in lockup.claim
+    assert any("sec.gov" in u and "424b4" in u for u in lockup.sources)
 
 
 def test_unconfirmed_facts_are_labelled_in_prompts() -> None:

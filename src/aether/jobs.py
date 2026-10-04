@@ -18,14 +18,17 @@ import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import Engine, delete, select, update
 
-from aether.config import Settings
+from aether.config import Settings, load_rubric
 from aether.db.engine import write_tx
 from aether.db.models import commands, job_runs
 from aether.db.types import to_iso, utcnow_iso
+from aether.ingest.earnings_calendar import ingest_earnings_calendar
+from aether.ingest.edgar import ingest_edgar
 from aether.ingest.prices import ingest_prices
 from aether.ingest.qtum_holdings import ingest_qtum_holdings
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
+from aether.providers.edgar import EdgarClient
 from aether.providers.prices import FailoverPriceProvider, MassiveProvider, YFinanceProvider
 from aether.runs import JobResult, run_job
 
@@ -120,6 +123,20 @@ def qtum_holdings_job(engine: Engine) -> JobResult:
         return ingest_qtum_holdings(engine, client)
 
 
+def edgar_job(engine: Engine, settings: Settings) -> JobResult:
+    if settings.sec_user_agent is None:
+        raise RuntimeError("SEC_USER_AGENT is not set; EDGAR ingest is disabled")
+    client = EdgarClient(settings.sec_user_agent)
+    try:
+        return ingest_edgar(engine, client, load_rubric(settings.config_dir))
+    finally:
+        client.close()
+
+
+def earnings_calendar_job(engine: Engine) -> JobResult:
+    return ingest_earnings_calendar(engine)
+
+
 CATCH_UP_AFTER = timedelta(hours=24)
 
 
@@ -173,7 +190,26 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
 
     run_holdings = wrap("qtum_holdings", lambda: qtum_holdings_job(engine))
 
-    handlers = {**COMMAND_HANDLERS, "refresh_prices": refresh_prices}
+    edgar_lock = threading.Lock()
+
+    def run_edgar() -> None:
+        with edgar_lock:
+            run_job(engine, "edgar", lambda: edgar_job(engine, settings))
+
+    def refresh_edgar(_args: dict[str, Any]) -> dict[str, Any]:
+        if not edgar_lock.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        try:
+            result = run_job(engine, "edgar", lambda: edgar_job(engine, settings))
+        finally:
+            edgar_lock.release()
+        return {"ok": result is not None, "rows": result.rows_written if result else 0}
+
+    handlers = {
+        **COMMAND_HANDLERS,
+        "refresh_prices": refresh_prices,
+        "refresh_edgar": refresh_edgar,
+    }
 
     def commands_tick() -> None:
         # Only record a job_runs row when there is work, to keep the table small.
@@ -204,6 +240,34 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         minute=35,
         id="qtum_holdings",
         **_catch_up(engine, "qtum_holdings"),
+    )
+    # EDGAR (spec §9): every 30 min 21:00-05:00 SGT across US sessions (Mon-Fri ET evening
+    # spans SGT Mon 21:00 .. Sat 05:00), twice a day otherwise. NYSE holidays arrive in M7.
+    sched.add_job(
+        run_edgar,
+        "cron",
+        day_of_week="mon-fri",
+        hour="21-23",
+        minute="0,30",
+        id="edgar_session_evening",
+        **_catch_up(engine, "edgar"),
+    )
+    sched.add_job(
+        run_edgar,
+        "cron",
+        day_of_week="tue-sat",
+        hour="0-4",
+        minute="0,30",
+        id="edgar_session_night",
+    )
+    sched.add_job(run_edgar, "cron", hour="9,17", minute=0, id="edgar_daytime")
+    sched.add_job(
+        wrap("earnings_calendar", lambda: earnings_calendar_job(engine)),
+        "cron",
+        hour=7,
+        minute=15,
+        id="earnings_calendar",
+        **_catch_up(engine, "earnings_calendar"),
     )
     sched.add_job(
         wrap("nightly_maintenance", lambda: nightly_maintenance(engine, settings)),
