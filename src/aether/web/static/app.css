@@ -39,3 +39,11 @@ table.num td, table.num th { white-space: nowrap; }
 table.compact { width: auto; }
 tr.group th { color: var(--fg); padding-top: .9rem; }
 .up { color: var(--ok); } .down { color: var(--bad); }
+.badge { display: inline-block; font-size: 12px; padding: .05rem .4rem; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.badge.risk { color: var(--bad); border-color: var(--bad); }
+.badge.signal { color: var(--ok); border-color: var(--ok); }
+.badge.noise { color: var(--muted); }
+.nowrap { white-space: nowrap; }
+.excerpt { color: var(--muted); font-size: 13px; margin: .25rem 0 0; }
+.grid2 { margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+.grid2 > .card { margin-bottom: 0; }

@@ -1,0 +1,33 @@
+# Deterministic rule parameters (spec §5.2 step 1 and the §6.1 open risk flags).
+# Identifiers and numbers only (the model forbids unknown keys). Materiality values are initial
+# settings for owner review; M5 adds the LLM rubric to this file.
+
+edgar_form_rules:
+  # Registration statements and prospectuses -> dilution. Amendments (/A) are not separate events.
+  - {rule_id: edgar_shelf_registration, forms: [S-3, S-3ASR, F-3, F-3ASR], category: dilution, materiality: 3}
+  - {rule_id: edgar_registration_statement, forms: [S-1, S-1MEF, F-1], category: dilution, materiality: 3}
+  - {rule_id: edgar_primary_prospectus, forms: [424B1, 424B2, 424B4, 424B5], category: dilution, materiality: 4}
+  - {rule_id: edgar_resale_prospectus, forms: [424B3, 424B7], category: dilution, materiality: 2}
+  - {rule_id: edgar_late_filing_notice, forms: [NT 10-K, NT 10-Q], category: delisting_or_compliance, materiality: 3}
+
+edgar_8k_item_rules:
+  - {rule_id: edgar_8k_2_02, item: "2.02", category: earnings_release, materiality: 3}
+  - {rule_id: edgar_8k_3_01, item: "3.01", category: delisting_or_compliance, materiality: 4}
+  - {rule_id: edgar_8k_3_02, item: "3.02", category: dilution, materiality: 3}   # unregistered equity sale
+  - {rule_id: edgar_8k_5_02, item: "5.02", category: exec_departure, materiality: 2}
+
+insider_selling:
+  rule_id: edgar_form4_sale
+  materiality: 2
+  materiality_10b5_1_only: 1   # every sale in the filing is under a 10b5-1 plan
+
+going_concern:
+  rule_id: edgar_going_concern_text
+  materiality: 5
+
+risk_flags:
+  lockup_window_days: 60
+  insider_cluster_min_insiders: 3
+  insider_cluster_window_days: 30
+  shelf_active_days: 1095   # Rule 415 shelves are usable for three years
+  atm_active_days: 365

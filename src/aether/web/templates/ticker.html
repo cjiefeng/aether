@@ -29,6 +29,151 @@
 <section class="card">
   <h2>Price and volume</h2>
   <div class="chart tall" data-chart="ticker" data-src="/api/prices/{{ s.symbol }}"></div>
-  <p class="muted small">Daily close, split-adjusted. Filings, insiders and dilution arrive in M2.</p>
+  <p class="muted small">Daily close, split-adjusted.</p>
 </section>
+
+{% if sec %}
+{% if sec.fresh.edgar_stale %}
+<p class="banner stale">{% if sec.fresh.edgar_last_ok %}SEC filings stale since {{ sec.fresh.edgar_last_ok }}.{% else %}No successful EDGAR run yet.{% endif %}</p>
+{% endif %}
+
+<section class="card">
+  <h2>Open risk flags</h2>
+  {% with flags = sec.flags %}{% include "_flags.html" %}{% endwith %}
+</section>
+
+<div class="grid2">
+  <section class="card">
+    <h2>Lock-ups</h2>
+    {% for l in sec.lockups %}
+      <p>
+        <strong>{{ l.lockup_days }} days</strong> after the prospectus dated {{ l.prospectus_date }}:
+        expires <strong class="{{ 'bad' if l.expiry_date >= sec.today }}">{{ l.expiry_date }}</strong>
+        ({{ l.url|extlink("424B prospectus") }}).
+        {% if l.early_release_possible %}<span class="badge">early release possible</span>{% endif %}
+      </p>
+      <p class="excerpt">{{ l.excerpt }}</p>
+    {% else %}
+      <p class="muted">No lock-up extracted from a final prospectus.</p>
+    {% endfor %}
+  </section>
+
+  <section class="card">
+    <h2>Earnings dates</h2>
+    {% if sec.fresh.earnings_stale %}<p class="banner stale">{% if sec.fresh.earnings_last_ok %}Earnings calendar stale since {{ sec.fresh.earnings_last_ok }}.{% else %}No earnings-calendar run yet.{% endif %}</p>{% endif %}
+    {% if sec.earnings %}
+    <table class="compact">
+      <thead><tr><th>Date</th><th>Status</th><th>Source</th></tr></thead>
+      <tbody>
+      {% for e in sec.earnings %}
+        <tr>
+          <td class="nowrap">{{ e.date }}</td>
+          <td>{{ e.status }}</td>
+          <td>{% if e.url %}{{ e.url|extlink("8-K Item 2.02") }}{% else %}{{ e.source }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No earnings dates yet.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Classified SEC events, last 12 months</h2>
+  {% if sec.events %}
+  <table>
+    <thead><tr><th>Date</th><th>Filing</th><th>Category</th><th>Materiality</th></tr></thead>
+    <tbody>
+    {% for e in sec.events %}
+      <tr>
+        <td class="nowrap">{{ e.published_at[:10] }}</td>
+        <td>{{ e.url|extlink(e.title) }}</td>
+        <td>{{ e.category|replace("_", " ") }}</td>
+        <td>{{ e.materiality }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Shares outstanding</h2>
+  <div class="chart" data-chart="dilution" data-src="/api/dilution/{{ s.symbol }}"></div>
+  <p class="muted small">From SEC XBRL companyfacts (as reported). Fully diluted counts (warrants,
+    convertibles, earn-outs) arrive with the M7 scorecard.</p>
+</section>
+
+<section class="card">
+  <h2>Capital structure</h2>
+  {% if sec.capital %}
+  <table class="num">
+    <thead><tr><th>As of</th><th>Instrument</th><th>Amount</th><th>Shares underlying</th><th>Strike</th><th>Source</th></tr></thead>
+    <tbody>
+    {% for c in sec.capital %}
+      <tr>
+        <td>{{ c.as_of }}</td>
+        <td>{{ c.instrument }}</td>
+        <td>{{ c.amount|usd }}</td>
+        <td>{{ c.shares_underlying|intc }}</td>
+        <td>{{ c.strike|usd }}</td>
+        <td>{% if c.url %}{{ c.url|extlink(c.source ~ (" " ~ c.concept if c.concept else "")) }}{% else %}{{ c.source }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No capital-structure data yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Insider transactions (Form 4)</h2>
+  {% if sec.insiders %}
+  <table class="num">
+    <thead><tr><th>Date</th><th>Insider</th><th>Role</th><th>Type</th><th>Shares</th><th>Price</th><th></th></tr></thead>
+    <tbody>
+    {% for t in sec.insiders %}
+      <tr>
+        <td>{{ t.txn_date }}</td>
+        <td>{{ t.url|extlink(t.insider) }}</td>
+        <td class="small">{{ t.role or "—" }}</td>
+        <td class="{{ 'bad' if t.code == 'S' }}">{{ code_labels.get(t.code, t.code) }}{% if t.is_derivative %} (deriv.){% endif %}</td>
+        <td>{{ t.shares|intc }}</td>
+        <td>{{ "%.2f"|format(t.price) if t.price else "—" }}</td>
+        <td>{% if t.is_10b5_1 %}<span class="badge">10b5-1</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No Form 4 transactions yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Filings</h2>
+  {% if sec.filings %}
+  <table>
+    <thead><tr><th>Filed</th><th>Form</th><th>Items / description</th><th>Rule</th></tr></thead>
+    <tbody>
+    {% for f in sec.filings %}
+      <tr>
+        <td class="nowrap">{{ f.filed_at }}</td>
+        <td class="nowrap">{{ f.url|extlink(f.form) }}</td>
+        <td class="small">{% if f.items %}Items {{ f.items|join(", ") }}{% else %}{{ f.description or "" }}{% endif %}</td>
+        <td>{% if f.category %}<span class="badge {{ f.cls|lower }}">{{ f.category|replace("_", " ") }} · {{ f.materiality }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No filings yet.</p>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

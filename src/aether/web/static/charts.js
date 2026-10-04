@@ -156,10 +156,43 @@
       .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
   }
 
+  // ------------------------------------------------------------------ shares outstanding
+
+  function setupDilution(el) {
+    var chart = init(el);
+    getJSON(el.dataset.src)
+      .then(function (body) {
+        var series = body.series.filter(function (s) { return s.data.length > 0; });
+        if (series.length === 0) {
+          message(el, "No XBRL share counts yet.");
+          return;
+        }
+        var t = theme();
+        var opt = baseOption(t);
+        opt.grid = { left: 72, right: 16, top: 48, bottom: 32 };
+        opt.xAxis = Object.assign({ type: "time" }, axisStyle(t), { splitLine: { show: false } });
+        opt.yAxis = Object.assign({ type: "value", scale: true }, axisStyle(t), {
+          axisLabel: {
+            color: t.muted,
+            formatter: function (v) { return (v / 1e6).toFixed(0) + "M"; },
+          },
+        });
+        opt.tooltip.valueFormatter = function (v) {
+          return v == null ? "" : Math.round(v).toLocaleString();
+        };
+        opt.series = series.map(function (s) {
+          return { name: s.name, type: "line", showSymbol: true, symbolSize: 5, data: s.data };
+        });
+        chart.setOption(opt, true);
+      })
+      .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
+  }
+
   function start() {
     if (typeof echarts === "undefined") return;
     document.querySelectorAll('[data-chart="overview"]').forEach(setupOverview);
     document.querySelectorAll('[data-chart="ticker"]').forEach(setupTicker);
+    document.querySelectorAll('[data-chart="dilution"]').forEach(setupDilution);
     window.addEventListener("resize", function () {
       charts.forEach(function (c) { c.resize(); });
     });

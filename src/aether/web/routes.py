@@ -7,10 +7,12 @@ from datetime import date, datetime
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from aether import market
+from aether import market, sec_view
+from aether.config import load_rubric
 from aether.db import health
 from aether.db.commands import count_recent_commands, enqueue_command
 from aether.providers.prices import US_EASTERN
+from aether.risk.flags import open_flags
 from aether.security import csrf
 
 router = APIRouter()
@@ -67,6 +69,7 @@ def overview(request: Request) -> HTMLResponse:
         if any(x.type == t for x in summaries)
     ]
     pure = [s for s, t in ticker_types if t == "pure_play"]
+    rubric = load_rubric(request.app.state.settings.config_dir)
     return _render(
         request,
         "overview.html",
@@ -77,6 +80,9 @@ def overview(request: Request) -> HTMLResponse:
             "pure": pure,
             "ranges": list(market.RANGES),
             "default_range": market.DEFAULT_RANGE,
+            "flags": open_flags(engine, rubric.risk_flags, today, pure),
+            "risk_events": sec_view.recent_events(engine, days=30),
+            "sec_fresh": sec_view.sec_freshness(engine),
         },
     )
 
@@ -90,10 +96,33 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
     summary = market.summarize(
         symbol, type_, series, market.latest_providers(engine).get(symbol), _today()
     )
+    sec: dict[str, object] = {}
+    if type_ == "pure_play":
+        rubric = load_rubric(request.app.state.settings.config_dir)
+        today = _today()
+        sec = {
+            "flags": open_flags(engine, rubric.risk_flags, today, [symbol]),
+            "events": sec_view.recent_events(
+                engine, days=365, classes=("RISK", "SIGNAL"), symbol=symbol, limit=20
+            ),
+            "filings": sec_view.filings_for(engine, symbol),
+            "insiders": sec_view.insiders_for(engine, symbol),
+            "capital": sec_view.capital_for(engine, symbol),
+            "lockups": sec_view.lockups_for(engine, symbol),
+            "earnings": sec_view.earnings_for(engine, symbol, today),
+            "fresh": sec_view.sec_freshness(engine),
+            "today": today.isoformat(),
+        }
     return _render(
         request,
         "ticker.html",
-        {"s": summary, "type_label": TYPE_LABELS[type_], "n_bars": len(series)},
+        {
+            "s": summary,
+            "type_label": TYPE_LABELS[type_],
+            "n_bars": len(series),
+            "sec": sec,
+            "code_labels": sec_view.CODE_LABELS,
+        },
     )
 
 
@@ -137,6 +166,18 @@ def api_ticker(request: Request, symbol: str) -> JSONResponse:
     )
 
 
+@router.get("/api/dilution/{symbol}")
+def api_dilution(request: Request, symbol: str) -> JSONResponse:
+    symbol = _known_symbol(request, symbol)
+    series = sec_view.dilution_series(request.app.state.ro_engine, symbol)
+    return JSONResponse(
+        {
+            "symbol": symbol,
+            "series": [{"name": name, "data": data} for name, data in series.items()],
+        }
+    )
+
+
 # --------------------------------------------------------------------------- commands
 
 
@@ -158,3 +199,8 @@ def command_ping(request: Request) -> Response:
 @router.post("/commands/refresh-prices")
 def command_refresh_prices(request: Request) -> Response:
     return _enqueue(request, "refresh_prices")
+
+
+@router.post("/commands/refresh-edgar")
+def command_refresh_edgar(request: Request) -> Response:
+    return _enqueue(request, "refresh_edgar")

@@ -87,6 +87,7 @@ def test_overview_with_data(seeded: Engine, client: TestClient) -> None:
     _seed_prices(seeded)
     _seed_holdings(seeded, datetime.now(US_EASTERN).date())
     run_job(seeded, "prices", lambda: JobResult(rows_written=1, provider="synthetic"))
+    run_job(seeded, "edgar", lambda: JobResult(rows_written=0, provider="sec"))
     r = client.get("/")
     assert r.status_code == 200
     assert "stale" not in r.text.lower()

@@ -7,6 +7,7 @@ Middleware order, outermost first: security headers → CSRF → routes.
 from __future__ import annotations
 
 import secrets
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -31,10 +32,27 @@ def pct(value: float | None, signed: bool = True) -> str:
     return f"{value * 100:+.1f}%" if signed else f"{value * 100:.1f}%"
 
 
+def usd(value: Decimal | None) -> str:
+    """Decimal dollars -> compact text ($1.25B, $350.0M, $12.50)."""
+    if value is None:
+        return "—"
+    a = abs(value)
+    for scale, suffix in ((Decimal(10) ** 9, "B"), (Decimal(10) ** 6, "M")):
+        if a >= scale:
+            return f"${value / scale:,.2f}{suffix}"
+    return f"${value:,.2f}"
+
+
+def intc(value: int | None) -> str:
+    return "—" if value is None else f"{value:,}"
+
+
 def make_templates() -> Jinja2Templates:
     env = Environment(loader=FileSystemLoader(WEB_DIR / "templates"), autoescape=True)
     register_filters(env)
     env.filters["pct"] = pct
+    env.filters["usd"] = usd
+    env.filters["intc"] = intc
     return Jinja2Templates(env=env)
 
 

@@ -1,14 +1,15 @@
 # Identifiers only — no opinions or commentary (spec §1.2). Descriptive claims belong in facts.yaml.
-# CIKs are filled in M2 after verification against SEC EDGAR.
+# CIKs verified 2026-10-04 against https://www.sec.gov/files/company_tickers_exchange.json.
+# QTUM is an ETF series (no operating-company CIK); EDGAR ingest covers pure-plays only.
 tickers:
   # theme ETF
   - {symbol: QTUM, type: etf}
   # pure-plays
-  - {symbol: IONQ, type: pure_play}
-  - {symbol: QNT,  type: pure_play}
-  - {symbol: RGTI, type: pure_play}
-  - {symbol: QBTS, type: pure_play}
-  - {symbol: INFQ, type: pure_play}
+  - {symbol: IONQ, type: pure_play, cik: "0001824920"}
+  - {symbol: QNT, type: pure_play, cik: "0002110105"}
+  - {symbol: RGTI, type: pure_play, cik: "0001838359"}
+  - {symbol: QBTS, type: pure_play, cik: "0001907982"}
+  - {symbol: INFQ, type: pure_play, cik: "0002007825"}
   # benchmarks (prices only)
   - {symbol: QQQ,  type: benchmark}
   - {symbol: SOXX, type: benchmark}

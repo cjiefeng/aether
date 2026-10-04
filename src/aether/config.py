@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
@@ -130,6 +130,66 @@ class Sources(_Strict):
         return "T3"
 
 
+RiskCategory = Literal[
+    "dilution",
+    "insider_selling",
+    "exec_departure",
+    "going_concern",
+    "delisting_or_compliance",
+]
+Materiality = Annotated[int, Field(ge=1, le=5)]
+RULE_ID = r"^[a-z0-9_]{3,64}$"
+
+
+class FormRule(_Strict):
+    rule_id: str = Field(pattern=RULE_ID)
+    forms: tuple[str, ...] = Field(min_length=1)
+    category: RiskCategory
+    materiality: Materiality
+
+
+class ItemRule(_Strict):
+    rule_id: str = Field(pattern=RULE_ID)
+    item: str = Field(pattern=r"^\d\.\d{2}$")
+    category: Literal["earnings_release", "exec_departure", "delisting_or_compliance", "dilution"]
+    materiality: Materiality
+
+
+class InsiderSellingRule(_Strict):
+    rule_id: str = Field(pattern=RULE_ID)
+    materiality: Materiality
+    materiality_10b5_1_only: Materiality
+
+
+class TextRule(_Strict):
+    rule_id: str = Field(pattern=RULE_ID)
+    materiality: Materiality
+
+
+class RiskFlagParams(_Strict):
+    lockup_window_days: int = Field(gt=0)
+    insider_cluster_min_insiders: int = Field(ge=2)
+    insider_cluster_window_days: int = Field(gt=0)
+    shelf_active_days: int = Field(gt=0)
+    atm_active_days: int = Field(gt=0)
+
+
+class Rubric(_Strict):
+    edgar_form_rules: tuple[FormRule, ...]
+    edgar_8k_item_rules: tuple[ItemRule, ...]
+    insider_selling: InsiderSellingRule
+    going_concern: TextRule
+    risk_flags: RiskFlagParams
+
+    @field_validator("edgar_form_rules")
+    @classmethod
+    def _forms_unique(cls, v: tuple[FormRule, ...]) -> tuple[FormRule, ...]:
+        forms = [f for r in v for f in r.forms]
+        if len(forms) != len(set(forms)):
+            raise ValueError("a form appears in more than one edgar_form_rule")
+        return v
+
+
 def _load_yaml(path: Path) -> object:
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -141,6 +201,10 @@ def load_watchlist(config_dir: Path) -> Watchlist:
 
 def load_sources(config_dir: Path) -> Sources:
     return Sources.model_validate(_load_yaml(config_dir / "sources.yaml"))
+
+
+def load_rubric(config_dir: Path) -> Rubric:
+    return Rubric.model_validate(_load_yaml(config_dir / "rubric.yaml"))
 
 
 def get_settings() -> Settings:
