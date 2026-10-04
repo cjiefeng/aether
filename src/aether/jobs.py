@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -18,7 +19,9 @@ import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import Engine, delete, select, update
 
-from aether.config import Settings, load_rubric
+from aether.alerts.dispatch import enqueue_test_alert, run_alerts
+from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
+from aether.config import Settings, load_alerts_config, load_rubric
 from aether.db.engine import write_tx
 from aether.db.models import commands, job_runs
 from aether.db.types import to_iso, utcnow_iso
@@ -38,6 +41,8 @@ log = logging.getLogger(__name__)
 
 TZ = "Asia/Singapore"
 HEARTBEAT_MINUTES = 10
+ALERTS_MINUTES = 10
+INBOUND_POLL_SECONDS = 30
 
 
 def heartbeat() -> JobResult:
@@ -137,6 +142,27 @@ def earnings_calendar_job(engine: Engine) -> JobResult:
     return ingest_earnings_calendar(engine)
 
 
+def make_telegram(settings: Settings) -> tuple[TelegramService | None, str | None]:
+    """The Telegram module, or (None, reason) when disabled (unset or fail-closed config)."""
+    config, reason = TelegramConfig.from_settings(settings)
+    if config is None:
+        log.info("telegram disabled: %s; alerts appear on the dashboard only", reason)
+        return None, reason
+    return TelegramService(TelegramBot(config)), None
+
+
+def alerts_job(
+    engine: Engine, settings: Settings, service: TelegramService | None, reason: str | None
+) -> JobResult:
+    return run_alerts(
+        engine,
+        load_alerts_config(settings.config_dir),
+        load_rubric(settings.config_dir).risk_flags,
+        service,
+        reason,
+    )
+
+
 CATCH_UP_AFTER = timedelta(hours=24)
 
 
@@ -205,10 +231,31 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             edgar_lock.release()
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
 
+    telegram, telegram_off = make_telegram(settings)
+    # The cron job and the test command share the outbox; never deliver concurrently.
+    alerts_lock = threading.Lock()
+
+    def run_alerts_job() -> None:
+        with alerts_lock:
+            run_job(engine, "alerts", lambda: alerts_job(engine, settings, telegram, telegram_off))
+
+    def test_alert(_args: dict[str, Any]) -> dict[str, Any]:
+        on = telegram is not None and telegram.blocked is None
+        key = enqueue_test_alert(engine, telegram=on)
+        if on and alerts_lock.acquire(blocking=False):
+            try:
+                run_job(
+                    engine, "alerts", lambda: alerts_job(engine, settings, telegram, telegram_off)
+                )
+            finally:
+                alerts_lock.release()
+        return {"dedupe_key": key, "channel": "telegram" if on else "dashboard"}
+
     handlers = {
         **COMMAND_HANDLERS,
         "refresh_prices": refresh_prices,
         "refresh_edgar": refresh_edgar,
+        "test_alert": test_alert,
     }
 
     def commands_tick() -> None:
@@ -269,6 +316,40 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         id="earnings_calendar",
         **_catch_up(engine, "earnings_calendar"),
     )
+    # Alerts (M3): every 10 min; covers the hourly job-health check (spec §9).
+    sched.add_job(
+        run_alerts_job,
+        "interval",
+        minutes=ALERTS_MINUTES,
+        id="alerts",
+        next_run_time=datetime.now(ZoneInfo(TZ)) + timedelta(minutes=2),
+    )
+    if telegram is not None:
+        service = telegram
+
+        last_fail_logged: list[float] = []
+
+        def telegram_inbound() -> None:
+            # Long poll. A job_runs row only when updates arrived or the poll failed (failures at
+            # most every 10 min, so a Bot API outage doesn't fill job_runs).
+            try:
+                n = service.poll_inbound()
+            except TelegramError as exc:
+                log.warning("telegram inbound poll failed: %s", exc)
+                now = time.monotonic()
+                if not last_fail_logged or now - last_fail_logged[-1] >= 600:
+                    last_fail_logged[:] = [now]
+                    err = str(exc)
+
+                    def _fail() -> JobResult:
+                        raise TelegramError(err)
+
+                    run_job(engine, "telegram_inbound", _fail)
+                return
+            if n:
+                run_job(engine, "telegram_inbound", lambda: JobResult(rows_written=n))
+
+        sched.add_job(telegram_inbound, "interval", seconds=INBOUND_POLL_SECONDS, id="telegram_in")
     sched.add_job(
         wrap("nightly_maintenance", lambda: nightly_maintenance(engine, settings)),
         "cron",

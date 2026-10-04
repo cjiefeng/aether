@@ -50,7 +50,13 @@ def test_json_columns_must_be_valid(rw_engine: Engine) -> None:
     with pytest.raises(IntegrityError), rw_engine.begin() as conn:
         conn.execute(
             insert(alerts).values(
-                kind="x", channel="dashboard", payload="{not json", dedupe_key="k"
+                kind="test",
+                channel="dashboard",
+                status="dashboard_only",
+                text="t",
+                created_at="2026-01-01T00:00:00Z",
+                payload="{not json",
+                dedupe_key="k",
             )
         )
 

@@ -1,5 +1,91 @@
 # Milestone report
 
+## M3: Alerts → MVP done (2026-10-04)
+
+Phase 1 (risk watcher MVP, $0 LLM) is complete once you've signed off FACTS.md (checklist below).
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Synthetic S-3 fixture → one Telegram message (mocked transport), no duplicate on re-run | ✅ | `tests/test_alerts.py::test_synthetic_s3_sends_one_message_and_no_duplicate_on_rerun`: an ACME S-3 goes through the real M2 path (`classify_filing` → `write_event`). Result: one `sendMessage` to the owner chat (plain text, no link preview), three re-runs, still one message and one `alerts` row (`sent`). |
+| Failing-job alert fires | ✅ | `test_failing_job_alert_fires_once_then_recovers`: `prices` failing for 26h alerts once, `edgar` failing for 3h doesn't, and the next ok run sends one "recovered". `test_failing_job_detected_from_real_run_job` drives it through `run_job`. |
+| Update from another user ID → dropped, no reply | ✅ | `test_update_from_other_user_is_dropped_without_reply`: only `deleteWebhook` + `getUpdates` are called. The log has the sender ID and chat type but not the text. |
+| Group-chat update from the owner → dropped + `leaveChat` | ✅ | `test_group_update_from_owner_is_dropped_and_bot_leaves`. Also covered: being added to a supergroup (`my_chat_member`) and a channel post both trigger `leaveChat`, while a "kicked" update doesn't. |
+| Missing `TELEGRAM_ALLOWED_USER_ID` → module disabled | ✅ | `test_token_without_valid_owner_id_disables_module`: missing, empty, `@owner`, negative, non-numeric and `0` all fail closed with an error log. `test_disabled_module_keeps_alerts_on_dashboard`: no Telegram call, and alerts are `dashboard_only`. `test_scheduler_registers_alert_jobs`: no inbound polling when disabled. |
+| `getChat` returning a group → no messages sent | ✅ | `test_getchat_not_owner_private_chat_sends_nothing`: a group, or a private chat with another ID, means zero `sendMessage`. The pending alert is marked `failed` with the reason, and later alerts go to the dashboard. |
+| Tests green, no network | ✅ | `make test`: 216 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 60 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks. Test tokens are synthetic (`test-token-not-real`; the redaction test builds a token-shaped string at runtime). |
+
+### What was built
+- **Schema** (`0004_alerts`, hand-written):
+  - `alerts` is rebuilt as an outbox. New columns: `status` (`pending/sent/failed/expired/dashboard_only`), `text`, `created_at`, `attempts`, `last_error`. New CHECKs on kind, status, text length (≤4096) and attempts, plus indexes on (status, id) and created_at. It's STRICT, and the FK to `events` is kept. Nothing wrote `alerts` before, and the upgrade refuses to run if the table has rows.
+  - `facts.open_question` is added and synced from `facts.yaml`.
+- **`alerts/candidates.py`** (reads only): RISK events, insider clusters, lock-up and earnings T−7/T−1 reminders (the tightest reminder that applies, so a late first run doesn't send both), and job failing/recovered. Each has a stable dedupe key. Message text is built from DB fields only.
+- **`alerts/dispatch.py`** (job `alerts`, every 10 min):
+  - It collects candidates, then inserts new ones in one short `write_tx` (`ON CONFLICT DO NOTHING`).
+  - It sends pending rows outside any transaction, about 1/s, up to 20 per run, and records each outcome in its own `write_tx`.
+  - Rows expire after 48h and are `failed` after 5 attempts. A transient Telegram outage leaves rows pending.
+- **`alerts/telegram.py`**: the Bot API client (checked against Bot API 10.3).
+  - `TelegramConfig.from_settings` fails closed.
+  - `send_message` has no chat parameter, so it can only reach the configured chat.
+  - `verify()` runs `deleteWebhook` → `getChat` (private, id == owner), cached for 6h. A mismatch blocks sending for the process.
+  - Long polling uses an in-memory offset. 429 `retry_after` is honoured once.
+  - **Token hygiene**: the httpx/httpcore loggers are at WARNING, and errors are re-raised as `TelegramError` with the token scrubbed and `from None`. A test checks that the token reaches neither `job_runs.error` nor the logs.
+- **`alerts/telegram_guard.py`**: `is_owner` (plain `message`/`edited_message` only; `from.id`, chat type and chat id must all match; bool IDs are rejected), `chats_to_leave`, and a rate-limited `DropLog` that never logs text.
+- **Jobs**:
+  - `alerts` every 10 min, first run 2 min after start.
+  - `telegram_in` long poll (20s), only when Telegram is configured. It writes a `job_runs` row only when updates arrive, and failures are recorded at most every 10 min.
+  - A `test_alert` dashboard command (CSRF, rate limit) that shares a lock with the job.
+- **Dashboard**:
+  - `/alerts`: delivery status with the reason, the last 100 alerts, and **Send test alert**.
+  - `/facts`: status badges and counts, `extlink` source links, notes, open questions and sign-off instructions.
+  - A "Recent alerts" card on the Overview and nav links. There's still no inline script or style.
+- **Config**: `config/alerts.yaml` (numbers only, `extra=forbid`).
+
+### Decisions (deviations from the spec / plan)
+1. **The alert threshold is RISK materiality ≥ 3.** Single Form 4 sales (2), resale prospectuses (2) and 8-K 5.02 (2) don't alert on their own; insider clusters cover selling. Going concern (5), 424B primaries (4), 3.01 (4), S-3/S-1/3.02/NT (3) do.
+2. **A 3-day event lookback.** Without it, the first deploy would send the whole 2025–26 backfill.
+3. **Flags vs events.** ATM, shelf and going-concern flags don't alert separately, because their filings already alert as events. Lock-ups alert as T−7/T−1 reminders rather than at the 60-day flag.
+4. **`TELEGRAM_CHAT_ID` is optional** and defaults to the user ID. When set, it must equal the user ID; a private chat's ID is the user's ID.
+5. **One `alerts` job every 10 min** covers the spec's hourly job-health check.
+6. **"Failing > 24h" means** the first failure since the last ok run is ≥24h old and no ok run has happened since. Jobs that silently stop running aren't covered; the dashboard's stale banners cover those.
+7. **If `getChat` fails verification**, alerts already queued for Telegram are marked `failed` with the reason (visible on `/alerts`), and later ones are created `dashboard_only`.
+8. **The test-alert button is on `/alerts`**, not Health as the plan said.
+9. **No new dependencies.**
+
+### Facts
+- No facts changed in M3. All 8 are still `verified_by_claude` from M2, and the Facts page now shows them for your review.
+- Sign-off is yours (spec §2.3). I haven't flipped any status.
+
+### Open questions (carried over from M2)
+- INFQ earn-out shares (S-4/proxy), the SkyWater closing date and consideration, and the first day QNT lock-up shares can be sold (2026-11-30 or 12-01).
+- **Earnings reminders depend on the yfinance calendar** (unofficial). The message says to confirm on the company's IR site.
+
+### Live check (isolated compose project `aether-m3` on port 8090, torn down afterwards; your stack wasn't touched)
+- Migration `0004_alerts` applied on a fresh DB. The EDGAR backfill (270 events) and earnings calendar ran, then the first `alerts` run: `ok`, provider `dashboard`, warning `TELEGRAM_BOT_TOKEN not set`.
+- **It created no alerts, which is correct.** The newest event is from 2026-09-22 (outside the 3-day lookback), the earnings dates (IONQ 11-04, QBTS 11-05, QNT 11-09, RGTI 11-10, INFQ 11-12) are more than 7 days away, and the QNT lock-up (11-30) is 57 days away.
+- **Read-only dry run** with a 30-day lookback and a 40-day reminder window: it produced 8 candidates (RGTI/QNT/QBTS 8-K Item 3.02 dilution, plus earnings reminders), and their text read correctly.
+- **Send test alert** → command `done` → a `test` row with `dashboard_only`. Its wording now says Telegram is off when it is.
+- `/facts`, `/alerts` and the Overview render with **no console or CSP errors**.
+- **Not exercised live: real Telegram delivery**, because there's no bot token yet. That's the first item below.
+
+### Owner checklist
+- [ ] Create the bot with **@BotFather** (`/newbot`), then `/setjoingroups` → **Disable** and `/setprivacy` → **Enable**.
+- [ ] Add `TELEGRAM_BOT_TOKEN` to `.env` (mode 0600). Message the bot once, read your numeric `message.from.id` from `getUpdates` (see README), and set `TELEGRAM_ALLOWED_USER_ID` (and optionally `TELEGRAM_CHAT_ID`, the same number).
+- [ ] After merging: `./deploy.sh`. Then **Send test alert** on `/alerts`; the delivery card should say "Telegram".
+- [ ] Review `config/alerts.yaml` (threshold 3, 3-day lookback, T−7/T−1, 24h job failure, 48h expiry).
+- [ ] **Review FACTS.md on `/facts` and sign off.** Set `status: signed_off` in `config/facts.yaml` for each fact you accept, run `make facts`, then commit via a PR. Look especially at the `qnt_ipo` discrepancy (Honeywell 47.8% vs the seed's 49.1%) and the three open questions.
+
+### How to verify
+```bash
+make test            # 216 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/alerts and /facts
+```
+
 ## M2: SEC EDGAR + deterministic risk (2026-10-04)
 
 ### Acceptance criteria

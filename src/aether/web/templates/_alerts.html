@@ -1,0 +1,22 @@
+{# Alert rows. `alerts`: list of alerts.view.AlertRow #}
+{% if alerts %}
+<table>
+  <thead><tr><th>Created</th><th>Kind</th><th>Delivery</th><th>Message</th></tr></thead>
+  <tbody>
+  {% for a in alerts %}
+    <tr>
+      <td class="nowrap">{{ a.created_at[:16]|replace("T", " ") }}</td>
+      <td><span class="badge{{ ' risk' if a.kind in ('risk_event', 'insider_cluster', 'lockup_reminder', 'job_failing') }}">{{ a.kind|replace("_", " ") }}</span></td>
+      <td class="nowrap">
+        <span class="badge alert-{{ a.status }}">{{ a.status|replace("_", " ") }}</span>
+        {% if a.sent_at %}<div class="muted small">{{ a.sent_at[:16]|replace("T", " ") }}</div>{% endif %}
+        {% if a.last_error %}<div class="bad small">{{ a.last_error }}</div>{% endif %}
+      </td>
+      <td class="alert-text">{{ a.text }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No alerts yet.</p>
+{% endif %}

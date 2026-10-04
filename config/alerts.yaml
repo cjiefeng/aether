@@ -1,0 +1,24 @@
+# Alert parameters (spec M3). Numbers only (the model forbids unknown keys). Initial values for
+# owner review. Delivery is Telegram when configured (owner-only, see README), else dashboard only.
+
+# RISK events (deterministic EDGAR rules) at or above this post-cap materiality alert.
+# Single Form 4 sales (2) and resale prospectuses (2) stay below; insider clusters alert instead.
+risk_event_min_materiality: 3
+
+# Only events published within this many days alert. Prevents the first backfill from flooding.
+event_lookback_days: 3
+
+# Lock-up expiry and scheduled earnings reminders, in days before the date (T-7, T-1).
+reminder_days: [7, 1]
+
+# A job whose failures have lasted this long (no ok run since) raises an alert.
+job_failing_hours: 24
+
+# Undelivered Telegram alerts older than this are marked expired instead of sent late.
+pending_expiry_hours: 48
+
+# Send attempts per alert before it is marked failed.
+max_attempts: 5
+
+# Telegram messages per run (about one per second).
+max_sends_per_run: 20

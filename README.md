@@ -59,8 +59,39 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
   - 8-K Item 2.02 → `earnings_release`, 3.02 → `dilution`, 5.02 → `exec_departure`, 3.01 → `delisting_or_compliance`
   - `NT 10-K/Q` → `delisting_or_compliance`
   - unhedged going-concern statements → `going_concern`
-- **Open risk flags** (`risk/flags.py`): a lock-up ending within 60 days, an insider-selling cluster (3 or more insiders in 30 days), an ATM program filed in the last year, a shelf filed in the last three years, and going-concern language in the latest periodic report. The M3 alerts will use these.
+- **Open risk flags** (`risk/flags.py`): a lock-up ending within 60 days, an insider-selling cluster (3 or more insiders in 30 days), an ATM program filed in the last year, a shelf filed in the last three years, and going-concern language in the latest periodic report. Insider clusters alert (M3); the other flags alert through their underlying filing events.
 - Ingest is idempotent: filings key on accession and events on the filing URL. Each document is fetched once (`filings.parsed`), and form-based events never wait on a document download. Network I/O happens first, then one short write transaction.
+
+## Alerts + Telegram (M3)
+
+The `alerts` job runs every 10 minutes (it is also the hourly job-health check). Every alert has a dedupe key and goes into the `alerts` table (an outbox), so it fires **once**, however often the job runs. Thresholds are in `config/alerts.yaml`.
+
+| Alert | Fires when | Dedupe key |
+|---|---|---|
+| RISK event | A deterministic RISK event (T1, not quarantined) at materiality ≥ 3, published in the last 3 days. The lookback stops the first backfill from flooding the chat. | `risk_event:<event id>` |
+| Insider cluster | ≥3 insiders sold in 30 days (the `rubric.yaml` flag); at most one alert per symbol per 30 days | `insider_cluster:<sym>:<start>` |
+| Lock-up reminder | T−7 and T−1 before a prospectus lock-up ends. The message shows the facts-registry status of that date. | `lockup:<accession>:T-<n>` |
+| Earnings reminder | T−7 and T−1 before a scheduled earnings date | `earnings:<sym>:<date>:T-<n>` |
+| Job failing | A job has failed for more than 24h with no ok run since. A "recovered" message follows its next ok run. | `job_failing:<job>:<first failure>` |
+
+Delivery:
+- Telegram is used when it's configured. Otherwise every alert is `dashboard_only` and appears on `/alerts` and the Overview.
+- Messages are plain text (no `parse_mode`, no link previews) and are sent outside any database transaction.
+- Undelivered messages expire after 48h instead of arriving late, and are marked `failed` after 5 attempts.
+- **Send test alert** on `/alerts` checks the path end-to-end.
+
+**Telegram is owner-only (S7):**
+- **Fail closed.** If `TELEGRAM_BOT_TOKEN` is set but `TELEGRAM_ALLOWED_USER_ID` is missing or not a numeric ID, the module stays off and logs an error. `TELEGRAM_CHAT_ID` is optional; if set, it must equal the user ID.
+- **Outbound.** Before the first send (and every 6h), the worker calls `deleteWebhook`, then `getChat`, and sends only if the chat is `private` with `id ==` your user ID. Anything else disables sending for the process.
+- **Inbound.** Long polling (`getUpdates`) only, never a webhook, so no port is opened. `alerts/telegram_guard.py::is_owner` runs before anything else: only a private message from your user ID in your own chat passes. Everything else is dropped silently, logged with sender ID and chat type only (never the text). If the bot is in any group or channel, it calls `leaveChat`. The MVP has no bot commands.
+- **The token** is never logged. The httpx request log is off, and Telegram errors are scrubbed before they reach logs or `job_runs`.
+
+**Setting up the bot:**
+1. In Telegram, message **@BotFather**: `/newbot`, then `/setjoingroups` → **Disable** and `/setprivacy` → **Enable**.
+2. Put the token in `.env` as `TELEGRAM_BOT_TOKEN=` (keep `.env` mode 0600). If it ever leaks, rotate it with `/revoke`.
+3. Find your **numeric** user ID. Send your bot any message, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` in your own browser and read `message.from.id`. Never use the @username.
+4. Set `TELEGRAM_ALLOWED_USER_ID=<that number>` (and optionally `TELEGRAM_CHAT_ID=<same number>`), then run `./deploy.sh`.
+5. Open `/alerts` and press **Send test alert**.
 
 ## Dashboard
 
@@ -69,12 +100,14 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
   - A chart comparing QTUM, an equal-weighted pure-play basket, SOXX and QQQ, rebased to 100 on a log scale, with ranges from 1M to 2Y.
   - A ticker table (last close, 1d/30d change, distance from the 52-week high, as-of date, provider).
   - The watchlist's weight in QTUM.
-  - Open risk flags and RISK filings from the last 30 days.
+  - Open risk flags, recent alerts and RISK filings from the last 30 days.
 - `/t/<SYMBOL>`: price and volume chart plus a summary. For pure-plays it also shows:
   - open risk flags, lock-ups (with the prospectus excerpt) and earnings dates
   - classified SEC events, a shares-outstanding chart (XBRL) and the capital-structure table
   - Form 4 insider transactions (10b5-1 badge) and the filings list with each rule hit.
   All SEC links go to EDGAR.
+- `/alerts`: delivery status (Telegram or dashboard only, and why), the last 100 alerts, and **Send test alert**.
+- `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
 - `/health`: DB, schema and last run per job.
 
 Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*` and `/api/dilution/*` as JSON. There are no inline scripts, so the CSP stays strict.
@@ -123,6 +156,7 @@ src/aether/
   edgar/          pure parsers: submissions, Form 4 XML, filing text extractors, XBRL
   classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M5)
   risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
+  alerts/         candidates → outbox → Telegram; telegram_guard.py (S7 is_owner), dashboard views
   sec_view.py     read-side SEC queries for the dashboard
   market.py       read-side computations for the dashboard (basket, rebasing, staleness)
   runs.py         run_job: every job gets a job_runs row
@@ -133,7 +167,7 @@ src/aether/
   jobs.py         APScheduler wiring (Asia/Singapore, max_instances=1)
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
-config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml
+config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```
 

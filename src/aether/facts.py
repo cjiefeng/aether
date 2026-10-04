@@ -89,6 +89,7 @@ def sync_facts(conn: Connection, facts: Sequence[Fact]) -> int:
             "retrieved_at": f.retrieved_at,
             "status": f.status,
             "notes": f.notes,
+            "open_question": f.open_question,
             "synced_at": now,
         }
         for f in facts

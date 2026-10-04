@@ -5,8 +5,8 @@ STRICT tables accept only INTEGER/REAL/TEXT/BLOB/ANY, so columns use only `Integ
 VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
-events). Keep this
-file and `migrations/versions/*` in sync (a test compares them).
+events, M3: alerts outbox). Keep this file and `migrations/versions/*` in sync (a test compares
+them).
 """
 
 from __future__ import annotations
@@ -73,6 +73,7 @@ facts = Table(
     Column("retrieved_at", Text),
     Column("status", Text, nullable=False),
     Column("notes", Text),
+    Column("open_question", Text),  # M3
     Column("synced_at", Text, nullable=False),
     CheckConstraint("status IN ('unverified','verified_by_claude','signed_off')", name="status"),
     _json_ck("source_urls"),
@@ -131,6 +132,19 @@ llm_calls = Table(
     sqlite_strict=True,
 )
 
+ALERT_KINDS = (
+    "risk_event",
+    "insider_cluster",
+    "lockup_reminder",
+    "earnings_reminder",
+    "job_failing",
+    "job_recovered",
+    "test",
+)
+ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
+
+# M3 (0004) rebuilt this table: an outbox. Rows are inserted once per dedupe_key; the worker sends
+# pending telegram rows outside any write transaction and records the outcome.
 alerts = Table(
     "alerts",
     metadata,
@@ -138,11 +152,24 @@ alerts = Table(
     Column("event_id", Integer, ForeignKey("events.id")),
     Column("kind", Text, nullable=False),
     Column("channel", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("text", Text, nullable=False),  # plain text, exactly what is (or would be) sent
+    Column("created_at", Text, nullable=False),
     Column("sent_at", Text),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("last_error", Text),
     Column("payload", Text, nullable=False, server_default="{}"),
     Column("dedupe_key", Text, nullable=False, unique=True),
     CheckConstraint("channel IN ('telegram','dashboard')", name="channel"),
+    CheckConstraint("kind IN (" + ",".join(f"'{k}'" for k in ALERT_KINDS) + ")", name="kind"),
+    CheckConstraint(
+        "status IN (" + ",".join(f"'{k}'" for k in ALERT_STATUSES) + ")", name="status"
+    ),
+    CheckConstraint("length(text) BETWEEN 1 AND 4096", name="text_len"),
+    CheckConstraint("attempts >= 0", name="attempts"),
     _json_ck("payload"),
+    Index(None, "status", "id"),
+    Index(None, "created_at"),
     sqlite_strict=True,
 )
 

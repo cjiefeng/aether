@@ -47,3 +47,11 @@ tr.group th { color: var(--fg); padding-top: .9rem; }
 .excerpt { color: var(--muted); font-size: 13px; margin: .25rem 0 0; }
 .grid2 { margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
 .grid2 > .card { margin-bottom: 0; }
+.alert-text { white-space: pre-line; overflow-wrap: anywhere; font-size: 13px; }
+.badge.alert-sent { color: var(--ok); border-color: var(--ok); }
+.badge.alert-failed, .badge.alert-expired { color: var(--bad); border-color: var(--bad); }
+.badge.alert-pending { color: var(--warn-fg); border-color: var(--warn-fg); }
+.badge.fact-signed_off { color: var(--ok); border-color: var(--ok); }
+.badge.fact-verified_by_claude { color: var(--warn-fg); border-color: var(--warn-fg); }
+.badge.fact-unverified { color: var(--bad); border-color: var(--bad); }
+.warn { color: var(--warn-fg); }
