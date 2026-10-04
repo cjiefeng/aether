@@ -46,20 +46,20 @@
 6. **Staleness uses a 4-calendar-day tolerance per symbol and 30 h for the prices job.** It stands in for an NYSE holiday calendar until M7 adds `exchange_calendars`.
 7. **The Overview chart uses a log scale**, because the pure-play basket rose about 17× over two years, which flattens the other lines on a linear axis.
 8. **`/` is now the Overview.** Health lives at `/health` only.
+9. **yfinance stays the primary source (owner decision, 2026-10-04).** Yahoo's `robots.txt` (`query1.finance.yahoo.com`) is `Disallow: /`. The owner confirmed this is personal-use API access by a single self-hosted instance, not crawling (spec S6).
 
 ### Facts
 - No seed facts were verified or changed (verification is M2).
 - Observed (not added as facts): Yahoo serves daily prices for `QNT` from 2026-06-04 and `INFQ` from 2026-02-17, and Defiance lists both in QTUM. Their listing route, date and CIKs remain M2 EDGAR items under `qnt_ipo` / `infq_listing`.
 
 ### Open questions
-- **Yahoo's `robots.txt`** (`query1.finance.yahoo.com`) is `Disallow: /`. The spec already accepts yfinance for personal use (S6). Flagging it so the decision is a conscious one.
 - **The Massive failover hasn't been exercised live** until you add `MASSIVE_API_KEY`.
 - **Volume differs slightly between vendors** (IONQ 2026-10-02: 19.04M on Yahoo vs 19.09M on another source). It's informational now and matters for abnormal volume in M7, so the provider is kept per row.
 
 ### Owner checklist
 - [ ] Sign up for **Massive Stocks Basic** (free) at massive.com, then add `MASSIVE_API_KEY=` to `.env` (still mode 0600). It's passed to the worker only.
 - [ ] After merging: `./deploy.sh`. The worker migrates to `0002_market_data`, backfills 2 years of prices and takes the first holdings snapshot within about a minute.
-- [ ] Review decision 2 (no dividend adjustment) and the Yahoo robots.txt open question.
+- [ ] Review decision 2 (no dividend adjustment).
 
 ### How to verify
 ```bash
