@@ -21,7 +21,7 @@ This is a **personal research tool, not financial advice**. Every conclusion pag
 
 ### 1.1 Delivery phases
 
-The build comes in four phases, so it's useful early. Each phase ends in something the owner can use on its own.
+The build comes in five phases, so it's useful early. Each phase ends in something the owner can use on its own.
 
 | Phase | Milestones | What the owner gets | LLM cost |
 |---|---|---|---|
@@ -29,6 +29,7 @@ The build comes in four phases, so it's useful early. Each phase ends in somethi
 | **1b. Portfolio** | M4–M5 | Backtested model strategies per risk profile, password login, holdings page, rebalance planner | **$0** |
 | **2. Intelligence** | M6–M10 | News classification, catalysts, scorecards, event reactions, conclusions with track record, weekly brief | Budgeted |
 | **3. Hardening** | M11 | Escalation flow, ops, backups, K8s | — |
+| **4. Discovery** | M12 | Monthly universe review: proposed pure-plays to add/remove, sent on Telegram | Budgeted (separate cap) |
 
 ### 1.2 Watchlist (in `config/watchlist.yaml`; editable without code changes)
 
@@ -46,6 +47,8 @@ The build comes in four phases, so it's useful early. Each phase ends in somethi
 **Benchmarks** (prices only, no conclusions): `QQQ` (broad tech/market; also QTUM's benchmark for event reactions) and `SOXX` (semiconductors; used to break down what drives QTUM, §6.1).
 
 **Context tickers** (prices only, no conclusions): `IBM, GOOGL, MSFT, AMZN, NVDA`.
+
+**Monthly universe review (M12, §6.7).** On the 1st of each month Aether proposes pure-plays to add or remove, with sources. It **never edits the watchlist itself**: the owner applies a proposal by editing `watchlist.yaml` through a PR.
 
 ### 1.3 Positions (Holdings page, from M5)
 
@@ -225,6 +228,7 @@ src/aether/
   providers/           # PriceProvider (yfinance primary, Stooq fallback), FilingsProvider, NewsProvider
   ingest/              # prices, edgar, capital_structure, earnings_calendar, short_interest, news_rss, qtum_holdings
   research/            # Claude web-search research runs (the only tool-enabled LLM calls)
+  universe/            # monthly universe review: discovery, eligibility checks, proposal (M12)
   classify/            # rules.py, llm.py, rubric.py, caps.py (trust-tier caps), prompts/
   catalysts/
   score/               # scorecard.py, reaction.py, theme.py, track_record.py
@@ -510,6 +514,29 @@ These mirror the §6.2 hysteresis rule and live in `config/strategies.yaml`.
 
 **Determinism:** the plan is a pure function of (holdings, prices, published targets, events, config); its input hash is stored with it.
 
+### 6.7 Monthly universe review (`universe/`; M12; strongest model)
+
+**Purpose:** on the 1st of each month, propose pure-play tickers to **add** to or **remove** from `watchlist.yaml`, using the same test for every company, current pure-plays included. Output is a proposal only.
+
+**Eligibility (`config/universe.yaml`: numbers and identifiers only, `extra=forbid`; initial values for owner review).** A pure-play must meet all of:
+
+1. **US listing with SEC filings:** NYSE, Nasdaq or NYSE American, with a CIK verified against SEC's `company_tickers_exchange.json`, so the EDGAR ingest works.
+2. **Quantum is the principal business:** the latest 10-K / 20-F / S-1 / F-1 / S-4 business section describes quantum computing (hardware, software, networking or sensing) as the company's principal business. The evidence is a ≤600-char excerpt from that **T1** filing. Diversified companies with a quantum unit belong in context tickers, not pure-plays.
+3. **Size and liquidity:** market cap ≥ $500M and 20-session median dollar volume ≥ $5M, computed in code from provider prices fetched for the candidate.
+4. **History:** ≥ 60 trading sessions. A company that passes 1–3 but not 4 (a recent IPO or de-SPAC), or an announced listing that hasn't closed yet, is proposed as **watch**, not add.
+
+**Removal triggers** for current pure-plays: delisted or acquired (8-K Items 2.01 / 3.01, or a closed merger), principal business no longer quantum (criterion 2 fails), or criterion 3 fails in **3 consecutive** monthly reviews.
+
+**Pipeline:**
+
+1. **Candidate discovery (deterministic, free):** QTUM holdings not on the watchlist; SEC EDGAR full-text search for "quantum" in 10-K / 20-F / S-1 / F-1 / S-4 / 424B4 filings from the last 13 months; and every current pure-play.
+2. **Deep research** (`research/`, `RESEARCH_DEEP_MODEL`, default the strongest Opus tier, currently `claude-opus-5-5`; verify the ID at implementation time): one dossier per candidate, plus one sweep for newly announced quantum IPOs and SPAC deals. Web search keeps `allowed_domains` from `sources.yaml` and a capped `max_uses`. Output is untrusted (S1) and goes through ingestion with trust tiers like any other research.
+3. **Deterministic checks:** criteria 1, 3 and 4 are computed in code; criterion 2 needs a T1 excerpt.
+4. **Proposal call** (same model, **no tools**): strict schema with, per ticker, `action` (`add` / `remove` / `watch`), company name, a ≤300-char description of what it does, and reasons, each citing evidence IDs from the context. The §6.2 citation validator applies. **Code drops any `add` that fails a deterministic criterion or lacks a T1 source**; the model can't override the rules.
+5. **Delivery:** a Telegram message (§2.2 S7; plain text, no link previews, ≤4096 chars; anything past the limit says "N more on /universe") and the dashboard Universe page with full sources. A month with no changes still sends "No changes proposed", so the owner knows the review ran.
+
+**Cost control:** each run has its own cap, `UNIVERSE_REVIEW_BUDGET_USD` (default 10.00), separate from the daily soft budget so the review can't starve classification. If the cap is hit, the run stops, is marked `failed` with a reason, and sends nothing partial. Rough cost: $3–8 per run.
+
 ---
 
 ## 7. Data model (SQLite, `STRICT` tables) — outline
@@ -549,7 +576,9 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `rebalance_plans` (profile, as_of, input_hash BLOB, plan TEXT JSON, PK(profile, as_of)) (M5)
 - `commands` (id INTEGER PK, kind, args TEXT JSON, requested_at, requested_by, status, processed_at): writes requested by the dashboard, executed by the worker
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
-- `alerts` (id INTEGER PK, event_id FK NULL, kind, channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
+- `universe_reviews` (id INTEGER PK, as_of, status CHECK IN ('running','done','failed'), payload TEXT JSON, model, prompt_version, cost_micros INTEGER, error NULL) (M12)
+- `universe_candidates` (review_id FK, symbol, action CHECK IN ('add','remove','watch','keep'), cik NULL, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12)
+- `alerts` (id INTEGER PK, event_id FK NULL, kind (M12 adds `universe_review`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
 - `job_runs` (id INTEGER PK, job, started_at, finished_at, status, rows_written, provider, error)
 
 Notes:
@@ -585,7 +614,8 @@ Notes:
 8. **Strategies (M4):** per profile, the recommended model strategy and its target weights; equity-curve and drawdown charts vs QTUM/QQQ; the full metrics table for every candidate with qualify/fail reasons; the backtest banner from §6.5.
 9. **Holdings (M5):** an editable holdings + cash table (saved via the `update_holdings` command; in `tiger` mode the universe rows are read-only, with "Sync from Tiger", the last sync time and the masked account number), the profile picker, current vs target weights, the rebalance plan (§6.6) with "unchanged since …" or the cited override reason, and the backtest banner.
 10. **Login (M5):** the password form (§2.2 S2).
-11. **Ops:**
+11. **Universe (M12):** the latest review and history: each proposed add/remove/watch with description, criteria pass/fail, reasons and cited sources (with trust tiers), plus run cost.
+12. **Ops:**
    - last run per job and the provider used
    - **jobs failing for more than 24h** (also sent as an alert)
    - LLM spend vs soft budget, plus a reminder of the Console hard limit
@@ -614,6 +644,7 @@ Dark mode, responsive, fast. Everything renders from SQLite read-only; the page 
 | Dividends + backtests + model strategies (M4); profile targets + rebalance plan (M5) | Daily 07:10, and after a holdings update |
 | Conclusion outcomes (track record) | Daily 07:30 |
 | Calibration report | Sunday 08:00 |
+| Universe review (M12) | 1st of each month, 10:00 (retried once the next day if it fails) |
 | Conclusions | Sunday 08:30 + on escalation (subject to hysteresis) |
 | Weekly brief | Sunday 09:00 |
 | Job-health check (alert on any job failing > 24h) | Hourly |
@@ -635,6 +666,7 @@ All jobs run in the single worker's APScheduler with `max_instances=1`. Network 
 - `CLASSIFIER_MODEL` (cheap tier) and `SYNTH_MODEL` (strongest tier) come from env. Look up current IDs in the Anthropic docs.
 - Tools: only `research/` gets the web-search tool, with capped `max_uses`, `allowed_domains` from `sources.yaml`, and a daily run cap. Classification and synthesis: **no tools**.
 - Escalations: `MAX_ESCALATIONS_PER_DAY` and a per-ticker cooldown (§5.2).
+- Monthly universe review (§6.7): `RESEARCH_DEEP_MODEL` (strongest Opus tier) for both the research and the no-tools proposal call, capped per run by `UNIVERSE_REVIEW_BUDGET_USD`.
 - Backfill uses the **Message Batches API**.
 - Holdings (manual or Tiger-synced, and the deprecated `positions.yaml`), the broker account number, secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
 
@@ -675,6 +707,12 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M11** | Escalation, ops & deploy | Escalation flow with caps (§5.2.5), verification research, Ops page, structured logging, backup restore drill, optional Litestream, `pip-audit` in lint, K8s manifests: **one pod** with `worker` + `app` containers sharing a ReadWriteOnce PVC on local storage (`replicas: 1`, `strategy: Recreate`), Secret, NetworkPolicy (egress allow-list where feasible); runbook incl. "migrate to MySQL/Postgres" and "rotate API key" | Synthetic high-materiality T1 event → alert + re-synthesis within 5 min; 6th escalation in a day is refused; fresh clone → running stack in <10 min; restore from backup reproduces the dashboard |
+
+### Phase 4 — Discovery
+
+| # | Milestone | Deliverables | Acceptance |
+|---|---|---|---|
+| **M12** | Monthly universe review | `config/universe.yaml` (criteria), deterministic discovery (QTUM holdings, EDGAR full-text search, current pure-plays), deep research on `RESEARCH_DEEP_MODEL`, deterministic eligibility checks, no-tools proposal with citation validator, `universe_reviews` / `universe_candidates`, Telegram summary + Universe page, monthly job, per-run budget cap. Depends on M3 (Telegram), M6 (research runner, LLM wrapper) and M10 (citation validator). | On recorded fixtures: a candidate below the market-cap or liquidity floor is never proposed as `add`, even when the model says add; a candidate without a T1 business excerpt is never `add`; a synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove`; a recent listing with <60 sessions → `watch`; unknown evidence IDs are rejected; the Telegram text is plain, ≤4096 chars, and sent once per review; a month with no changes sends "No changes proposed"; hitting the budget cap marks the run `failed` and sends nothing; the job is registered for the 1st of the month at 10:00 SGT |
 
 ---
 

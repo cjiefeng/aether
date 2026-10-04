@@ -1,5 +1,26 @@
 # Milestone report
 
+## Roadmap change: monthly universe review (2026-10-04, owner-approved)
+
+There's a new **M12, Phase 4 "Discovery"**, after hardening. Spec: §1.1, §1.2, §3, **new §6.7**, §7, §8, §9, §10, §11.
+
+- **When:** on the 1st of each month at 10:00 SGT.
+- **What it does:**
+  - Finds candidates deterministically, for free: QTUM holdings, SEC full-text search, and the current pure-plays.
+  - Researches them in depth on the **strongest Opus model** (`claude-opus-5-5`) with web search.
+  - Checks eligibility in code.
+- **What you get:** a Telegram message listing each ticker to **add / remove / watch**, with what the company does and the reasons, backed by sources.
+- **Proposals only:** Aether never edits `watchlist.yaml`. You apply a change through a PR.
+- **Pure-play test** (`config/universe.yaml`, initial values for your review):
+  1. US-listed with an SEC CIK
+  2. quantum is the principal business, per a T1 filing excerpt
+  3. market cap ≥ $500M and median dollar volume ≥ $5M
+  4. ≥60 trading sessions; anything newer is "watch"
+- **Removal:** a company is proposed for removal if it's delisted or acquired, its business moves away from quantum, or it fails the size/liquidity test in 3 consecutive reviews.
+- **Cost:** each run has its own cap, `UNIVERSE_REVIEW_BUDGET_USD` (default $10), separate from the daily budget. Expect about $3–8 a month.
+
+**Open question:** the original five pure-plays came from the brief, not from these criteria. The first review will test them against the same rules, so it may propose removing one.
+
 ## M4: Backtest lab + model strategies (2026-10-04)
 
 Phase 1b, part 1. $0 LLM: every number is computed in code from stored prices.
