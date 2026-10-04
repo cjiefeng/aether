@@ -41,6 +41,10 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
 
 Run it again whenever new commits land on `main`.
 
+## CI
+
+Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test`, `make lint`, `make secrets-scan` (full git history) and a runtime image build. These are the same Docker-wrapped targets used locally. Changes land on `main` only through PRs that pass CI.
+
 ## Make targets
 
 | Target | What it does |
