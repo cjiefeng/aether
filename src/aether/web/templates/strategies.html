@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Strategies · Aether{% endblock %}
+{% block scripts %}
+  <script src="/static/echarts.min.js" defer></script>
+  <script src="/static/charts.js" defer></script>
+{% endblock %}
+{% macro fmt(value, kind) -%}
+  {%- if value is none -%}—
+  {%- elif kind == "pct" -%}{{ value|pct }}
+  {%- elif kind == "pctu" -%}{{ value|pct(False) }}
+  {%- elif kind == "n" -%}{{ value }}
+  {%- else -%}{{ "%.2f"|format(value) }}
+  {%- endif -%}
+{%- endmacro %}
+{% macro checks(q) -%}
+  {%- for name in ("volatility", "max_drawdown") -%}
+    {%- set c = q[name] -%}
+    {%- if c.limit is none -%}
+      <span class="badge">{{ name|replace("_", " ") }}: no limit</span>
+    {%- elif c.ok -%}
+      <span class="badge signal">{{ name|replace("_", " ") }} {{ c.value|pct(False) }} ≤ {{ c.limit|pct(False) }}</span>
+    {%- else -%}
+      <span class="badge risk">{{ name|replace("_", " ") }} {{ c.value|pct(False) }} &gt; {{ c.limit|pct(False) }}</span>
+    {%- endif %} {% endfor -%}
+{%- endmacro %}
+{% macro label(r) -%}
+  {{ family_labels.get(r.family, r.family) }}, QTUM {{ (r.qtum_weight * 100)|round|int }}%
+{%- endmacro %}
+{% block content %}
+<h1>Strategies</h1>
+
+<p class="banner stale"><strong>{{ banner }}</strong></p>
+
+{% if fresh.stale %}
+<p class="banner stale">
+  {% if fresh.last_ok %}Backtests stale since {{ fresh.last_ok }} (last successful run).
+  {% else %}No successful backtest run yet. Results appear after the worker's first daily run (07:10 SGT) once prices are in.{% endif %}
+</p>
+{% endif %}
+
+{% if not v %}
+<section class="card"><p class="muted">No backtest results yet.</p></section>
+{% else %}
+<section class="card">
+  <h2>About these numbers</h2>
+  <ul class="small">
+    {% for c in v.summary.caveats %}<li>{{ c }}</li>{% endfor %}
+    <li>Universe: {{ v.summary.universe|join(", ") }}. No cash or T-bill sleeve: a safer profile holds more QTUM.
+      QQQ and SOXX are benchmarks only.</li>
+    <li>Total-return prices (split- and dividend-adjusted, computed from closes plus cash dividends).
+      Walk-forward: weights for each session use only earlier data. Monthly rebalance, 10 bps cost per unit of turnover.</li>
+    <li>Risk-free rate is 0 for Sharpe, Sortino and alpha.</li>
+  </ul>
+  <p class="muted small">Computed {{ v.created_at }} from prices through {{ v.as_of }} (run #{{ v.run_id }}).</p>
+</section>
+
+{% for p in v.profiles %}
+<section class="card" id="profile-{{ p.name }}">
+  <div class="card-head">
+    <h2>{{ p.name|capitalize }}</h2>
+    <span class="muted small">QTUM ≥ {{ (p.selection.min_qtum * 100)|round|int }}%,
+      ≤ {{ (p.selection.max_per_name * 100)|round|int }}% per pure-play;
+      ranked by {{ "lowest CVaR95" if p.selection.rank_metric == "cvar95_low" else "highest Sortino" }}</span>
+  </div>
+  {% if p.recommended %}
+  <p>Model strategy: <strong>{{ label(p.recommended) }}</strong> <span class="muted small">({{ p.recommended.strategy_id }})</span></p>
+  <div class="grid2">
+    <div>
+      <h3>Current target weights</h3>
+      <table class="num compact">
+        <thead><tr><th>Symbol</th><th>Weight</th></tr></thead>
+        <tbody>
+        {% for sym, w in p.weights %}<tr><td>{{ sym }}</td><td>{{ w|pct(False) }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Out-of-sample summary</h3>
+      <table class="num compact">
+        <tbody>
+        {% for key, lbl, kind in columns[:11] %}<tr><th>{{ lbl }}</th><td>{{ fmt(p.recommended.metrics[key], kind) }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="chart" data-chart="strategy-equity" data-src="/api/strategies/curves?profile={{ p.name }}"></div>
+    <div class="chart" data-chart="strategy-drawdown" data-src="/api/strategies/curves?profile={{ p.name }}"></div>
+  </div>
+  <p class="muted small">{{ p.selection.reason }} Equity rebased to 100 at the start of the out-of-sample period; drawdown in %.</p>
+  {% else %}
+  <p class="bad"><strong>No qualifying strategy.</strong></p>
+  <p>{{ p.selection.reason }}</p>
+  {% endif %}
+
+  <h3>Candidates</h3>
+  <table class="num">
+    <thead><tr><th>#</th><th>Strategy</th><th>CAGR</th><th>Volatility</th><th>Max DD</th><th>CVaR95</th><th>Sortino</th><th>Limits</th></tr></thead>
+    <tbody>
+    {% for r in p.candidates %}
+    <tr>
+      <td>{{ loop.index if r.qualifies.ok else "—" }}</td>
+      <td>{{ label(r) }}{% if p.recommended and r.strategy_id == p.recommended.strategy_id %} <span class="badge signal">selected</span>{% endif %}</td>
+      <td>{{ fmt(r.metrics.cagr, "pct") }}</td>
+      <td>{{ fmt(r.metrics.volatility, "pctu") }}</td>
+      <td>{{ fmt(r.metrics.max_drawdown, "pctu") }}</td>
+      <td>{{ fmt(r.metrics.cvar95, "pctu") }}</td>
+      <td>{{ fmt(r.metrics.sortino, "r") }}</td>
+      <td>{{ checks(r.qualifies) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+
+<section class="card">
+  <h2>Full metrics (out-of-sample)</h2>
+  <table class="num small">
+    <thead><tr><th>Strategy</th>{% for key, lbl, kind in columns %}<th>{{ lbl }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr class="group"><th colspan="{{ columns|length + 1 }}">Benchmarks</th></tr>
+      {% for r in v.benchmarks %}
+      <tr><td>{{ r.strategy_id }}</td>{% for key, lbl, kind in columns %}<td>{{ fmt(r.metrics.get(key), kind) }}</td>{% endfor %}</tr>
+      {% endfor %}
+      {% for p in v.profiles %}
+      <tr class="group"><th colspan="{{ columns|length + 1 }}">{{ p.name|capitalize }}</th></tr>
+      {% for r in p.candidates %}
+      <tr><td>{{ r.strategy_id }}</td>{% for key, lbl, kind in columns %}<td>{{ fmt(r.metrics.get(key), kind) }}</td>{% endfor %}</tr>
+      {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">VaR95/CVaR95 are historical daily losses. Capture ratios compare mean daily returns on QQQ's up and down days.
+    Drawdown duration runs from the peak until it is regained (or to the end of the period).</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Recompute</h2>
+  <p class="muted">Fetch dividends and rerun the backtests now (CSRF-protected, rate-limited). Identical inputs give an identical result.</p>
+  <button hx-post="/commands/recompute-strategies" hx-target="#recompute-result" hx-swap="innerHTML">Recompute</button>
+  <span id="recompute-result"></span>
+</section>
+{% endblock %}

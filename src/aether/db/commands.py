@@ -17,7 +17,9 @@ from aether.db.models import commands
 from aether.db.types import to_iso, utcnow_iso
 
 # Allow-list of command kinds the dashboard may request. Extended per milestone.
-ALLOWED_KINDS = frozenset({"ping", "refresh_prices", "refresh_edgar", "test_alert"})
+ALLOWED_KINDS = frozenset(
+    {"ping", "refresh_prices", "refresh_edgar", "test_alert", "recompute_strategies"}
+)
 
 
 class UnknownCommandError(ValueError):
