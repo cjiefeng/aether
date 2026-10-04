@@ -13,6 +13,7 @@ import pytest
 import respx
 from sqlalchemy import Engine, insert, select
 
+from aether.db import migrate
 from aether.db.commands import enqueue_command
 from aether.db.engine import make_command_engine
 from aether.db.models import commands, job_runs, tickers
@@ -78,7 +79,7 @@ def test_backup_is_consistent_and_private(
     try:
         assert con.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert con.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0001_baseline",
+            migrate.head_revision(),
         )
     finally:
         con.close()

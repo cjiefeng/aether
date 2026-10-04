@@ -7,6 +7,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from aether.config import Settings
+from aether.db import migrate
 from aether.security.csrf import COOKIE_NAME
 from aether.security.headers import CSP
 from tests.conftest import make_client, make_settings
@@ -30,7 +31,7 @@ def test_health_page_reports_sqlite_version_and_wal(client: TestClient) -> None:
 
     assert sqlite3.sqlite_version in r.text
     assert ">wal<" in r.text
-    assert "0001_baseline" in r.text
+    assert migrate.head_revision() in r.text
     assert "not financial advice" in r.text
 
 

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Overview · Aether{% endblock %}
+{% block scripts %}
+  <script src="/static/echarts.min.js" defer></script>
+  <script src="/static/charts.js" defer></script>
+{% endblock %}
+{% block content %}
+<h1>Overview</h1>
+
+{% if fresh.prices_stale %}
+<p class="banner stale">
+  {% if fresh.prices_last_ok %}Prices stale since {{ fresh.prices_last_ok }} (last successful price run).
+  {% else %}No successful price run yet. Data appears after the worker's first fetch.{% endif %}
+</p>
+{% endif %}
+{% if fresh.stale_symbols and not fresh.prices_stale %}
+<p class="banner stale">
+  Stale symbols:
+  {% for sym, d in fresh.stale_symbols %}{{ sym }} (since {{ d or "never" }}){% if not loop.last %}, {% endif %}{% endfor %}
+</p>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>QTUM vs pure-play basket vs SOXX vs QQQ</h2>
+    <div class="range-group" data-for="overview-chart" role="group" aria-label="Range">
+      {% for r in ranges %}
+      <button type="button" class="range{{ ' active' if r == default_range }}" data-range="{{ r }}">{{ r|upper }}</button>
+      {% endfor %}
+    </div>
+  </div>
+  <div id="overview-chart" class="chart" data-chart="overview" data-src="/api/prices/overview" data-range="{{ default_range }}"></div>
+  <p class="muted small">Rebased to 100 at the start of the range (log scale). Basket: equal-weighted
+    {{ pure|join(", ") }}, rebalanced daily; a name joins once it has prices.
+    Split-adjusted closes, dividends excluded.</p>
+</section>
+
+<section class="card">
+  <h2>Tickers</h2>
+  <table class="num">
+    <thead><tr><th>Symbol</th><th>Last close</th><th>1d</th><th>30d</th><th>From 52w high</th><th>As of</th><th>Provider</th></tr></thead>
+    {% for label, rows in groups %}
+    <tbody>
+      <tr class="group"><th colspan="7">{{ label }}</th></tr>
+      {% for s in rows %}
+      <tr>
+        <td><a href="/t/{{ s.symbol }}">{{ s.symbol }}</a></td>
+        <td>{{ "%.2f"|format(s.last_c) if s.last_c is not none else "—" }}</td>
+        <td class="{{ 'up' if (s.chg_1d or 0) > 0 else 'down' if (s.chg_1d or 0) < 0 }}">{{ s.chg_1d|pct }}</td>
+        <td class="{{ 'up' if (s.chg_30d or 0) > 0 else 'down' if (s.chg_30d or 0) < 0 }}">{{ s.chg_30d|pct }}</td>
+        <td>{{ s.drawdown_52w|pct }}</td>
+        <td class="{{ 'bad' if s.stale }}">{{ s.last_d or "no data" }}</td>
+        <td>{{ s.provider or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% endfor %}
+  </table>
+</section>
+
+<section class="card">
+  <h2>Watchlist weight in QTUM</h2>
+  {% if holdings.snapshot_date %}
+    {% if holdings.stale %}<p class="banner stale">Holdings snapshot stale since {{ holdings.snapshot_date }}.</p>{% endif %}
+    <p>Pure-plays combined: <strong>{{ "%.2f"|format(holdings.combined) }}%</strong> of QTUM
+      <span class="muted">(issuer data as of {{ holdings.snapshot_date }})</span></p>
+    <table class="num compact">
+      <thead><tr>{% for sym in pure %}<th>{{ sym }}</th>{% endfor %}</tr></thead>
+      <tbody><tr>{% for sym in pure %}<td>{{ "%.2f%%"|format(holdings.weights[sym]) if sym in holdings.weights else "not held" }}</td>{% endfor %}</tr></tbody>
+    </table>
+  {% else %}
+    <p class="banner stale">No QTUM holdings snapshot yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Refresh</h2>
+  <p class="muted">Queue an immediate price fetch (CSRF-protected, rate-limited).</p>
+  <button hx-post="/commands/refresh-prices" hx-target="#refresh-result" hx-swap="innerHTML">Refresh prices</button>
+  <span id="refresh-result"></span>
+</section>
+{% endblock %}

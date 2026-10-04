@@ -7,11 +7,12 @@
   <title>{% block title %}Aether{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
+  {% block scripts %}{% endblock %}
 </head>
 <body hx-headers='{{ {"X-CSRF-Token": csrf_token}|tojson }}'>
   <header class="top">
     <a class="brand" href="/">Aether</a>
-    <nav><a href="/health">Health</a></nav>
+    <nav><a href="/">Overview</a> <a href="/health">Health</a></nav>
   </header>
   <main>
     {% block content %}{% endblock %}

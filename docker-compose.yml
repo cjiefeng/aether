@@ -23,6 +23,9 @@ services:
       AETHER_LOG_LEVEL: ${AETHER_LOG_LEVEL:-INFO}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+      MASSIVE_API_KEY: ${MASSIVE_API_KEY:-}
+      # Root FS is read-only; library caches (yfinance) go to the /tmp tmpfs.
+      XDG_CACHE_HOME: /tmp/cache
       DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-3.00}
       CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-}
       SYNTH_MODEL: ${SYNTH_MODEL:-}
