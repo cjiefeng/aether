@@ -14,19 +14,21 @@ Build **Aether**, a self-hosted watcher for a small set of quantum-computing equ
 3. Tracks **catalysts**: roadmap milestones, program decisions, earnings dates and lock-ups, each with expected dates and hit/slip status.
 4. Keeps a deterministic **scorecard** for each ticker and for the theme as a whole.
 5. Produces a **definitive conclusion** per ticker and for the theme. Each conclusion has a single stance, a confidence level, a cited thesis and "what would change my mind". It also has a **visible track record** showing how past stances actually performed (§6.4).
-6. Shows all of this on a **LAN-only dashboard** (no login) and sends owner-only Telegram alerts on high-materiality events.
+6. Shows all of this on a **LAN-only, password-protected dashboard** and sends owner-only Telegram alerts on high-materiality events.
+7. Backtests **model strategies** over the watchlist for three risk profiles (safe / medium / aggressive), and turns the owner's saved holdings into deterministic, stable **rebalance steps** toward the chosen profile (§6.5, §6.6).
 
-This is a **personal research tool, not financial advice**. Every conclusion page carries a footer saying so, next to the stance track record.
+This is a **personal research tool, not financial advice**. Every conclusion page carries a footer saying so, next to the stance track record. The Strategies and Holdings pages carry the same footer plus: **"Backtest for reference only. Historical returns are not future gains."**
 
 ### 1.1 Delivery phases
 
-The build comes in three phases, so it's useful early. Each phase ends in something the owner can use on its own.
+The build comes in four phases, so it's useful early. Each phase ends in something the owner can use on its own.
 
 | Phase | Milestones | What the owner gets | LLM cost |
 |---|---|---|---|
 | **1. Risk watcher MVP** | M0–M3 | Prices, dilution/insider/lock-up/earnings alerts from SEC data, Telegram alerts, basic dashboard | **$0** |
-| **2. Intelligence** | M4–M8 | News classification, catalysts, scorecards, event reactions, conclusions with track record, weekly brief | Budgeted |
-| **3. Hardening** | M9 | Escalation flow, ops, backups, K8s | — |
+| **1b. Portfolio** | M4–M5 | Backtested model strategies per risk profile, password login, holdings page, rebalance planner | **$0** |
+| **2. Intelligence** | M6–M10 | News classification, catalysts, scorecards, event reactions, conclusions with track record, weekly brief | Budgeted |
+| **3. Hardening** | M11 | Escalation flow, ops, backups, K8s | — |
 
 ### 1.2 Watchlist (in `config/watchlist.yaml`; editable without code changes)
 
@@ -45,23 +47,13 @@ The build comes in three phases, so it's useful early. Each phase ends in someth
 
 **Context tickers** (prices only, no conclusions): `IBM, GOOGL, MSFT, AMZN, NVDA`.
 
-### 1.3 Positions (optional, `config/positions.yaml`, git-ignored)
+### 1.3 Positions (Holdings page, from M5)
 
-```yaml
-# Optional. If absent, all position features are hidden.
-base_currency: USD
-target_weights:     # % of the quantum sleeve
-  QTUM: 50
-  IONQ: 20
-  QNT: 20
-  RGTI: 5
-  QBTS: 5
-holdings:           # shares; update manually
-  QTUM: 0
-  IONQ: 0
-```
+The owner enters, edits and saves holdings (ticker, shares, optional cost basis, plus a USD cash balance) on the **Holdings** page (§8). Each save is a CSRF-protected `update_holdings` command that the worker applies; the dashboard never writes holdings itself. The target is the **selected risk profile's** model strategy (§6.5), not a hand-written weight list. If no holdings are saved, all position features are hidden.
 
-Used for drift vs target and for "you're 2× overweight X vs plan" lines in the weekly brief. It never leaves the machine and never goes into LLM prompts. Only the computed drift percentages go into synthesis, if the owner enables `positions.share_drift_with_llm`.
+`config/positions.yaml` (git-ignored) is **deprecated**: if it exists when M5 first runs, its `holdings` are imported once and the file is then ignored.
+
+Holdings are used for drift vs target, the rebalance plan (§6.6) and "you're 2× overweight X vs plan" lines in the weekly brief. They never leave the machine and never go into LLM prompts. Only the computed drift percentages go into synthesis, if the owner enables `positions.share_drift_with_llm`. Holdings live in SQLite, so they are also in the local backups under `data/` (git- and docker-ignored).
 
 ---
 
@@ -88,7 +80,7 @@ The owner is a senior MySQL / DBaaS backend engineer who is fluent in Python and
 - **Migrations:** Alembic with `render_as_batch=True` (SQLite's `ALTER TABLE` is limited).
 - **The DB file must live on local disk.** Never put it on NFS, SMB or another network filesystem, because locking breaks. File mode is `0600`.
 - **Keep it portable to MySQL/Postgres:** all SQL goes through SQLAlchemy Core/ORM inside `db/`, and dialect-specific code (the upsert, JSON extraction) sits behind small helpers in `db/dialect.py`. Switching engines later should be a new DSN plus migrations.
-- **Backups:** a nightly `sqlite3 aether.db ".backup data/backups/aether-YYYYMMDD.db"` (online, consistent), keeping 14 days. Litestream to S3 is optional in M9.
+- **Backups:** a nightly `sqlite3 aether.db ".backup data/backups/aether-YYYYMMDD.db"` (online, consistent), keeping 14 days. Litestream to S3 is optional in M11.
 
 ### 2.2 Security requirements (non-negotiable, built from M0)
 
@@ -104,13 +96,18 @@ The owner is a senior MySQL / DBaaS backend engineer who is fluent in Python and
 - **Materiality caps:** an event backed only by T3 sources is capped at materiality 2. One backed only by a single T2 source is capped at 3. Reaching 4–5 needs a T1 source **or** two or more independent T2 sources (different domains, not syndicated copies). These caps are enforced in code **after** the LLM responds.
 - Events with `injection_suspected` are quarantined. They're shown in the Feed with a warning, excluded from scorecards and synthesis, and never escalated.
 
-**S2 — Dashboard access (local network only, no login).**
+**S2 — Dashboard access (local network only, single password; amended for M5).**
 
-- **No login page and no user accounts.** The dashboard is only for use on the owner's local network.
+- **One site-wide password, no user accounts** (from M5; until then, no login). The dashboard is only for use on the owner's local network.
+  - The password is stored only as a **scrypt hash** (stdlib `hashlib.scrypt`) in `.env` as `AETHER_DASHBOARD_PASSWORD_HASH`. `make hash-password` (Docker) prompts for the password and prints the hash.
+  - A successful login sets an HMAC-signed session cookie (key `AETHER_SESSION_SECRET` from `.env`): HttpOnly, SameSite=Strict, 30-day expiry. Logout clears it.
+  - Login attempts are rate-limited to **5 per 15 minutes per client IP**, and failures are logged without the submitted password.
+  - **Fail closed:** if either env var is missing or malformed, `app` refuses to start. Every route needs a valid session except `/login`, static assets and the minimal `/healthz` used by the Docker healthcheck (which must not expose data).
+  - The dashboard runs over plain HTTP on the LAN, so the password and cookie can be sniffed on the local network. TLS is out of scope; the README says so.
 - **Bind address:** `app` binds to `AETHER_BIND` (default `0.0.0.0:8000` inside the container). docker-compose publishes it on the host's LAN interface only, e.g. `${AETHER_LAN_IP}:8000:8000`.
 - **Never expose it to the internet:** no router port-forwarding, no public tunnel. The README says so.
-- **Network allow-list:** middleware rejects any request whose client IP isn't in `AETHER_ALLOWED_CIDRS` (default `127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`) with 403. Don't trust `X-Forwarded-For` unless `AETHER_TRUSTED_PROXY` is set.
-- **Command endpoints still protected:** anything that triggers work or LLM spend (the `commands` table: re-run research, mark catalyst) still needs a CSRF token, so a malicious web page in a LAN browser can't fire them, and is rate-limited (e.g. 10/hour). Each command costs against the LLM budget like any other call.
+- ~~**Network allow-list**~~: removed by owner decision after M0 review (Docker Desktop presents every client as the VM gateway). Access relies on the LAN boundary, the host firewall and, from M5, the password.
+- **Command endpoints still protected:** anything that triggers work or LLM spend, or changes owner data (the `commands` table: re-run research, mark catalyst, update holdings) still needs a CSRF token, so a malicious web page in a LAN browser can't fire them, and is rate-limited (e.g. 10/hour). Each command costs against the LLM budget like any other call.
 - Security headers: CSP with no inline scripts, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
 
 **S3 — Spend control (two layers).**
@@ -120,7 +117,7 @@ The owner is a senior MySQL / DBaaS backend engineer who is fluent in Python and
 
 **S4 — Secrets.**
 
-- Secrets come from env only (`.env`, mode `0600`): `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`, optional `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_USER_ID` / `TELEGRAM_CHAT_ID` (see S7).
+- Secrets come from env only (`.env`, mode `0600`): `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`, `AETHER_DASHBOARD_PASSWORD_HASH`, `AETHER_SESSION_SECRET` (from M5), optional `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_USER_ID` / `TELEGRAM_CHAT_ID` (see S7).
 - `.env`, `config/positions.yaml` and `data/` are listed in **both** `.gitignore` and `.dockerignore`.
 - A `gitleaks` pre-commit hook plus a CI-style `make secrets-scan`.
 - Use separate API keys for dev and for the long-running app.
@@ -198,11 +195,12 @@ Seed facts. All are `unverified`, gathered from secondary sources in Oct 2026; r
  search           │                                                    │                       │
                   │  catalysts/ ◀──────────────────────────────────────┘                       │
                   │  score/ (scorecards, reactions, theme decomposition, track record)         │
+                  │  portfolio/ (backtests, model strategies, rebalance plans; no LLM)         │
                   │  synthesize/ (no tools; evidence-bound; hysteresis)                        │
                   │  alerts/ (Telegram, owner-only guard)                                      │
                   └────────────────────────────────────────────────────────────────────────────┘
                                               │
-        app (FastAPI + HTMX; LAN-only, CIDR allow-list, no login; SQLite mode=ro; CSRF'd commands)
+        app (FastAPI + HTMX; LAN-only, single password; SQLite mode=ro; CSRF'd commands)
 ```
 
 **Package layout**
@@ -218,15 +216,16 @@ src/aether/
   research/            # Claude web-search research runs (the only tool-enabled LLM calls)
   classify/            # rules.py, llm.py, rubric.py, caps.py (trust-tier caps), prompts/
   catalysts/
-  score/               # scorecard.py, reaction.py, theme.py, track_record.py, positions.py
+  score/               # scorecard.py, reaction.py, theme.py, track_record.py
+  portfolio/           # metrics.py, strategies.py, backtest.py, select.py, holdings.py, rebalance.py
   synthesize/          # conclusions, hysteresis, weekly brief, citation validator
   alerts/
   llm/                 # Anthropic client wrapper: budget guard, caching, redacted logging, call logging
   web/                 # FastAPI routes, templates, static
   jobs.py              # scheduler wiring
 config/
-  watchlist.yaml  rubric.yaml  weights.yaml  catalysts_seed.yaml  sources.yaml  facts.yaml
-  positions.yaml (optional, git-ignored)
+  watchlist.yaml  rubric.yaml  weights.yaml  catalysts_seed.yaml  sources.yaml  facts.yaml  strategies.yaml
+  positions.yaml (deprecated from M5: imported once, then ignored; git-ignored)
 evals/
   classifier_golden.jsonl
 tests/fixtures/        # recorded HTTP cassettes, synthetic price series
@@ -308,7 +307,7 @@ Every event gets a classification record:
 2. **LLM classification** for everything else, using `CLASSIFIER_MODEL`, untrusted-content wrapping (S1), prompt caching on the rubric system prompt, and strict schema output. **No tools.**
 3. **Trust-tier caps** (`classify/caps.py`): apply the S1 caps in code. Store `materiality_raw` and `materiality`.
 4. **Dedupe/merge:** canonical URL hash plus title similarity (simhash or MinHash). Syndicated copies merge into one event and **don't** count as independent sources. Track `independent_source_count` by distinct registrable domain.
-5. **Escalation** (built in M9; the RISK rules alert from M3):
+5. **Escalation** (built in M11; the RISK rules alert from M3):
    - Triggers: post-cap materiality ≥4, or a T1-sourced RISK ≥3.
    - Actions: (a) an alert, (b) a verification research run, (c) re-synthesis of that ticker.
    - Caps: at most `MAX_ESCALATIONS_PER_DAY` (default 5) and at most 1 per ticker per 6 hours. Quarantined events never escalate.
@@ -349,7 +348,7 @@ Compute daily per ticker:
 - Cross-check against the watchlist's combined weight from the holdings snapshot.
 - The QTUM stance is labeled **"quantum-sleeve view"** and must state how much of QTUM's recent movement the quantum basket explains.
 
-**Positions (optional, `score/positions.py`):** current weights vs `target_weights`, drift in percentage points, and the largest overweight/underweight.
+**Positions:** moved to §6.6 (`portfolio/rebalance.py`, M5). Drift is measured against the selected profile's model strategy.
 
 ### 6.2 Conclusion (`synthesize/`; strong model, `SYNTH_MODEL`; no tools)
 
@@ -416,7 +415,7 @@ Rules:
 **Calibration report** (the Calibration page plus a monthly section in the brief):
 
 - Per class and category: n, mean |z₁|, mean |z₅|, % with |z₅| > 2, median reversal ratio, abnormal volume. For SIGNAL/RISK, also the **direction hit rate**.
-- Pool across tickers. Report a category only when **n ≥ 15** non-confounded events. Seed with the M4 backfill (Batch API) and expect sparse results for months.
+- Pool across tickers. Report a category only when **n ≥ 15** non-confounded events. Seed with the M6 backfill (Batch API) and expect sparse results for months.
 - **Flags with suggested actions (never auto-applied):**
   - A NOISE category that behaves like signal → consider reclassifying it.
   - A SIGNAL category that the market ignores → review its rubric or weight.
@@ -438,6 +437,66 @@ The system must show whether its own calls have been any good.
 - "Held" updates (hysteresis-blocked) don't count as new calls.
 - **Every conclusion page and the weekly brief show the track record next to the stance**, including "n too small (<10 mature calls): treat stance as unproven". Until 6-month results exist, the banner reads **"No track record yet."**
 - Add a naive baseline for comparison: "always HOLD" and "momentum" (stance = sign of 90-day excess return). If Aether doesn't beat the baselines, the dashboard says so.
+
+### 6.5 Backtest lab & risk-profile model strategies (`portfolio/`; M4; no LLM)
+
+**Purpose:** show how a few rule-based combinations of the watchlist would have behaved, and recommend one **model strategy** per risk profile. Every number is computed in code from stored prices; nothing is sent to an LLM.
+
+**Banner on every page that shows this (verbatim):** "Backtest for reference only. Historical returns are not future gains." Plus the history caveat, computed from the data (e.g. "QNT has N sessions of history").
+
+**Prices.** Backtests use **total-return** prices (split- *and* dividend-adjusted). M4 adds a `dividends` table (ex-date, cash amount, provider) filled from the price provider, and computes the total-return series in code, so yfinance and Massive can't mix adjustment conventions. `prices_daily` stays split-adjusted for everything else. Verify Massive's dividends endpoint and free-tier limits at implementation time.
+
+**Universe.** QTUM plus the five pure-plays. There is **no cash or T-bill sleeve**: a safer profile means **more QTUM**. QQQ and SOXX are benchmarks only (alpha, beta, capture). The risk-free rate is 0 for Sharpe/Sortino/alpha, and the UI says so. A name joins once it has ≥60 sessions.
+
+**Strategy families** (each = a QTUM core weight + a pure-play sleeve; parameters in `config/strategies.yaml`):
+
+| Family | Pure-play sleeve |
+|---|---|
+| `core_equal` | equal weight |
+| `core_inv_vol` | weights ∝ 1 / trailing volatility |
+| `core_min_var` | long-only minimum variance on the trailing covariance (numpy, projected gradient; no scipy) |
+| `core_momentum` | top 3 by trailing 6-month return, equal weight |
+
+The QTUM core weight is taken from a small grid per profile, and every candidate respects the profile's minimum QTUM weight and per-name cap.
+
+**Backtest method (walk-forward, no look-ahead).** Estimation window 120 sessions; weights on day *t* use data up to *t−1* only. Monthly rebalance; 10 bps cost per unit of turnover. Metrics are reported only over the **out-of-sample** period (all sessions after the first estimation window).
+
+**Metrics (per strategy, and for QTUM/QQQ/SOXX alone):** CAGR, total return, annualized volatility, downside deviation, max drawdown and its duration, historical daily VaR95 / CVaR95, Sharpe, Sortino, Calmar, beta and Jensen's alpha vs QQQ and vs QTUM, tracking error, information ratio, up/down capture vs QQQ, worst month, % positive months, average turnover.
+
+**Profiles (`config/strategies.yaml`, numbers only, `extra=forbid`; initial values for owner review).** Risk limits are **relative to QTUM's own out-of-sample result**, so no absolute threshold is invented:
+
+| | safe | medium | aggressive |
+|---|---|---|---|
+| Min QTUM weight | 80% | 50% | 0% |
+| Max weight per pure-play | 5% | 15% | 35% |
+| Volatility limit | ≤ 1.15 × QTUM | ≤ 1.6 × QTUM | none (shown) |
+| Max-drawdown limit | ≤ QTUM's + 5 pp | ≤ QTUM's + 15 pp | none (shown) |
+| Ranking metric | lowest CVaR95 | highest Sortino | highest Sortino |
+
+**Selection (deterministic).** Drop candidates that break the profile's limits; rank the rest by the profile's metric; tie-break on max drawdown, then strategy ID. If nothing qualifies, the profile shows "no qualifying strategy" with the reason (never a silent fallback). Each run stores an **input hash** (prices + config); the same hash must give byte-identical output.
+
+**Recompute** daily after prices (§9). The page shows each profile's recommended strategy, equity curves vs QTUM/QQQ, drawdown chart, metrics table and current target weights.
+
+### 6.6 Holdings & rebalance planner (`portfolio/holdings.py`, `portfolio/rebalance.py`; M5; no LLM)
+
+**Inputs:** saved holdings + cash (§1.3), the last close per ticker (with the stale banner if prices are stale), the owner's selected profile, and that profile's daily target weights from §6.5.
+
+**Stability (day-to-day targets shouldn't jump).** The published target for day *t* is the previous published target moved toward the new raw target, but:
+
+- each name moves **at most 1 pp per day**, and the sum of absolute moves is **at most 3 pp per day**;
+- a trade is suggested only when a holding's drift is **≥ 3 pp or ≥ 25% of its target weight**, **and** the trade is **≥ $100**;
+- the page says "targets unchanged since YYYY-MM-DD" when nothing moved.
+
+**Override (world-shaking news).** The caps are lifted for that day only, and the plan cites the reason, when either:
+
+1. a non-quarantined event with post-cap materiality **≥ 4** hits a ticker in the strategy (EDGAR rule events from M2; classified news from M7), or
+2. a **market-wide shock**: QTUM's or QQQ's 5-session return is below **−3σ** of its trailing 120-session 5-session returns.
+
+These mirror the §6.2 hysteresis rule and live in `config/strategies.yaml`.
+
+**Plan output:** per ticker current shares/value/weight, target weight/value, drift, and the **trade** (whole shares by default; sells listed before buys), the resulting cash, and the estimated turnover cost. An optional **"new cash only, no sells"** mode only allocates cash toward the most underweight names. No broker integration; the owner places trades manually.
+
+**Determinism:** the plan is a pure function of (holdings, prices, published targets, events, config); its input hash is stored with it.
 
 ---
 
@@ -467,6 +526,15 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `calibration_reports` (as_of PK, payload TEXT JSON)
 - `conclusions` (id INTEGER PK, symbol, as_of, stance CHECK IN ('ACCUMULATE','HOLD','TRIM','AVOID'), proposed_stance, held INTEGER, confidence REAL, payload TEXT JSON, model, prompt_version, input_hash BLOB, cost_micros INTEGER)
 - `conclusion_outcomes` (conclusion_id FK, horizon CHECK IN ('1m','3m','6m','12m'), benchmark, excess_return REAL NULL, hit INTEGER NULL, status CHECK IN ('pending','complete'), PK(conclusion_id, horizon))
+- `dividends` (symbol, ex_date, amount_micros INTEGER, provider, PK(symbol, ex_date)) `WITHOUT ROWID` (M4)
+- `strategy_runs` (id INTEGER PK, as_of, input_hash BLOB, config TEXT JSON, created_at; UNIQUE(as_of, input_hash)) (M4)
+- `strategy_metrics` (run_id FK, strategy_id, metrics TEXT JSON, qualifies TEXT JSON, PK(run_id, strategy_id)) (M4)
+- `strategy_weights` (run_id FK, strategy_id, symbol, weight REAL, PK(run_id, strategy_id, symbol)) (M4)
+- `profile_targets` (profile CHECK IN ('safe','medium','aggressive'), as_of, strategy_id, raw_weights TEXT JSON, published_weights TEXT JSON, override_reason TEXT JSON NULL, PK(profile, as_of)) (M5)
+- `holdings` (symbol PK, shares_micros INTEGER, cost_basis_micros INTEGER NULL, updated_at); cash is the reserved row `symbol = '$CASH'` (M5)
+- `holdings_history` (id INTEGER PK, command_id FK, before TEXT JSON, after TEXT JSON, applied_at) (M5)
+- `portfolio_settings` (key PK, value TEXT JSON): selected profile, whole-shares flag, new-cash-only flag (M5)
+- `rebalance_plans` (profile, as_of, input_hash BLOB, plan TEXT JSON, PK(profile, as_of)) (M5)
 - `commands` (id INTEGER PK, kind, args TEXT JSON, requested_at, requested_by, status, processed_at): writes requested by the dashboard, executed by the worker
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
 - `alerts` (id INTEGER PK, event_id FK NULL, kind, channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
@@ -480,7 +548,7 @@ Notes:
 
 ---
 
-## 8. Dashboard (FastAPI + HTMX; local network only, no login)
+## 8. Dashboard (FastAPI + HTMX; local network only, single password from M5)
 
 1. **Overview**
    - Theme tilt banner ("quantum-sleeve view") with confidence and track record.
@@ -489,7 +557,7 @@ Notes:
    - Theme decomposition: what drove QTUM over the last 30/90 days.
    - Signal/Noise/Risk counts over 30 days, open risk flags, quarantined-event count.
    - Catalyst and earnings timeline for the next 12 months.
-   - Position drift (if configured).
+   - Position drift vs the selected profile (if holdings are saved).
 2. **Ticker page**
    - Price chart with **event markers** colored by class. Hover shows the classification next to the market reaction.
    - Reaction table with "market agreed / disagreed" badges.
@@ -502,7 +570,10 @@ Notes:
 5. **Briefs:** archive of weekly briefs.
 6. **Calibration:** the §6.3 report and trend.
 7. **Facts:** the registry with status badges and source links. The owner uses this page to review before signing off (sign-off itself is done by editing `facts.yaml`).
-8. **Ops:**
+8. **Strategies (M4):** per profile, the recommended model strategy and its target weights; equity-curve and drawdown charts vs QTUM/QQQ; the full metrics table for every candidate with qualify/fail reasons; the backtest banner from §6.5.
+9. **Holdings (M5):** an editable holdings + cash table (saved via the `update_holdings` command), the profile picker, current vs target weights, the rebalance plan (§6.6) with "unchanged since …" or the cited override reason, and the backtest banner.
+10. **Login (M5):** the password form (§2.2 S2).
+11. **Ops:**
    - last run per job and the provider used
    - **jobs failing for more than 24h** (also sent as an alert)
    - LLM spend vs soft budget, plus a reminder of the Console hard limit
@@ -526,7 +597,8 @@ Dark mode, responsive, fast. Everything renders from SQLite read-only; the page 
 | Claude web-search sweep | 2×/day (08:00, 20:00) |
 | Classification | On ingest (queue) |
 | Event reactions | Daily 06:45 |
-| Theme decomposition + scorecards + positions drift | Daily 07:00 |
+| Theme decomposition + scorecards | Daily 07:00 |
+| Dividends + backtests + model strategies (M4); profile targets + rebalance plan (M5) | Daily 07:10, and after a holdings update |
 | Conclusion outcomes (track record) | Daily 07:30 |
 | Calibration report | Sunday 08:00 |
 | Conclusions | Sunday 08:30 + on escalation (subject to hysteresis) |
@@ -551,7 +623,7 @@ All jobs run in the single worker's APScheduler with `max_instances=1`. Network 
 - Tools: only `research/` gets the web-search tool, with capped `max_uses`, `allowed_domains` from `sources.yaml`, and a daily run cap. Classification and synthesis: **no tools**.
 - Escalations: `MAX_ESCALATIONS_PER_DAY` and a per-ticker cooldown (§5.2).
 - Backfill uses the **Message Batches API**.
-- `positions.yaml` contents, secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
+- Holdings (and the deprecated `positions.yaml`), secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
 
 ---
 
@@ -568,21 +640,28 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | **M2** | SEC EDGAR + deterministic risk | CIK mapping, submissions + companyfacts, Form 4 parser, capital structure (XBRL first), earnings calendar, deterministic RISK rules (dilution, insider clusters, lock-up from 424B4, going concern, 8-K items), ticker page filings/insider/dilution views; **verify every `FACTS.md` seed against its source and update statuses** | Fixture tests flag known S-3/424B/Form 4 for ≥2 tickers; QNT lock-up date extracted from a recorded prospectus fixture or listed as an open question |
 | **M3** | Alerts → **MVP done** | Telegram alerts for RISK rules, upcoming lock-ups/earnings (T−7d, T−1d) and job failures >24h; **S7 owner-only guard** (fail-closed config check, private-chat verification, inbound `is_owner` guard, auto-leave groups, `deleteWebhook`); alert dedupe; Facts page. Owner checklist: create bot, BotFather hardening, set `TELEGRAM_ALLOWED_USER_ID`/`TELEGRAM_CHAT_ID`. **Owner reviews `FACTS.md` and signs off.** | Synthetic S-3 fixture → one Telegram message (mocked transport), no duplicate on re-run; failing-job alert fires; guard tests: update from another user ID → dropped with no reply; group-chat update from the owner → dropped + `leaveChat` called; missing `TELEGRAM_ALLOWED_USER_ID` → Telegram module disabled; `getChat` returning a group → no messages sent |
 
+### Phase 1b — Portfolio (no LLM spend)
+
+| # | Milestone | Deliverables | Acceptance |
+|---|---|---|---|
+| **M4** | Backtest lab + model strategies | `dividends` ingest and total-return series, `portfolio/metrics.py` (§6.5 metric list), strategy families, walk-forward backtest, `config/strategies.yaml` with the three profiles, deterministic selection, daily job, **Strategies page** with the backtest banner; numpy declared as a direct dependency (no scipy) | Metrics match hand-computed values on a synthetic series (Sharpe, Sortino, max DD, CVaR, beta/alpha within tolerance); a look-ahead test (perturbing day *t* prices never changes weights before *t+1*); dividends on a synthetic series raise total return by the expected amount; same input hash → byte-identical output; a candidate breaking a profile limit is never selected; "no qualifying strategy" renders |
+| **M5** | Password, holdings & rebalance | **S2 password login** (scrypt hash, signed session cookie, login rate limit, fail-closed, `make hash-password`); **Holdings page** (CSRF'd `update_holdings` command, `holdings_history`, one-time `positions.yaml` import); profile picker; **stable targets** (daily caps, no-trade band) with the **override** rules; rebalance plan with whole shares, sells first, new-cash-only mode; weekly-brief drift lines read from here (used in M10) | Unauthenticated request to any data route → redirect to `/login`; 6th failed login in 15 min → 429; missing hash/secret → app won't start; holdings edit goes through `commands` and the authorizer still denies direct writes; same inputs → identical plan; without a qualifying event no target moves > 1 pp/name or > 3 pp total per day; a synthetic materiality-5 RISK event on a held name lifts the caps and is cited; a synthetic −3σ QQQ week lifts the caps; no suggested trade below the minimum; holdings never appear in a prompt or `llm_calls` row |
+
 ### Phase 2 — Intelligence
 
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
-| **M4** | News & research ingest | RSS ingest with trust tiers, `research/` runner (only tool-enabled calls), untrusted-content wrapping, `events`/`event_sources` with dedupe and independent-source counting, excerpt cap, LLM wrapper + soft budget + `llm_calls`; 12-month backfill via Batch API | 3 syndicated copies → 1 event with independent count 1; budget breach stops calls; excerpts ≤ 600 chars |
-| **M5** | Classifier | Rubric YAML, rules → LLM → **trust-tier caps**, injection flag + quarantine, golden set from real ingested items (owner labels), adversarial cases, `make eval`, Feed page | ≥85% agreement, ≥95% RISK recall, 100% adversarial flagged; T3-only event can't exceed materiality 2 (unit test) |
-| **M6** | Catalysts + market structure | `catalysts_seed.yaml` linked to fact IDs (IBM roadmap, QBI Stage C, QNT lock-up, earnings), auto-resolution from events, short-interest ingest + rule, optional IV, Catalysts page | A test event resolves a catalyst; short-interest spike rule fires on fixture |
-| **M7** | Scorecards, reactions, theme | All §6.1 components incl. fully diluted EV, §6.3 reaction engine + Calibration page, **§6.1 theme decomposition with SOXX/QQQ/basket**, positions drift | Component unit tests on fixtures; reaction tests (after-close anchoring, holidays, β fallback, confounding, pending→complete, synthetic +10% jump → z₁ > 2); decomposition recovers known betas from a synthetic factor series within ±0.05 |
-| **M8** | Conclusions, track record, brief | Synthesis (no tools; fact-status labels; no opinions), citation validator, **hysteresis + cooldown**, theme tilt with quantum-sleeve label, **§6.4 track record + baselines**, weekly brief, position-drift lines | No unvalidated/quarantined citations reach the DB; a proposed flip without a qualifying trigger is stored as `held`; outcome rows fill as synthetic prices mature; "No track record yet" banner renders |
+| **M6** | News & research ingest | RSS ingest with trust tiers, `research/` runner (only tool-enabled calls), untrusted-content wrapping, `events`/`event_sources` with dedupe and independent-source counting, excerpt cap, LLM wrapper + soft budget + `llm_calls`; 12-month backfill via Batch API | 3 syndicated copies → 1 event with independent count 1; budget breach stops calls; excerpts ≤ 600 chars |
+| **M7** | Classifier | Rubric YAML, rules → LLM → **trust-tier caps**, injection flag + quarantine, golden set from real ingested items (owner labels), adversarial cases, `make eval`, Feed page | ≥85% agreement, ≥95% RISK recall, 100% adversarial flagged; T3-only event can't exceed materiality 2 (unit test) |
+| **M8** | Catalysts + market structure | `catalysts_seed.yaml` linked to fact IDs (IBM roadmap, QBI Stage C, QNT lock-up, earnings), auto-resolution from events, short-interest ingest + rule, optional IV, Catalysts page | A test event resolves a catalyst; short-interest spike rule fires on fixture |
+| **M9** | Scorecards, reactions, theme | All §6.1 components incl. fully diluted EV, §6.3 reaction engine + Calibration page, **§6.1 theme decomposition with SOXX/QQQ/basket** (positions drift moved to M5) | Component unit tests on fixtures; reaction tests (after-close anchoring, holidays, β fallback, confounding, pending→complete, synthetic +10% jump → z₁ > 2); decomposition recovers known betas from a synthetic factor series within ±0.05 |
+| **M10** | Conclusions, track record, brief | Synthesis (no tools; fact-status labels; no opinions), citation validator, **hysteresis + cooldown**, theme tilt with quantum-sleeve label, **§6.4 track record + baselines**, weekly brief, position-drift lines | No unvalidated/quarantined citations reach the DB; a proposed flip without a qualifying trigger is stored as `held`; outcome rows fill as synthetic prices mature; "No track record yet" banner renders |
 
 ### Phase 3 — Hardening
 
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
-| **M9** | Escalation, ops & deploy | Escalation flow with caps (§5.2.5), verification research, Ops page, structured logging, backup restore drill, optional Litestream, `pip-audit` in lint, K8s manifests: **one pod** with `worker` + `app` containers sharing a ReadWriteOnce PVC on local storage (`replicas: 1`, `strategy: Recreate`), Secret, NetworkPolicy (egress allow-list where feasible); runbook incl. "migrate to MySQL/Postgres" and "rotate API key" | Synthetic high-materiality T1 event → alert + re-synthesis within 5 min; 6th escalation in a day is refused; fresh clone → running stack in <10 min; restore from backup reproduces the dashboard |
+| **M11** | Escalation, ops & deploy | Escalation flow with caps (§5.2.5), verification research, Ops page, structured logging, backup restore drill, optional Litestream, `pip-audit` in lint, K8s manifests: **one pod** with `worker` + `app` containers sharing a ReadWriteOnce PVC on local storage (`replicas: 1`, `strategy: Recreate`), Secret, NetworkPolicy (egress allow-list where feasible); runbook incl. "migrate to MySQL/Postgres" and "rotate API key" | Synthetic high-materiality T1 event → alert + re-synthesis within 5 min; 6th escalation in a day is refused; fresh clone → running stack in <10 min; restore from backup reproduces the dashboard |
 
 ---
 

@@ -142,7 +142,7 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `make secrets-scan` | gitleaks over git history and the working tree |
 | `make facts` | Regenerate `FACTS.md` from `config/facts.yaml` |
 | `make lock` | Re-resolve `uv.lock` |
-| `make eval` | Classifier evals (from M5) |
+| `make eval` | Classifier evals (from M7) |
 | `make smoke` | Live check against the running stack (never part of acceptance) |
 | `make record-cassette NAME=… URL=… [UA=…] [GZIP=1]` | Record one live HTTP response as a test fixture (manual; SEC needs `UA`, large documents use `GZIP=1`) |
 
@@ -154,7 +154,7 @@ src/aether/
   providers/      typed provider interfaces: yfinance, Massive, failover; SEC EDGAR client
   ingest/         prices, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar
   edgar/          pure parsers: submissions, Form 4 XML, filing text extractors, XBRL
-  classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M5)
+  classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M7)
   risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
   alerts/         candidates → outbox → Telegram; telegram_guard.py (S7 is_owner), dashboard views
   sec_view.py     read-side SEC queries for the dashboard

@@ -289,7 +289,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         **_catch_up(engine, "qtum_holdings"),
     )
     # EDGAR (spec §9): every 30 min 21:00-05:00 SGT across US sessions (Mon-Fri ET evening
-    # spans SGT Mon 21:00 .. Sat 05:00), twice a day otherwise. NYSE holidays arrive in M7.
+    # spans SGT Mon 21:00 .. Sat 05:00), twice a day otherwise. NYSE holidays arrive in M9.
     sched.add_job(
         run_edgar,
         "cron",

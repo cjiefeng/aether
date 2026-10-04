@@ -1,6 +1,6 @@
 # Deterministic rule parameters (spec §5.2 step 1 and the §6.1 open risk flags).
 # Identifiers and numbers only (the model forbids unknown keys). Materiality values are initial
-# settings for owner review; M5 adds the LLM rubric to this file.
+# settings for owner review; M7 adds the LLM rubric to this file.
 
 edgar_form_rules:
   # Registration statements and prospectuses -> dilution. Amendments (/A) are not separate events.

@@ -1,7 +1,7 @@
 """Open risk flags (spec §6.1 "risk load"): lock-up within N days, insider-selling cluster,
 active ATM / shelf, going-concern language. Read-only; thresholds from `config/rubric.yaml`.
 
-M3 alerts and M7 scorecards consume these. Nothing here writes.
+M3 alerts and M9 scorecards consume these. Nothing here writes.
 """
 
 from __future__ import annotations

@@ -59,7 +59,7 @@ lint:
 	  uvx $(PIP_AUDIT) --strict --require-hashes --disable-pip -r /tmp/req.txt'
 
 eval:
-	@echo "No evals until M5 (classifier). Nothing to run."
+	@echo "No evals until M7 (classifier). Nothing to run."
 
 facts:
 	$(DEV) $(UV) python -m aether.facts render

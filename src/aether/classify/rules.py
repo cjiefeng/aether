@@ -1,6 +1,6 @@
 """Deterministic classification rules (spec §5.2 step 1). No LLM; `rule_id` is recorded.
 
-EDGAR filings are T1, so trust-tier caps (M5) never lower these materialities. Parameters live in
+EDGAR filings are T1, so trust-tier caps (M7) never lower these materialities. Parameters live in
 `config/rubric.yaml`; titles and rationales are built from filing metadata only (no prose).
 """
 
@@ -61,7 +61,7 @@ def classify_filing(
     going_concern_excerpt: str | None = None,
     lockup_excerpt: str | None = None,
 ) -> RuleHit | None:
-    """The single strongest rule hit for a filing, or None (left for the M5 classifier)."""
+    """The single strongest rule hit for a filing, or None (left for the M7 classifier)."""
     hits: list[RuleHit] = []
     d = (f.primary_doc_description or "").strip()
     desc = f" ({d})" if d and d.upper() not in (f.form.upper(), f"FORM {f.form}".upper()) else ""
