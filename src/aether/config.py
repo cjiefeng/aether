@@ -38,6 +38,8 @@ class Settings(BaseSettings):
         default=Decimal("3.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
     sec_user_agent: str | None = Field(default=None, validation_alias="SEC_USER_AGENT")
+    # Massive (formerly Polygon) free "Stocks Basic" key: price fallback when yfinance fails.
+    massive_api_key: SecretStr | None = Field(default=None, validation_alias="MASSIVE_API_KEY")
 
     telegram_bot_token: SecretStr | None = Field(
         default=None, validation_alias="TELEGRAM_BOT_TOKEN"
@@ -53,6 +55,7 @@ class Settings(BaseSettings):
         "classifier_model",
         "synth_model",
         "sec_user_agent",
+        "massive_api_key",
         "telegram_bot_token",
         "telegram_allowed_user_id",
         "telegram_chat_id",

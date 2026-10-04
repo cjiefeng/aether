@@ -24,9 +24,17 @@ from aether.web.routes import router
 WEB_DIR = Path(__file__).parent
 
 
+def pct(value: float | None, signed: bool = True) -> str:
+    """Fraction -> percent text (plain str, so it's autoescaped like everything else)."""
+    if value is None:
+        return "—"
+    return f"{value * 100:+.1f}%" if signed else f"{value * 100:.1f}%"
+
+
 def make_templates() -> Jinja2Templates:
     env = Environment(loader=FileSystemLoader(WEB_DIR / "templates"), autoescape=True)
     register_filters(env)
+    env.filters["pct"] = pct
     return Jinja2Templates(env=env)
 
 

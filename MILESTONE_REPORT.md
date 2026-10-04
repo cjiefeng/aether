@@ -1,5 +1,74 @@
 # Milestone report
 
+## M1: Market data (2026-10-04)
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Idempotent re-runs | ✅ | `tests/test_ingest_prices.py::test_backfill_then_rerun_is_idempotent` (backfill, then incremental, then full refresh: same row count), `test_revised_bars_update_in_place`, `tests/test_qtum_holdings.py::test_ingest_is_idempotent_and_replaces_snapshot`. Live: a full 2-year refresh of 5,754 rows left the count at 5,754. |
+| Simulated yfinance failure → fallback serves, `provider` recorded | ✅ (fallback is **Massive**, not Stooq; see decision 1) | `test_simulated_yfinance_failure_fallback_serves_and_provider_recorded`: every row has `provider='massive'`, and `job_runs.provider='massive'`. `tests/test_providers.py` covers the failover rules (trip after 3, probe after 24 h, a failed probe restarts the timer, an empty result is not a failure, both-fail errors). **Not run live**: there's no `MASSIVE_API_KEY` yet. |
+| Charts render | ✅ | Checked live in a browser against an isolated stack: the Overview comparison chart (all five ranges, tooltips), the ticker page (QNT close + volume), dark and light themes, and **no console / CSP errors**. Tests check that no page has an inline `<script>` or `style=`. |
+| Tests green, no network | ✅ | `make test`: 130 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean; `mypy --strict` on 39 files; no known vulnerabilities (yfinance's dependency tree included) |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks (vendored `echarts.min.js` included) |
+
+### What was built
+- **Schema** (`0002_market_data`):
+  - `prices_daily`: PK(symbol, d), FK to `tickers`, CHECKs on provider, OHLC > 0 and h ≥ l, volume ≥ 0, and the date format.
+  - `qtum_holdings`: PK(snapshot_date, holding_symbol).
+  - Both are STRICT and WITHOUT ROWID; the tests now check WITHOUT ROWID too.
+- **Providers** (`providers/prices.py`):
+  - `PriceProvider` protocol. `YFinanceProvider` uses `auto_adjust=False` and rounds to 6 dp to drop float32 noise. `MassiveProvider` uses Bearer auth, a 12.5 s throttle (the free tier allows 5 calls/min), follows `next_url` only on `api.massive.com`, and maps errors to `ProviderError`.
+  - `FailoverPriceProvider` handles switching (see README).
+- **Ingest:**
+  - `ingest/prices.py`: 2-year backfill, a 10-day revision overlap, a Sunday full refresh, bar validation, fetch-then-one-`write_tx`, and partial failures recorded in `job_runs.error` while the run stays `ok`.
+  - `ingest/qtum_holdings.py`: a fail-closed robots.txt gate, a stdlib HTML parse, and sanity checks (header, as-of date, weights summing to 95–105%, no duplicates). Each snapshot date is replaced wholesale.
+- **Jobs:**
+  - `prices` runs at 06:30 SGT and `qtum_holdings` at 06:35, each with a startup catch-up if its last ok run is more than 24 h old.
+  - `refresh_prices` is a dashboard command (CSRF + rate limit) that shares a lock with the cron job.
+  - `run_job` moved to `runs.py`, and `JobResult.warning` was added.
+- **Dashboard:**
+  - Overview: banners, a log-scale comparison chart, a ticker table, the watchlist's weight in QTUM, and the refresh button.
+  - `/t/<symbol>`, plus the `/api/prices/overview?range=` and `/api/prices/<symbol>` JSON endpoints.
+  - ECharts 6.1.0 is vendored (sha256 in `VENDORED.txt`). `static/charts.js` reads `data-*` attributes and uses canvas `richText` tooltips, so no HTML is injected.
+- **Live check** (isolated compose project on port 8090; your M0 stack was not touched):
+  - yfinance backfilled all 13 tickers (5,754 rows); QNT starts 2026-06-04 and INFQ 2026-02-17.
+  - The holdings snapshot loaded 90 rows (as of 2026-10-05, summing to 99.95%), with all 5 pure-plays present, combined at 4.64% of QTUM.
+  - The IONQ 2026-10-02 OHLC matched an independent source.
+
+### Decisions (deviations from the spec)
+1. **The fallback is Massive's free tier, not Stooq** (your choice during planning). On 2026-10-04, Stooq's CSV endpoint returned a JavaScript proof-of-work bot challenge, and `stooq.com/robots.txt` disallows `*`. Using it would mean getting past bot detection. `api.nasdaq.com/robots.txt` also disallows everything. Massive "Stocks Basic" is $0, 5 calls/min, 2 years of history, end-of-day, individual use.
+2. **Split-adjusted, not dividend-adjusted, prices from both providers**, so a failover can't mix conventions. Total-return effects (QTUM/QQQ/SOXX dividends) are left out for now. Revisit in M7 if the event-reaction maths needs them.
+3. **The backfill is exactly 730 days**, matching the Massive free tier's 2-year limit.
+4. **Failover state is in memory.** A worker restart acts as a probe of yfinance. An empty yfinance result tries Massive without counting as a failure.
+5. **The holdings page is parsed with the stdlib `html.parser`**, so no new dependency. Defiance's `robots.txt` is malformed; read literally (as Python's `robotparser` does) it allows everything. Its evident intent is to block `/wp-content/uploads/funddocs/`, which Aether never fetches.
+6. **Staleness uses a 4-calendar-day tolerance per symbol and 30 h for the prices job.** It stands in for an NYSE holiday calendar until M7 adds `exchange_calendars`.
+7. **The Overview chart uses a log scale**, because the pure-play basket rose about 17× over two years, which flattens the other lines on a linear axis.
+8. **`/` is now the Overview.** Health lives at `/health` only.
+
+### Facts
+- No seed facts were verified or changed (verification is M2).
+- Observed (not added as facts): Yahoo serves daily prices for `QNT` from 2026-06-04 and `INFQ` from 2026-02-17, and Defiance lists both in QTUM. Their listing route, date and CIKs remain M2 EDGAR items under `qnt_ipo` / `infq_listing`.
+
+### Open questions
+- **Yahoo's `robots.txt`** (`query1.finance.yahoo.com`) is `Disallow: /`. The spec already accepts yfinance for personal use (S6). Flagging it so the decision is a conscious one.
+- **The Massive failover hasn't been exercised live** until you add `MASSIVE_API_KEY`.
+- **Volume differs slightly between vendors** (IONQ 2026-10-02: 19.04M on Yahoo vs 19.09M on another source). It's informational now and matters for abnormal volume in M7, so the provider is kept per row.
+
+### Owner checklist
+- [ ] Sign up for **Massive Stocks Basic** (free) at massive.com, then add `MASSIVE_API_KEY=` to `.env` (still mode 0600). It's passed to the worker only.
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0002_market_data`, backfills 2 years of prices and takes the first holdings snapshot within about a minute.
+- [ ] Review decision 2 (no dividend adjustment) and the Yahoo robots.txt open question.
+
+### How to verify
+```bash
+make test            # 130 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/
+```
+
 ## M0: Scaffold + security baseline (2026-10-04)
 
 ### Acceptance criteria

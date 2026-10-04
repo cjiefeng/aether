@@ -1,2 +1,4 @@
 htmx.min.js  htmx.org@2.0.4  https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js
 sha256 e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447
+echarts.min.js  echarts@6.1.0 (Apache-2.0)  https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js
+sha256 b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0

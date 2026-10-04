@@ -21,6 +21,21 @@ def test_all_tables_strict(ro_engine: Engine) -> None:
     assert all(tables.values()), tables
 
 
+def test_without_rowid_tables(ro_engine: Engine) -> None:
+    with ro_engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT name, wr FROM pragma_table_list WHERE schema='main'")
+        ).all()
+    without_rowid = {name for name, wr in rows if wr}
+    assert {"prices_daily", "qtum_holdings"} <= without_rowid
+    expected = {
+        t.name
+        for t in metadata.tables.values()
+        if t.dialect_options["sqlite"]["with_rowid"] is False
+    }
+    assert without_rowid == expected
+
+
 def test_migrations_match_models(rw_engine: Engine) -> None:
     with rw_engine.connect() as conn:
         diff = compare_metadata(MigrationContext.configure(conn), metadata)

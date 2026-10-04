@@ -70,3 +70,19 @@ def make_client(settings: Settings, ip: str = LAN_IP) -> TestClient:
 def client(settings: Settings) -> Iterator[TestClient]:
     with make_client(settings) as c:
         yield c
+
+
+def seed_tickers(engine: Engine, rows: list[tuple[str, str]]) -> None:
+    """Insert (symbol, type) rows. Use synthetic symbols (ACME, EXMP) unless the code under
+    test keys on a real benchmark symbol (QTUM/QQQ/SOXX); prices are always synthetic."""
+    from aether.db.dialect import upsert
+    from aether.db.engine import write_tx
+    from aether.db.models import tickers
+
+    with write_tx(engine) as conn:
+        upsert(
+            conn,
+            tickers,
+            [{"symbol": s, "type": t, "active": 1} for s, t in rows],
+            key_cols=["symbol"],
+        )

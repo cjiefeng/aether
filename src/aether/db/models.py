@@ -4,18 +4,21 @@ STRICT tables accept only INTEGER/REAL/TEXT/BLOB/ANY, so columns use only `Integ
 `Text`, `LargeBinary` and `Micros`. Never use String/Boolean/Float/DateTime here: they render
 VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
-This milestone defines the infra tables only; each later milestone adds its own tables plus
-a migration. Keep this file and `migrations/versions/*` in sync (a test compares them).
+Each milestone adds its own tables plus a migration (M0: infra, M1: market data). Keep this
+file and `migrations/versions/*` in sync (a test compares them).
 """
 
 from __future__ import annotations
 
 from sqlalchemy import (
+    REAL,
     CheckConstraint,
     Column,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
+    PrimaryKeyConstraint,
     Table,
     Text,
 )
@@ -138,4 +141,47 @@ alerts = Table(
     CheckConstraint("channel IN ('telegram','dashboard')", name="channel"),
     _json_ck("payload"),
     sqlite_strict=True,
+)
+
+# --------------------------------------------------------------------------- M1: market data
+
+PRICE_PROVIDERS = ("yfinance", "massive", "synthetic")
+
+prices_daily = Table(
+    "prices_daily",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("d", Text, nullable=False),  # trading day, YYYY-MM-DD (US/Eastern session date)
+    Column("o", REAL, nullable=False),
+    Column("h", REAL, nullable=False),
+    Column("l", REAL, nullable=False),
+    Column("c", REAL, nullable=False),
+    Column("volume", Integer, nullable=False),
+    Column("provider", Text, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("symbol", "d"),
+    CheckConstraint(
+        "provider IN (" + ",".join(f"'{p}'" for p in PRICE_PROVIDERS) + ")", name="provider"
+    ),
+    CheckConstraint("o > 0 AND h > 0 AND l > 0 AND c > 0 AND h >= l", name="ohlc"),
+    CheckConstraint("volume >= 0", name="volume"),
+    CheckConstraint("d GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'", name="d_format"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+qtum_holdings = Table(
+    "qtum_holdings",
+    metadata,
+    Column("snapshot_date", Text, nullable=False),  # the issuer's "data as of" date
+    Column("holding_symbol", Text, nullable=False),  # issuer's ticker text, e.g. "3443 TT"
+    Column("name", Text),
+    Column("cusip", Text),
+    Column("weight", REAL, nullable=False),  # percent of fund, e.g. 1.09
+    Column("shares", Integer),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("snapshot_date", "holding_symbol"),
+    CheckConstraint("weight >= -100 AND weight <= 100", name="weight"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
 )
