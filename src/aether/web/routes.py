@@ -9,9 +9,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from aether import market, sec_view
 from aether.alerts import view as alerts_view
-from aether.config import load_rubric
+from aether.config import PROFILES, load_rubric
 from aether.db import health
 from aether.db.commands import count_recent_commands, enqueue_command
+from aether.portfolio import view as strategies_view
 from aether.providers.prices import US_EASTERN
 from aether.risk.flags import open_flags
 from aether.security import csrf
@@ -32,7 +33,7 @@ TYPE_LABELS = {
 def _render(request: Request, template: str, context: dict[str, object]) -> HTMLResponse:
     token = csrf.token_for(request, request.app.state.csrf)
     response: HTMLResponse = request.app.state.templates.TemplateResponse(
-        request, template, {**context, "csrf_token": token, "disclaimer": DISCLAIMER}
+        request, template, {"disclaimer": DISCLAIMER, **context, "csrf_token": token}
     )
     csrf.set_cookie(response, token)
     return response
@@ -152,6 +153,23 @@ def facts_page(request: Request) -> HTMLResponse:
     )
 
 
+@router.get("/strategies", response_class=HTMLResponse)
+def strategies_page(request: Request) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    return _render(
+        request,
+        "strategies.html",
+        {
+            "v": strategies_view.strategies_view(engine),
+            "fresh": strategies_view.freshness(engine),
+            "banner": strategies_view.BANNER,
+            "family_labels": strategies_view.FAMILY_LABELS,
+            "columns": strategies_view.METRIC_COLUMNS,
+            "disclaimer": f"{DISCLAIMER} {strategies_view.BANNER}",
+        },
+    )
+
+
 @router.get("/health", response_class=HTMLResponse)
 def health_page(request: Request) -> HTMLResponse:
     state = request.app.state
@@ -204,6 +222,13 @@ def api_dilution(request: Request, symbol: str) -> JSONResponse:
     )
 
 
+@router.get("/api/strategies/curves")
+def api_strategy_curves(request: Request, profile: str = "safe") -> JSONResponse:
+    if profile not in PROFILES:
+        raise HTTPException(404)
+    return JSONResponse(strategies_view.curves_for(request.app.state.ro_engine, profile))
+
+
 # --------------------------------------------------------------------------- commands
 
 
@@ -235,3 +260,8 @@ def command_refresh_edgar(request: Request) -> Response:
 @router.post("/commands/test-alert")
 def command_test_alert(request: Request) -> Response:
     return _enqueue(request, "test_alert")
+
+
+@router.post("/commands/recompute-strategies")
+def command_recompute_strategies(request: Request) -> Response:
+    return _enqueue(request, "recompute_strategies")

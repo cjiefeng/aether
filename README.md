@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M2** (SEC EDGAR + deterministic risk). M1's prices and QTUM holdings, plus SEC filings, Form 4 insider trades, XBRL fundamentals, capital structure, lock-ups, earnings dates, deterministic RISK rules and open risk flags on the dashboard. There's no LLM usage yet.
+Status: **M4** (backtest lab + model strategies). Phase 1 (M0–M3: prices, SEC filings and deterministic RISK rules, Telegram alerts) is done, and Phase 1b has started: dividends, total-return backtests and one model strategy per risk profile on the Strategies page. There's no LLM usage yet.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -93,6 +93,25 @@ Delivery:
 4. Set `TELEGRAM_ALLOWED_USER_ID=<that number>` (and optionally `TELEGRAM_CHAT_ID=<same number>`), then run `./deploy.sh`.
 5. Open `/alerts` and press **Send test alert**.
 
+## Backtest lab + model strategies (M4)
+
+`/strategies` shows how a few rule-based mixes of the watchlist would have behaved, and picks one **model strategy** per risk profile. Everything is computed in code from stored prices (`portfolio/`, numpy); nothing goes to an LLM. **Backtest for reference only. Historical returns are not future gains.**
+
+| Step | What happens |
+|---|---|
+| Dividends | Cash dividends per share (split-adjusted) for QTUM, the pure-plays, QQQ and SOXX over 2 years: **yfinance**, falling back to **Massive** `/stocks/v1/dividends` only on an error (an empty result is normal). Table `dividends`. |
+| Total return | `TR_t = TR_{t-1} · (close_t + dividend_t) / close_{t-1}`, computed in code from `prices_daily` (split-adjusted) + `dividends`, so provider conventions never mix. `prices_daily` itself stays split-adjusted. |
+| Candidates | For each profile: 4 families (`core_equal`, `core_inv_vol`, `core_min_var`, `core_momentum`) × the profile's QTUM core grid. Each holds QTUM + a pure-play sleeve with a per-name cap; sleeve weight the caps can't place goes to QTUM (there is no cash sleeve). |
+| Backtest | Walk-forward on QTUM's sessions. Weights for session *t* use data up to *t−1* only; 120-session estimation window; a name joins after 60 daily returns; monthly rebalance; 10 bps per unit of turnover. Metrics cover only the out-of-sample sessions. |
+| Selection | Drop candidates that break the profile's limits (relative to QTUM's own out-of-sample volatility and max drawdown), rank by the profile metric (safe: lowest CVaR95; medium/aggressive: highest Sortino), tie-break on max drawdown, then ID. If nothing qualifies, the page says **"No qualifying strategy"** with the reason. |
+| Storage | `strategy_runs` (one per distinct `as_of` + input hash), `strategy_metrics`, `strategy_weights` (current targets, read by M5), `strategy_curves` (equity curves, latest 30 runs only). |
+
+- **When:** daily 07:10 SGT (dividends, then backtests), a startup catch-up 5 minutes after boot if the last ok run is over 24 h old, and **Recompute** on `/strategies` (CSRF, rate-limited).
+- **Deterministic:** the input hash covers closes, dividends, `config/strategies.yaml` and an algorithm version. Same hash → no new run; stored JSON is canonical, so identical inputs give byte-identical rows.
+- **Parameters** live in `config/strategies.yaml` (numbers only, unknown keys rejected): estimation window, cost, momentum lookback, and per profile the minimum QTUM weight, per-name cap, volatility/drawdown limits, ranking metric and QTUM grid.
+- **Metric definitions** (risk-free rate 0, 252 sessions/year): CAGR, total return, volatility, downside deviation, max drawdown + duration, historical daily VaR95/CVaR95, Sharpe, Sortino, Calmar, beta and Jensen's alpha vs QQQ and QTUM, tracking error and information ratio, up/down capture vs QQQ, worst month, % positive months, average turnover. Exact formulas are in `portfolio/metrics.py`.
+- **Known limits:** only about 2 years of prices (QNT and INFQ have much less, and the page says how much), a small concentrated universe, and daily closes only.
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -106,11 +125,12 @@ Delivery:
   - classified SEC events, a shares-outstanding chart (XBRL) and the capital-structure table
   - Form 4 insider transactions (10b5-1 badge) and the filings list with each rule hit.
   All SEC links go to EDGAR.
+- `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
 - `/alerts`: delivery status (Telegram or dashboard only, and why), the last 100 alerts, and **Send test alert**.
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
 - `/health`: DB, schema and last run per job.
 
-Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*` and `/api/dilution/*` as JSON. There are no inline scripts, so the CSP stays strict.
+Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*`, `/api/dilution/*` and `/api/strategies/curves` as JSON. There are no inline scripts, so the CSP stays strict.
 
 ## Deploying
 
@@ -151,8 +171,9 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 ```
 src/aether/
   config.py       env settings + typed YAML loaders (identifiers only; unknown keys rejected)
-  providers/      typed provider interfaces: yfinance, Massive, failover; SEC EDGAR client
-  ingest/         prices, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar
+  providers/      typed provider interfaces: yfinance, Massive, failover; dividends; SEC EDGAR client
+  ingest/         prices, dividends, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar
+  portfolio/      total return, metrics, strategy families, walk-forward backtest, selection, job, views
   edgar/          pure parsers: submissions, Form 4 XML, filing text extractors, XBRL
   classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M7)
   risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
@@ -167,7 +188,7 @@ src/aether/
   jobs.py         APScheduler wiring (Asia/Singapore, max_instances=1)
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
-config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml
+config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```
 

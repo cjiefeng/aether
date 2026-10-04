@@ -1,0 +1,45 @@
+# Backtest lab + risk-profile model strategies (spec §6.5, M4). Numbers only (the model forbids
+# unknown keys). Initial values for owner review. Nothing here is sent to an LLM.
+
+backtest:
+  # Trailing sessions used to estimate weights; also the in-sample warm-up. Metrics cover only
+  # the out-of-sample sessions after the first window.
+  estimation_window: 120
+  # A pure-play joins the sleeve once it has this many daily returns before the decision day.
+  min_sessions: 60
+  # Trading cost in basis points per unit of turnover (sum of |weight change|).
+  cost_bps: 10
+  rebalance: monthly
+  # core_momentum: trailing return over this many sessions (about 6 months); top N, equal weight.
+  momentum_lookback: 126
+  momentum_top_n: 3
+  # core_min_var: projected-gradient iterations (numpy only, no scipy).
+  min_var_iterations: 2000
+  # Sessions per year for annualising.
+  annualization: 252
+
+# Universe: QTUM + the pure-plays. No cash or T-bill sleeve: a safer profile means more QTUM.
+# Sleeve weight that per-name caps can't place goes to QTUM.
+# Risk limits are relative to QTUM's own out-of-sample result (null = no limit, shown only).
+profiles:
+  safe:
+    min_qtum: 0.80
+    max_per_name: 0.05
+    vol_limit_x: 1.15       # annualised volatility <= 1.15 x QTUM's
+    max_dd_limit_pp: 5      # max drawdown <= QTUM's + 5 percentage points
+    rank_metric: cvar95_low
+    qtum_grid: [0.80, 0.90]
+  medium:
+    min_qtum: 0.50
+    max_per_name: 0.15
+    vol_limit_x: 1.6
+    max_dd_limit_pp: 15
+    rank_metric: sortino_high
+    qtum_grid: [0.50, 0.65, 0.80]
+  aggressive:
+    min_qtum: 0.0
+    max_per_name: 0.35
+    vol_limit_x: null
+    max_dd_limit_pp: null
+    rank_metric: sortino_high
+    qtum_grid: [0.0, 0.25, 0.50]

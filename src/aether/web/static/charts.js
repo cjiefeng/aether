@@ -188,11 +188,48 @@
       .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
   }
 
+  // ------------------------------------------------------------------ strategies (M4)
+
+  function setupStrategy(el, key) {
+    var chart = init(el);
+    getJSON(el.dataset.src)
+      .then(function (body) {
+        var series = body[key].filter(function (s) { return s.data.length > 0; });
+        if (series.length === 0) {
+          message(el, "No backtest curves yet.");
+          return;
+        }
+        var t = theme();
+        var opt = baseOption(t);
+        opt.title = {
+          text: key === "equity" ? "Equity (start = 100)" : "Drawdown (%)",
+          left: "center", bottom: 0, textStyle: { color: t.muted, fontSize: 12, fontWeight: "normal" },
+        };
+        opt.grid = { left: 48, right: 16, top: 36, bottom: 40 };
+        opt.xAxis = Object.assign({ type: "time" }, axisStyle(t), { splitLine: { show: false } });
+        opt.yAxis = Object.assign({ type: "value", scale: key === "equity" }, axisStyle(t));
+        opt.tooltip.valueFormatter = function (v) { return v == null ? "" : v.toFixed(1); };
+        opt.series = series.map(function (s) {
+          var line = { name: s.name, type: "line", showSymbol: false, data: s.data };
+          if (key === "drawdown") line.areaStyle = { opacity: 0.08 };
+          return line;
+        });
+        chart.setOption(opt, true);
+      })
+      .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
+  }
+
   function start() {
     if (typeof echarts === "undefined") return;
     document.querySelectorAll('[data-chart="overview"]').forEach(setupOverview);
     document.querySelectorAll('[data-chart="ticker"]').forEach(setupTicker);
     document.querySelectorAll('[data-chart="dilution"]').forEach(setupDilution);
+    document.querySelectorAll('[data-chart="strategy-equity"]').forEach(function (el) {
+      setupStrategy(el, "equity");
+    });
+    document.querySelectorAll('[data-chart="strategy-drawdown"]').forEach(function (el) {
+      setupStrategy(el, "drawdown");
+    });
     window.addEventListener("resize", function () {
       charts.forEach(function (c) { c.resize(); });
     });

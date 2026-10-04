@@ -1,5 +1,113 @@
 # Milestone report
 
+## M4: Backtest lab + model strategies (2026-10-04)
+
+Phase 1b, part 1. $0 LLM: every number is computed in code from stored prices.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Metrics match hand-computed values on a synthetic series | ✅ | `tests/test_portfolio_metrics.py`: total return, CAGR, volatility, downside deviation, Sharpe, Sortino, max DD + duration (recovered and unrecovered), VaR95/CVaR95, Calmar, beta/alpha, tracking error / IR, up/down capture and calendar months, all checked against plain-Python arithmetic. Zero-variance inputs give None, not an error. |
+| Look-ahead test (perturbing day *t* never changes weights before *t+1*) | ✅ | `tests/test_strategies_backtest.py::test_no_look_ahead[*]`, for all 4 families: day-*k* closes ×1.5 → every weight vector held on sessions ≤ *k* is bit-identical, and so are the backtest's returns before *k*. |
+| Dividends on a synthetic series raise total return by the expected amount | ✅ | `tests/test_total_return.py`: $1 on a flat $50 series = exactly +2%; a weekend ex-date applies on the next session. `tests/test_portfolio_job.py::test_dividends_raise_total_return_by_expected_amount`: a $0.75 QTUM dividend inside the out-of-sample period multiplies QTUM's total return by (c+0.75)/c (rel. 1e-12). |
+| Same input hash → byte-identical output | ✅ | `test_same_inputs_give_byte_identical_output`: two separate databases with the same synthetic inputs give identical `strategy_runs`, `strategy_metrics`, `strategy_weights` and `strategy_curves` rows. A rerun on unchanged inputs writes nothing; a changed price or config gives a new hash and a new run. |
+| A candidate breaking a profile limit is never selected | ✅ | `tests/test_select.py::test_candidate_breaking_a_limit_is_never_selected` (the rule-breaker has the best CVaR and is still skipped). `test_profile_limit_breaking_candidates_never_selected` runs it end to end. |
+| "No qualifying strategy" renders | ✅ | `tests/test_web_strategies.py::test_no_qualifying_strategy_renders`: the page shows it with the reason, and the curves API returns no strategy for that profile. |
+| numpy as a direct dependency, no scipy | ✅ | `pyproject.toml` (`numpy>=2.0`; it was already in the lock via pandas). Min-variance is projected gradient in numpy. |
+| Tests green, no network | ✅ | `make test`: 268 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 71 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema** (`0005_portfolio`, hand-written, every table STRICT):
+  - `dividends` (WITHOUT ROWID; PK symbol + ex_date; `Micros` amount > 0; USD only; provider CHECK).
+  - `strategy_runs` (UNIQUE as_of + 32-byte input hash; config and summary JSON).
+  - `strategy_metrics` (candidate or benchmark, with a CHECK tying `kind` to profile/family/QTUM weight).
+  - `strategy_weights` (WITHOUT ROWID, FK to its metrics row, weight in [0, 1]).
+  - `strategy_curves` (see decision 1). Child rows cascade on delete.
+- **Providers**: `providers/dividends.py`, yfinance `Ticker.dividends` + Massive `GET /stocks/v1/dividends` (checked against Massive's docs 2026-10-04: free Stocks Basic tier, 2 years of history).
+  - Both give split-adjusted cash per share; Massive's `split_adjusted_cash_amount` is preferred.
+  - Massive reuses the price client's Bearer auth, throttle and host pinning, and has a 20-page cap.
+- **`ingest/dividends.py`** (job `dividends`): QTUM, the pure-plays, QQQ and SOXX, 730 days. Network first, then one `write_tx`.
+- **`portfolio/`** (pure numpy except `job.py` and `view.py`):
+  - `total_return.py`: TR from split-adjusted closes + dividends.
+  - `metrics.py`: the §6.5 list, with definitions in the docstring.
+  - `strategies.py`: 4 families, water-filling caps, an exact capped-simplex projection, and accelerated projected-gradient min-variance.
+  - `backtest.py`: walk-forward, monthly rebalance, 10 bps cost.
+  - `select.py`: limits relative to QTUM's out-of-sample result, ranking, tie-breaks.
+  - `job.py`: inputs → hash → compute → one `write_tx`; canonical JSON.
+  - `view.py`: read-only page queries.
+- **Config**: `config/strategies.yaml` (numbers only, `extra=forbid`, validated so every grid value is ≥ the profile's minimum QTUM weight). Values are the spec's initial ones plus the QTUM grids: safe [80, 90]%, medium [50, 65, 80]%, aggressive [0, 25, 50]%. That makes 32 candidates + 3 benchmarks per run.
+- **Jobs**: `portfolio` cron at 07:10 SGT (dividends, then strategies; the backtest still runs if the dividend fetch fails). A `recompute_strategies` dashboard command (CSRF, rate limit) shares its lock.
+- **Dashboard**: `/strategies` (nav link) and `/api/strategies/curves?profile=`. The page has:
+  - the verbatim banner, plus "not financial advice" and the banner text in the footer
+  - computed history caveats ("QNT has 84 sessions of history …") and the out-of-sample window
+  - the rf = 0 note
+  - per profile: the model strategy, current target weights, an out-of-sample summary, equity and drawdown charts vs QTUM/QQQ, and a candidates table with pass/fail badges
+  - the full 24-column metrics table for every candidate and benchmark, a stale banner and a **Recompute** button
+
+  There's still no inline script or style.
+
+### Decisions (deviations from the spec / plan)
+1. **New `strategy_curves` table** (not in §7). It holds equity curves only for the recommended strategies and QTUM/QQQ/SOXX, pruned to the latest 30 runs. Metrics and weights are kept for every run.
+2. **Sleeve weight the per-name caps can't place goes to QTUM.** Example: safe, top-3 momentum, 5% cap → 15% sleeve, QTUM 85%. This follows "a safer profile means more QTUM" with no cash sleeve.
+3. **The initial allocation is charged the 10 bps cost**, like any rebalance. Benchmarks carry no cost.
+4. **Dividends cover only the backtest universe and benchmarks.** An empty dividend result is normal, so the Massive fallback triggers only on an error (prices fall back on empty too).
+5. **Metric conventions:**
+   - historical VaR/CVaR are positive daily losses (5th percentile, linear interpolation)
+   - downside deviation = RMS of min(r, 0)
+   - capture uses arithmetic means on QQQ up/down days
+   - max-DD duration runs from peak to recovery, or to the end of the period
+   - "average turnover" is Σ|Δw| per monthly rebalance, excluding the initial allocation
+   - months are calendar months, partial ones included
+6. **Momentum for a newly listed name** uses the returns it has (≥60), not a full 126 sessions.
+7. **Min-variance uses Nesterov-accelerated projected gradient** (still projected gradient, numpy only), with an early stop at 1e-12. The first plain-gradient version with a bisection projection took minutes per run.
+8. **Missing bars are forward-filled** (a 0 return that day; the move lands on the next bar). Sessions follow QTUM's calendar.
+9. **The startup catch-up runs 5 minutes after boot**, so the fresh-deploy prices backfill lands first. The live run showed the two racing (they finished in the same second).
+10. **`as_of` is the last QTUM session.** Targets are the weights for the next session.
+
+### Facts
+- No facts changed. All 8 are still `verified_by_claude`, awaiting your sign-off from M3.
+- No new facts were seeded. The backtest uses only stored prices and dividends.
+
+### Open questions
+- **Dividend history is unverified against issuer data.** The live run stored 8 dividends each for QTUM, QQQ and SOXX over about 21 months (yfinance). Pure-plays had none. If you want them checked, compare against Defiance's/Invesco's/iShares' distribution pages.
+- **The Massive dividend fallback hasn't been exercised live** (still no `MASSIVE_API_KEY`).
+- **Profile limits and grids are initial values** (decision 6 of the roadmap change). Live, safe passes 4 of 8 candidates, medium 5 of 12 and aggressive 12 of 12. Every q=0.80 safe candidate fails both the volatility and drawdown limits.
+
+### Live check (isolated compose project `aether-m4` on port 8090, separate image tag, torn down afterwards; your stack wasn't touched)
+- Migration `0005_portfolio` applied on a fresh DB. Prices (5,743 rows, yfinance) and dividends (24 rows) came in, then `strategies` wrote one run (35 metric rows) in about 1 s.
+- **Out-of-sample window: 2025-04-01 to 2026-10-02 (379 sessions).** The caveats list INFQ (159 sessions) and QNT (84 sessions).
+- **QTUM out-of-sample:** total return +112.8%, volatility 31.9%, max DD 21.5%.
+- **Selections:**
+  - safe: QTUM core + equal-weight sleeve, QTUM 90%
+  - medium: equal-weight sleeve, QTUM 80%
+  - aggressive: inverse-volatility sleeve, QTUM 50%
+
+  These come from a short two-year sample; see the banner.
+- **Cap checks:** safe min-var weights keep every pure-play ≤ 5% with QTUM at 80%. Medium momentum puts 15% each in 3 names and 55% in QTUM.
+- `/strategies` rendered in a browser with charts and the 24-column table, and **no console or CSP errors**.
+- **Recompute** → command `done`, dividends re-fetched, `strategies` ok with 0 rows (identical inputs, no new run).
+
+### Owner checklist
+- [ ] Review `config/strategies.yaml`:
+  - minimum QTUM weight, per-name caps
+  - volatility limits (1.15× / 1.6× QTUM) and drawdown limits (+5 / +15 pp)
+  - ranking metrics and the QTUM grids
+  - cost (10 bps) and windows (120 / 60 / 126)
+- [ ] Review the decisions above, especially #2 (overflow to QTUM) and #3 (initial cost).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0005_portfolio`, and the first backtest appears on `/strategies` about 5 minutes after start (or press **Recompute**).
+- [ ] Still open from earlier milestones: `MASSIVE_API_KEY`, the Telegram bot setup, and FACTS.md sign-off.
+
+### How to verify
+```bash
+make test            # 268 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/strategies
+```
+
 ## Roadmap change: optional Tiger Brokers API, read-only (2026-10-04, owner-approved)
 
 **Tiger Brokers OpenAPI** is now an optional provider, used read-only. Spec: §1.3, §2.2 S4/S6/**new S8**, §4, §7, §8, §9, §10, §11 (M5 and M8 rows).
@@ -14,6 +122,7 @@
   - Positions and the account number never reach prompts or logs.
   - If Tiger offers a read-only key scope, M5 will use it.
 - **Dependency:** `tigeropen` (Apache-2.0) is approved. The API is free with a funded account; real-time quotes are a paid add-on and aren't needed.
+
 
 ## Roadmap change: Portfolio phase added (2026-10-04, owner-approved)
 
