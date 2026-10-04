@@ -1,5 +1,43 @@
 # Milestone report
 
+## Roadmap change: family-fund sleeve mandate, research overlay, options analytics (2026-10-04, owner-approved)
+
+Docs only: no code or config changes. The new values below land in `config/strategies.yaml` with M5. Spec: §1 (items 7–9), §1.1, §1.3, **new §1.4**, §3, S8, §4, §6.2, §6.4, §6.5, §6.6, **new §6.6.1, §6.8, §6.9**, §7, §8, §9, §10, §11 (M5, M8–M12).
+
+**Mandate (new §1.4).** The portfolio features serve one family-fund sleeve:
+- 10–15% of the owner's total portfolio, with no cash or T-bill position (the owner manages the rest)
+- US-listed stocks only, listed companies only
+- SGD base currency (shown for reporting only)
+- 12-year+ horizon; a 100% drawdown is accepted
+- no options held
+- the owner reviews monthly and makes the call
+
+**What changes**
+1. **Fixed QTUM weight per profile** (§6.5). Risk appetite is the size of the QTUM core, set by the owner: safe 75%, medium 45%, aggressive 15%. Per-name caps are 10% / 20% / 35%. The backtest picks only the sleeve method. Volatility and drawdown limits are shown, not enforced.
+2. **Monthly targets** (§6.6). Targets are published on the 1st. The daily caps (1 pp / 3 pp) and the −3σ shock override are dropped. Material events send an off-cycle review alert, and targets change only when the owner presses **Publish targets now**. The no-trade band ($100, 3 pp / 25%) stays.
+3. **Research overlay** (§6.6.1), deterministic, no LLM:
+   - **Layer 1 (M5):** filing hard rules. Going concern, an 8-K 3.01 notice or an acquisition sets the weight to 0.
+   - **Layer 1 (M9):** a fully diluted share increase over 20% YoY or a cash runway under 12 months halves the weight.
+   - **Layer 2 (M10):** stance multipliers ×1.25 / 1.0 / 0.5 / 0, clamped to [0.75, 1.25] until the ticker's track record beats the baselines.
+   - **Layer 3 (M10):** tracks the adjusted portfolio against the base portfolio, so the dashboard can say if the research isn't adding value.
+   - Freed weight goes to the other pure-plays first, then QTUM. Every adjustment cites its evidence.
+4. **Options analytics** (§6.8), research only:
+   - **M5:** a daily snapshot job, so IV history starts building.
+   - **M8:** term structure, skew, implied moves into catalysts, positioning and IV rank.
+   - **M9:** implied vs realized move.
+   - Options feed reports and synthesis, never sizing or trades. This replaces the old "optional IV".
+5. **Monthly review pack** (§6.9). Sent on the 1st at 10:30 SGT, after the universe review: targets, adjustment chains, plan, flags and catalysts, with later milestones adding options, stances and universe proposals. The Telegram version carries no share counts or dollar values, because holdings never leave the machine.
+6. **Smaller changes:** SGD view (USD/SGD rate, reporting only); track-record horizons extended to 24 and 36 months; K8s manifests optional in M11.
+
+**Open questions (to verify at implementation)**
+- Whether Tiger option quotes need a paid market-data subscription, and whether QNT and INFQ have listed options liquid enough to report.
+- A free source for a daily USD/SGD reference rate.
+- All new numbers are initial values for review: QTUM weights, caps, rule thresholds (20% dilution, 12-month runway), stance multipliers (ACCUMULATE ×1.0 is the conservative alternative), the earned-trust clamp and the options quality gates.
+
+**Owner checklist**
+- [ ] Review §1.4, §6.5 (profile table), §6.6.1 and §6.8.
+- [ ] If any M5 work has started against the old §6.6 (daily caps, shock override, QTUM grids), realign it with this amendment before the M5 PR.
+
 ## Roadmap change: monthly universe review (2026-10-04, owner-approved)
 
 There's a new **M12, Phase 4 "Discovery"**, after hardening. Spec: §1.1, §1.2, §3, **new §6.7**, §7, §8, §9, §10, §11.
