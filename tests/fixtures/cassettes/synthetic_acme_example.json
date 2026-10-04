@@ -1,0 +1,8 @@
+{
+  "request": {"method": "GET", "url": "https://example.test/acme/status.json"},
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "text": "{\"ticker\": \"ACME\", \"note\": \"synthetic fixture for cassette tooling tests\"}"
+  }
+}

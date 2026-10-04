@@ -1,0 +1,12 @@
+# Extends the default ruleset. The working-tree scan (`gitleaks dir`) must not read the real .env
+# or the local DB, which are git-ignored and never committed.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "git-ignored local secrets and data"
+paths = [
+  '''(^|/)\.env$''',
+  '''(^|/)data/''',
+  '''(^|/)config/positions\.yaml$''',
+]

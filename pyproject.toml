@@ -1,0 +1,71 @@
+[project]
+name = "aether"
+version = "0.1.0"
+description = "Self-hosted watcher for quantum-computing equities (personal research tool, not financial advice)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.37",
+    "alembic>=1.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "nh3>=0.2.17",
+    "markdown-it-py>=3.0",
+    "apscheduler>=3.10,<4",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-socket>=0.7",
+    "respx>=0.21",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aether"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["S101"]  # assert is fine in tests and invariants
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]
+"scripts/**" = ["S"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "src"
+packages = ["aether"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Untyped third-party libraries are wrapped behind typed interfaces (spec §2).
+module = ["apscheduler.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --disable-socket --allow-unix-socket"
+pythonpath = ["src", "."]
+filterwarnings = [
+    "error::sqlalchemy.exc.SAWarning",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

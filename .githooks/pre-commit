@@ -1,0 +1,7 @@
+#!/bin/sh
+# S4: block commits containing secrets. Runs gitleaks in Docker (nothing installed on the host).
+# Fails closed if Docker is unavailable.
+set -eu
+root="$(git rev-parse --show-toplevel)"
+exec docker run --rm -v "$root:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.30.1 \
+  git --pre-commit --staged --redact --no-banner -v /repo

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Health · Aether{% endblock %}
+{% block content %}
+<h1>Health</h1>
+
+<section class="card">
+  <h2>Database</h2>
+  {% if h.error %}
+    <p class="bad">Database unavailable ({{ h.error }}). The worker may not have created it yet.</p>
+  {% endif %}
+  <table>
+    <tr><th>Path</th><td><code>{{ db_path }}</code></td></tr>
+    <tr><th>SQLite version</th><td>{{ h.sqlite_version or "—" }}</td></tr>
+    <tr><th>Journal mode</th><td class="{{ 'ok' if h.journal_mode == 'wal' else 'bad' }}">{{ h.journal_mode or "—" }}</td></tr>
+    <tr><th>Schema revision</th><td>{{ h.schema_revision or "—" }}</td></tr>
+    <tr><th>File mode</th><td class="{{ 'ok' if h.file_mode == '0o600' else 'bad' }}">{{ h.file_mode or "—" }}</td></tr>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Jobs</h2>
+  {% if h.jobs %}
+  <table>
+    <thead><tr><th>Job</th><th>Status</th><th>Started</th><th>Finished</th><th>Provider</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for j in h.jobs %}
+      <tr>
+        <td>{{ j.job }}</td>
+        <td class="{{ 'ok' if j.status == 'ok' else 'bad' }}">{{ j.status }}</td>
+        <td>{{ j.started_at }}</td>
+        <td>{{ j.finished_at or "—" }}</td>
+        <td>{{ j.provider or "—" }}</td>
+        <td>{{ j.error or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No job runs recorded yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Command queue</h2>
+  <p>Queues a harmless <code>ping</code> for the worker (CSRF-protected, rate-limited).</p>
+  <button hx-post="/commands/ping" hx-target="#ping-result" hx-swap="innerHTML">Send ping</button>
+  <span id="ping-result"></span>
+</section>
+{% endblock %}

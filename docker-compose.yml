@@ -1,0 +1,82 @@
+# Aether: LAN-only. Never port-forward 8080 on your router or put it behind a public tunnel.
+# Secrets are interpolated from .env (mode 0600) and passed only to the service that needs them.
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+
+services:
+  worker:
+    <<: *hardening
+    build:
+      context: .
+      target: runtime
+    image: aether:local
+    command: ["python", "-m", "aether.worker"]
+    environment:
+      AETHER_DB_PATH: /data/aether.db
+      AETHER_LOG_LEVEL: ${AETHER_LOG_LEVEL:-INFO}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+      DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-3.00}
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-}
+      SYNTH_MODEL: ${SYNTH_MODEL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USER_ID: ${TELEGRAM_ALLOWED_USER_ID:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - aether-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "aether.healthcheck", "worker"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    <<: *hardening
+    image: aether:local
+    command: ["python", "-m", "aether.web"]
+    environment:
+      AETHER_DB_PATH: /data/aether.db
+      AETHER_BIND: 0.0.0.0:8082
+      AETHER_LOG_LEVEL: ${AETHER_LOG_LEVEL:-INFO}
+      AETHER_ALLOWED_CIDRS: ${AETHER_ALLOWED_CIDRS:-127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      AETHER_TRUSTED_PROXY: ${AETHER_TRUSTED_PROXY:-}
+      AETHER_CSRF_SECRET: ${AETHER_CSRF_SECRET:-}
+    ports:
+      - "8080:8082"
+    # rw at the filesystem level so the WAL reader can map -shm; the SQLite connection itself is mode=ro.
+    volumes:
+      - aether-data:/data
+    depends_on:
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "aether.healthcheck", "app"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Tooling container (make test/lint/fmt/lock). Nothing is installed on the host.
+  dev:
+    profiles: [tools]
+    build:
+      context: .
+      target: dev
+    image: aether-dev:local
+    working_dir: /src
+    volumes:
+      - .:/src
+      - aether-venv:/opt/venv
+      - aether-uv-cache:/root/.cache/uv
+
+volumes:
+  aether-data:
+  aether-venv:
+  aether-uv-cache:

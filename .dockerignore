@@ -1,0 +1,18 @@
+# --- secrets & private data (S4) — keep in sync with .gitignore ---
+.env
+.env.*
+!.env.example
+config/positions.yaml
+data/
+
+# --- not needed in images ---
+.git/
+.githooks/
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+tests/
+evals/

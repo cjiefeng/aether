@@ -1,0 +1,8 @@
+# Source trust tiers (spec S1). Anything not listed is T3.
+# T1 = SEC EDGAR + each company's own IR domain (IR domains added in M2/M4 once verified).
+# T2 = allow-listed industry/financial press (RSS feed URLs added and verified in M4).
+domains:
+  - {domain: sec.gov, tier: T1}
+  - {domain: thequantuminsider.com, tier: T2}
+  - {domain: hpcwire.com, tier: T2}
+  - {domain: quantumcomputingreport.com, tier: T2}

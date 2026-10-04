@@ -1,0 +1,20 @@
+# Identifiers only — no opinions or commentary (spec §1.2). Descriptive claims belong in facts.yaml.
+# CIKs are filled in M2 after verification against SEC EDGAR.
+tickers:
+  # theme ETF
+  - {symbol: QTUM, type: etf}
+  # pure-plays
+  - {symbol: IONQ, type: pure_play}
+  - {symbol: QNT,  type: pure_play}
+  - {symbol: RGTI, type: pure_play}
+  - {symbol: QBTS, type: pure_play}
+  - {symbol: INFQ, type: pure_play}
+  # benchmarks (prices only)
+  - {symbol: QQQ,  type: benchmark}
+  - {symbol: SOXX, type: benchmark}
+  # context (prices only)
+  - {symbol: IBM,   type: context}
+  - {symbol: GOOGL, type: context}
+  - {symbol: MSFT,  type: context}
+  - {symbol: AMZN,  type: context}
+  - {symbol: NVDA,  type: context}

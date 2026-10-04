@@ -1,0 +1,70 @@
+# Facts registry (spec §2.3). Source of truth; FACTS.md is generated from this file (`make facts`).
+# status: unverified | verified_by_claude | signed_off
+# Only `signed_off` facts reach LLM prompts as facts; everything else is labelled UNCONFIRMED.
+# Seeds below are copied verbatim from the build brief (secondary sources, gathered Oct 2026).
+# Verification against each source happens in M2. The owner signs off at the end of M3.
+facts:
+  - id: ionq_revenue_fy2025_guidance_2026
+    claim: "IonQ FY2025 revenue ≈ $130.0M; 2026 guidance later raised to ≈ $285M (Q2-26 report)"
+    sources:
+      - https://gp.advalorem.io/insights/2026-04-28.html
+      - https://247wallst.com/investing/2026/09/30/one-year-later-only-one-quantum-stock-call-paid-off-heres-what-changed/
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Secondary sources only; verify against IonQ 10-K FY2025 and the Q2-26 8-K Item 2.02 on EDGAR."
+
+  - id: ionq_acquire_skywater
+    claim: "IonQ agreed to acquire SkyWater Technology"
+    sources:
+      - https://gp.advalorem.io/insights/2026-04-28.html
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Verify via IonQ / SkyWater 8-K on EDGAR."
+
+  - id: qnt_ipo
+    claim: "Quantinuum IPO on Nasdaq as QNT, June 2026, ~$14.3B market cap at top of range; Honeywell ≈ 49.1% voting power post-IPO"
+    sources:
+      - https://thequantuminsider.com/2026/06/02/quantinuum-expands-ipo-as-valuation-climbs-above-14-billion/
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Verify ticker, date and Honeywell voting power against the final 424B4 on EDGAR."
+
+  - id: qnt_lockup_expiry
+    claim: "QNT lock-up expiry date: UNKNOWN"
+    sources: []
+    retrieved_at: null
+    status: unverified
+    notes: "Open question. Derive from the final 424B4 prospectus on EDGAR (M2). Do not guess."
+
+  - id: infq_listing
+    claim: "Infleqtion trades as INFQ; listing route/date and any warrants/earn-outs"
+    sources:
+      - https://fool.com/investing/2026/07/22/ionq-vs-quantinuum-vs-infleqtion-vs-rigetti-vs-d-w/
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Verify via EDGAR (listing route, date, warrants, earn-outs)."
+
+  - id: darpa_qbi_stage_b
+    claim: "DARPA QBI Stage B (Nov 2025): Atom Computing, Diraq, IBM, IonQ, Nord Quantique, Photonic, Quantinuum, Quantum Motion, QuEra, Silicon Quantum Computing, Xanadu"
+    sources:
+      - https://hpcwire.com/2025/11/07/darpa-selects-11-participants-for-quantum-benchmarking-initiative-stage-b/
+      - https://darpa.mil/research/programs/quantum-benchmarking-initiative/stage-b-selection
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Verify membership list against the DARPA page."
+
+  - id: ibm_roadmap_ftqc
+    claim: "IBM roadmap: Kookaburra 2026, Cockatoo 2027, Starling 2029 (200 logical qubits, 1e8 gates)"
+    sources:
+      - https://ibm.com/quantum/blog/large-scale-ftqc
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Verify against the IBM blog post."
+
+  - id: pqc_deadlines
+    claim: "NIST IR 8547 (draft): deprecate quantum-vulnerable algorithms after 2030, disallow after 2035; EU roadmap: high-risk systems by end-2030, rest by 2035"
+    sources:
+      - https://insidedeeptech.com/how-many-qubits-to-break-rsa-2048/
+    retrieved_at: "2026-10"
+    status: unverified
+    notes: "Secondary source; verify against NIST IR 8547 and the EU PQC roadmap directly."
