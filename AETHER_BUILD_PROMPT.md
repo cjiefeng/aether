@@ -51,6 +51,8 @@ The build comes in four phases, so it's useful early. Each phase ends in somethi
 
 The owner enters, edits and saves holdings (ticker, shares, optional cost basis, plus a USD cash balance) on the **Holdings** page (§8). Each save is a CSRF-protected `update_holdings` command that the worker applies; the dashboard never writes holdings itself. The target is the **selected risk profile's** model strategy (§6.5), not a hand-written weight list. If no holdings are saved, all position features are hidden.
 
+**Optional Tiger Brokers sync (read-only, M5).** If Tiger credentials are configured (S8), the owner can switch `holdings_source` from `manual` to `tiger`. A daily job and a "Sync from Tiger" button then replace the share counts of **strategy-universe symbols only** (QTUM + pure-plays) with the account's positions. Positions outside the universe are ignored (only their count is shown), and the sleeve's cash stays a manual entry, because account cash isn't all earmarked for this sleeve. If a sync fails, the last snapshot stays in use with a "stale since …" banner. Manual entry remains the default and the fallback.
+
 `config/positions.yaml` (git-ignored) is **deprecated**: if it exists when M5 first runs, its `holdings` are imported once and the file is then ignored.
 
 Holdings are used for drift vs target, the rebalance plan (§6.6) and "you're 2× overweight X vs plan" lines in the weekly brief. They never leave the machine and never go into LLM prompts. Only the computed drift percentages go into synthesis, if the owner enables `positions.share_drift_with_llm`. Holdings live in SQLite, so they are also in the local backups under `data/` (git- and docker-ignored).
@@ -117,7 +119,7 @@ The owner is a senior MySQL / DBaaS backend engineer who is fluent in Python and
 
 **S4 — Secrets.**
 
-- Secrets come from env only (`.env`, mode `0600`): `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`, `AETHER_DASHBOARD_PASSWORD_HASH`, `AETHER_SESSION_SECRET` (from M5), optional `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_USER_ID` / `TELEGRAM_CHAT_ID` (see S7).
+- Secrets come from env only (`.env`, mode `0600`): `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`, `AETHER_DASHBOARD_PASSWORD_HASH`, `AETHER_SESSION_SECRET` (from M5), optional `TIGER_ID` / `TIGER_PRIVATE_KEY` / `TIGER_ACCOUNT` (see S8), optional `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_USER_ID` / `TELEGRAM_CHAT_ID` (see S7).
 - `.env`, `config/positions.yaml` and `data/` are listed in **both** `.gitignore` and `.dockerignore`.
 - A `gitleaks` pre-commit hook plus a CI-style `make secrets-scan`.
 - Use separate API keys for dev and for the long-running app.
@@ -135,6 +137,7 @@ The owner is a senior MySQL / DBaaS backend engineer who is fluent in Python and
 - yfinance/Yahoo data is for **personal use only**, and Aether stays private.
 - Store **excerpts of at most ~500 characters plus the URL**, never full article bodies.
 - Respect robots.txt and rate limits when scraping (e.g. the Defiance holdings file).
+- `tigeropen` (Tiger Brokers' official SDK, Apache-2.0) is an approved optional dependency (owner decision, 2026-10-04). Its data is for the owner's personal use.
 
 **S7 — Telegram: owner-only.** The bot exists only to talk to the owner. Access is pinned to one Telegram user, defined in docker config.
 
@@ -157,6 +160,14 @@ The owner is a senior MySQL / DBaaS backend engineer who is fluent in Python and
   - If the bot is added to any group or channel, it leaves immediately via `leaveChat`.
   - Any future command that spends LLM budget or writes data goes through the same `commands` table as the dashboard, with the same rate limits and budget guard.
 - **BotFather hardening (owner checklist):** `/setjoingroups` → Disable, `/setprivacy` → Enable. Keep the bot token in `.env` only. Rotate it with `/revoke` if it ever leaks.
+
+**S8 — Broker API: read-only (Tiger Brokers, optional).** The Tiger OpenAPI key can place orders, so Aether walls it off:
+
+- **One module only:** `providers/tiger.py` is the only module allowed to import `tigeropen`. It exposes an explicit allow-list of read calls (positions, assets, option expirations/chains, delayed briefs) and nothing else. `scripts/check_broker_readonly.py` (run in `make lint`) fails on any `tigeropen` import outside that module, and on any reference to order methods (`place_order`, `modify_order`, `cancel_order`, `create_order` and similar) anywhere in `src/`. A test asserts the provider object has no order-capable attribute.
+- **Worker only:** credentials are interpolated only into the `worker` service, like every other secret. The dashboard triggers a sync through the CSRF'd command queue (`sync_holdings`); it never talks to Tiger.
+- **Least privilege:** if Tiger offers a read-only or quote-only key/permission, use it (verify at implementation time and record the result in the report). If it doesn't, the README and owner checklist say plainly that the key can trade, and the owner should use a dedicated key and revoke it if unused.
+- **Fail closed:** missing or malformed credentials disable the module with a log line; manual holdings keep working. Network calls go only to Tiger's documented API hosts over https.
+- **No leakage:** positions, assets and the account number never go into LLM prompts, `llm_calls`, alerts or logs. The account number is shown masked (last 4 digits) on the dashboard.
 
 ### 2.3 Facts registry (`FACTS.md` + `config/facts.yaml`)
 
@@ -246,7 +257,8 @@ FACTS.md
 | Earnings dates | 8-K Item 2.02 history (past) + company IR announcements / yfinance calendar (upcoming) | Earnings dates become catalysts and confounders. |
 | Guidance & revenue mix | 10-Q/10-K MD&A text from EDGAR (free) | LLM extraction of guidance, backlog/bookings and commercial vs government mix. Earnings-call transcripts are paid: optional, ask the owner first. |
 | Short interest | FINRA/exchange short-interest data (bi-monthly); verify the best free source | Short % of float and days-to-cover. Borrow fee only if a free source exists. |
-| Options implied volatility (optional) | yfinance option chains | 30-day ATM IV as a risk/sizing context field. Skip it if unreliable. |
+| Options implied volatility (optional) | **Tiger OpenAPI option chains** if configured (S8), else yfinance option chains | 30-day ATM IV as a risk/sizing context field. Skip it if unreliable. Record the provider per row. |
+| Broker positions (optional) | **Tiger OpenAPI** account positions, read-only (S8) | Holdings sync for the strategy universe (§1.3). Free with a funded Tiger account; real-time quotes are a paid add-on and aren't needed. Tiger has no news, fundamentals or short-interest data, so it doesn't replace any other source. |
 | Company press releases | IR RSS/Atom (T1) | Cheap and high-signal. Prefer this over web search. |
 | Industry news | RSS allow-list (T2): The Quantum Insider, HPCwire, Quantum Computing Report, etc. | Configurable in `sources.yaml` with trust tiers. |
 | Gap-filling research | **Claude API with the server-side web search tool** | (a) Daily sweep per ticker, (b) on-demand deep dives, (c) verifying claims before escalation. Use `allowed_domains` from `sources.yaml`. Look up the current web-search tool version and model IDs in the Anthropic docs. |
@@ -479,7 +491,7 @@ The QTUM core weight is taken from a small grid per profile, and every candidate
 
 ### 6.6 Holdings & rebalance planner (`portfolio/holdings.py`, `portfolio/rebalance.py`; M5; no LLM)
 
-**Inputs:** saved holdings + cash (§1.3), the last close per ticker (with the stale banner if prices are stale), the owner's selected profile, and that profile's daily target weights from §6.5.
+**Inputs:** saved holdings + cash (§1.3; manual or Tiger-synced), the last close per ticker (with the stale banner if prices are stale), the owner's selected profile, and that profile's daily target weights from §6.5.
 
 **Stability (day-to-day targets shouldn't jump).** The published target for day *t* is the previous published target moved toward the new raw target, but:
 
@@ -512,7 +524,7 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `insider_txns` (id INTEGER PK, accession FK, insider, role, code, shares INTEGER, price REAL, is_10b5_1 INTEGER)
 - `earnings_calendar` (symbol, date, status CHECK IN ('scheduled','reported'), source_url, PK(symbol, date))
 - `short_interest` (symbol, settlement_date, short_shares INTEGER, pct_float REAL, days_to_cover REAL, source, PK(symbol, settlement_date))
-- `options_iv` (symbol, d, iv30 REAL, PK(symbol, d)), optional
+- `options_iv` (symbol, d, iv30 REAL, provider, PK(symbol, d)), optional
 - `qtum_holdings` (snapshot_date, holding_symbol, weight REAL, PK(snapshot_date, holding_symbol)) `WITHOUT ROWID`
 - `facts` (id TEXT PK, claim, source_url, retrieved_at, status CHECK IN ('unverified','verified_by_claude','signed_off'), notes), synced from `config/facts.yaml`
 - `events` (id INTEGER PK, url_hash BLOB UNIQUE, simhash INTEGER, title, source_domain, trust_tier CHECK IN ('T1','T2','T3'), independent_source_count INTEGER, published_at, excerpt TEXT CHECK(length(excerpt) <= 600), origin CHECK IN ('rss','edgar','web_search','manual'), injection_suspected INTEGER, quarantined INTEGER, raw TEXT JSON)
@@ -531,9 +543,9 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `strategy_metrics` (run_id FK, strategy_id, metrics TEXT JSON, qualifies TEXT JSON, PK(run_id, strategy_id)) (M4)
 - `strategy_weights` (run_id FK, strategy_id, symbol, weight REAL, PK(run_id, strategy_id, symbol)) (M4)
 - `profile_targets` (profile CHECK IN ('safe','medium','aggressive'), as_of, strategy_id, raw_weights TEXT JSON, published_weights TEXT JSON, override_reason TEXT JSON NULL, PK(profile, as_of)) (M5)
-- `holdings` (symbol PK, shares_micros INTEGER, cost_basis_micros INTEGER NULL, updated_at); cash is the reserved row `symbol = '$CASH'` (M5)
+- `holdings` (symbol PK, shares_micros INTEGER, cost_basis_micros INTEGER NULL, source CHECK IN ('manual','tiger'), updated_at); cash is the reserved row `symbol = '$CASH'` (M5)
 - `holdings_history` (id INTEGER PK, command_id FK, before TEXT JSON, after TEXT JSON, applied_at) (M5)
-- `portfolio_settings` (key PK, value TEXT JSON): selected profile, whole-shares flag, new-cash-only flag (M5)
+- `portfolio_settings` (key PK, value TEXT JSON): selected profile, whole-shares flag, new-cash-only flag, `holdings_source` (`manual`/`tiger`), last Tiger sync time (M5)
 - `rebalance_plans` (profile, as_of, input_hash BLOB, plan TEXT JSON, PK(profile, as_of)) (M5)
 - `commands` (id INTEGER PK, kind, args TEXT JSON, requested_at, requested_by, status, processed_at): writes requested by the dashboard, executed by the worker
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
@@ -571,7 +583,7 @@ Notes:
 6. **Calibration:** the §6.3 report and trend.
 7. **Facts:** the registry with status badges and source links. The owner uses this page to review before signing off (sign-off itself is done by editing `facts.yaml`).
 8. **Strategies (M4):** per profile, the recommended model strategy and its target weights; equity-curve and drawdown charts vs QTUM/QQQ; the full metrics table for every candidate with qualify/fail reasons; the backtest banner from §6.5.
-9. **Holdings (M5):** an editable holdings + cash table (saved via the `update_holdings` command), the profile picker, current vs target weights, the rebalance plan (§6.6) with "unchanged since …" or the cited override reason, and the backtest banner.
+9. **Holdings (M5):** an editable holdings + cash table (saved via the `update_holdings` command; in `tiger` mode the universe rows are read-only, with "Sync from Tiger", the last sync time and the masked account number), the profile picker, current vs target weights, the rebalance plan (§6.6) with "unchanged since …" or the cited override reason, and the backtest banner.
 10. **Login (M5):** the password form (§2.2 S2).
 11. **Ops:**
    - last run per job and the provider used
@@ -598,6 +610,7 @@ Dark mode, responsive, fast. Everything renders from SQLite read-only; the page 
 | Classification | On ingest (queue) |
 | Event reactions | Daily 06:45 |
 | Theme decomposition + scorecards | Daily 07:00 |
+| Tiger holdings sync (M5, if configured) | Daily 07:05, and on demand |
 | Dividends + backtests + model strategies (M4); profile targets + rebalance plan (M5) | Daily 07:10, and after a holdings update |
 | Conclusion outcomes (track record) | Daily 07:30 |
 | Calibration report | Sunday 08:00 |
@@ -623,7 +636,7 @@ All jobs run in the single worker's APScheduler with `max_instances=1`. Network 
 - Tools: only `research/` gets the web-search tool, with capped `max_uses`, `allowed_domains` from `sources.yaml`, and a daily run cap. Classification and synthesis: **no tools**.
 - Escalations: `MAX_ESCALATIONS_PER_DAY` and a per-ticker cooldown (§5.2).
 - Backfill uses the **Message Batches API**.
-- Holdings (and the deprecated `positions.yaml`), secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
+- Holdings (manual or Tiger-synced, and the deprecated `positions.yaml`), the broker account number, secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
 
 ---
 
@@ -645,7 +658,7 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M4** | Backtest lab + model strategies | `dividends` ingest and total-return series, `portfolio/metrics.py` (§6.5 metric list), strategy families, walk-forward backtest, `config/strategies.yaml` with the three profiles, deterministic selection, daily job, **Strategies page** with the backtest banner; numpy declared as a direct dependency (no scipy) | Metrics match hand-computed values on a synthetic series (Sharpe, Sortino, max DD, CVaR, beta/alpha within tolerance); a look-ahead test (perturbing day *t* prices never changes weights before *t+1*); dividends on a synthetic series raise total return by the expected amount; same input hash → byte-identical output; a candidate breaking a profile limit is never selected; "no qualifying strategy" renders |
-| **M5** | Password, holdings & rebalance | **S2 password login** (scrypt hash, signed session cookie, login rate limit, fail-closed, `make hash-password`); **Holdings page** (CSRF'd `update_holdings` command, `holdings_history`, one-time `positions.yaml` import); profile picker; **stable targets** (daily caps, no-trade band) with the **override** rules; rebalance plan with whole shares, sells first, new-cash-only mode; weekly-brief drift lines read from here (used in M10) | Unauthenticated request to any data route → redirect to `/login`; 6th failed login in 15 min → 429; missing hash/secret → app won't start; holdings edit goes through `commands` and the authorizer still denies direct writes; same inputs → identical plan; without a qualifying event no target moves > 1 pp/name or > 3 pp total per day; a synthetic materiality-5 RISK event on a held name lifts the caps and is cited; a synthetic −3σ QQQ week lifts the caps; no suggested trade below the minimum; holdings never appear in a prompt or `llm_calls` row |
+| **M5** | Password, holdings & rebalance | **S2 password login** (scrypt hash, signed session cookie, login rate limit, fail-closed, `make hash-password`); **Holdings page** (CSRF'd `update_holdings` command, `holdings_history`, one-time `positions.yaml` import); profile picker; **stable targets** (daily caps, no-trade band) with the **override** rules; rebalance plan with whole shares, sells first, new-cash-only mode; weekly-brief drift lines read from here (used in M10); **optional read-only Tiger holdings sync (S8)**: `providers/tiger.py`, `sync_holdings` command + daily job, `check_broker_readonly.py` in `make lint` | Unauthenticated request to any data route → redirect to `/login`; 6th failed login in 15 min → 429; missing hash/secret → app won't start; holdings edit goes through `commands` and the authorizer still denies direct writes; same inputs → identical plan; without a qualifying event no target moves > 1 pp/name or > 3 pp total per day; a synthetic materiality-5 RISK event on a held name lifts the caps and is cited; a synthetic −3σ QQQ week lifts the caps; no suggested trade below the minimum; holdings never appear in a prompt or `llm_calls` row; **Tiger (recorded fixtures):** a sync replaces only universe symbols and leaves sleeve cash alone, a failed sync keeps the last snapshot with a stale banner, missing credentials disable the module, the lint check fails on a planted `place_order` call or a stray `tigeropen` import |
 
 ### Phase 2 — Intelligence
 
@@ -653,7 +666,7 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 |---|---|---|---|
 | **M6** | News & research ingest | RSS ingest with trust tiers, `research/` runner (only tool-enabled calls), untrusted-content wrapping, `events`/`event_sources` with dedupe and independent-source counting, excerpt cap, LLM wrapper + soft budget + `llm_calls`; 12-month backfill via Batch API | 3 syndicated copies → 1 event with independent count 1; budget breach stops calls; excerpts ≤ 600 chars |
 | **M7** | Classifier | Rubric YAML, rules → LLM → **trust-tier caps**, injection flag + quarantine, golden set from real ingested items (owner labels), adversarial cases, `make eval`, Feed page | ≥85% agreement, ≥95% RISK recall, 100% adversarial flagged; T3-only event can't exceed materiality 2 (unit test) |
-| **M8** | Catalysts + market structure | `catalysts_seed.yaml` linked to fact IDs (IBM roadmap, QBI Stage C, QNT lock-up, earnings), auto-resolution from events, short-interest ingest + rule, optional IV, Catalysts page | A test event resolves a catalyst; short-interest spike rule fires on fixture |
+| **M8** | Catalysts + market structure | `catalysts_seed.yaml` linked to fact IDs (IBM roadmap, QBI Stage C, QNT lock-up, earnings), auto-resolution from events, short-interest ingest + rule, optional IV (Tiger option chains if configured, else yfinance; S8), Catalysts page | A test event resolves a catalyst; short-interest spike rule fires on fixture |
 | **M9** | Scorecards, reactions, theme | All §6.1 components incl. fully diluted EV, §6.3 reaction engine + Calibration page, **§6.1 theme decomposition with SOXX/QQQ/basket** (positions drift moved to M5) | Component unit tests on fixtures; reaction tests (after-close anchoring, holidays, β fallback, confounding, pending→complete, synthetic +10% jump → z₁ > 2); decomposition recovers known betas from a synthetic factor series within ±0.05 |
 | **M10** | Conclusions, track record, brief | Synthesis (no tools; fact-status labels; no opinions), citation validator, **hysteresis + cooldown**, theme tilt with quantum-sleeve label, **§6.4 track record + baselines**, weekly brief, position-drift lines | No unvalidated/quarantined citations reach the DB; a proposed flip without a qualifying trigger is stored as `held`; outcome rows fill as synthetic prices mature; "No track record yet" banner renders |
 
