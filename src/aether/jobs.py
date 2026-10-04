@@ -21,16 +21,19 @@ from sqlalchemy import Engine, delete, select, update
 
 from aether.alerts.dispatch import enqueue_test_alert, run_alerts
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
-from aether.config import Settings, load_alerts_config, load_rubric
+from aether.config import Settings, load_alerts_config, load_rubric, load_strategies
 from aether.db.engine import write_tx
 from aether.db.models import commands, job_runs
 from aether.db.types import to_iso, utcnow_iso
+from aether.ingest.dividends import ingest_dividends
 from aether.ingest.earnings_calendar import ingest_earnings_calendar
 from aether.ingest.edgar import ingest_edgar
 from aether.ingest.prices import ingest_prices
 from aether.ingest.qtum_holdings import ingest_qtum_holdings
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
+from aether.portfolio.job import run_strategies
+from aether.providers.dividends import FallbackDividends, MassiveDividends, YFinanceDividends
 from aether.providers.edgar import EdgarClient
 from aether.providers.prices import FailoverPriceProvider, MassiveProvider, YFinanceProvider
 from aether.runs import JobResult, run_job
@@ -123,6 +126,17 @@ def prices_job(engine: Engine, provider: FailoverPriceProvider) -> JobResult:
     return ingest_prices(engine, provider, full_refresh=sunday)
 
 
+def make_dividend_provider(settings: Settings) -> FallbackDividends:
+    fallback = None
+    if settings.massive_api_key is not None:
+        fallback = MassiveDividends(settings.massive_api_key.get_secret_value())
+    return FallbackDividends(YFinanceDividends(), fallback)
+
+
+def strategies_job(engine: Engine, settings: Settings) -> JobResult:
+    return run_strategies(engine, load_strategies(settings.config_dir))
+
+
 def qtum_holdings_job(engine: Engine) -> JobResult:
     with httpx.Client(timeout=30) as client:
         return ingest_qtum_holdings(engine, client)
@@ -164,14 +178,16 @@ def alerts_job(
 
 
 CATCH_UP_AFTER = timedelta(hours=24)
+PORTFOLIO_CATCH_UP_DELAY = timedelta(minutes=5)
 
 
-def _catch_up(engine: Engine, job: str) -> dict[str, Any]:
-    """Extra `add_job` kwargs: run now if the last ok run is older than a day. Otherwise none,
-    and the cron trigger decides. (APScheduler 3: `next_run_time=None` would mean *paused*.)"""
+def _catch_up(engine: Engine, job: str, delay: timedelta = timedelta(0)) -> dict[str, Any]:
+    """Extra `add_job` kwargs: run now (+ `delay`) if the last ok run is older than a day.
+    Otherwise none, and the cron trigger decides. (APScheduler 3: `next_run_time=None` would
+    mean *paused*.)"""
     last = last_ok_finished(engine, job)
     if last is None or datetime.now(UTC) - datetime.fromisoformat(last) > CATCH_UP_AFTER:
-        return {"next_run_time": datetime.now(ZoneInfo(TZ))}
+        return {"next_run_time": datetime.now(ZoneInfo(TZ)) + delay}
     return {}
 
 
@@ -231,6 +247,28 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             edgar_lock.release()
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
 
+    # Dividends then backtests (M4), daily 07:10 SGT after prices. The command shares the lock.
+    dividend_provider = make_dividend_provider(settings)
+    portfolio_lock = threading.Lock()
+
+    def portfolio_pipeline() -> JobResult | None:
+        run_job(engine, "dividends", lambda: ingest_dividends(engine, dividend_provider))
+        # Backtests run even if the dividend fetch failed: stored dividends are still valid.
+        return run_job(engine, "strategies", lambda: strategies_job(engine, settings))
+
+    def run_portfolio() -> None:
+        with portfolio_lock:
+            portfolio_pipeline()
+
+    def recompute_strategies(_args: dict[str, Any]) -> dict[str, Any]:
+        if not portfolio_lock.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        try:
+            result = portfolio_pipeline()
+        finally:
+            portfolio_lock.release()
+        return {"ok": result is not None, "rows": result.rows_written if result else 0}
+
     telegram, telegram_off = make_telegram(settings)
     # The cron job and the test command share the outbox; never deliver concurrently.
     alerts_lock = threading.Lock()
@@ -256,6 +294,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         "refresh_prices": refresh_prices,
         "refresh_edgar": refresh_edgar,
         "test_alert": test_alert,
+        "recompute_strategies": recompute_strategies,
     }
 
     def commands_tick() -> None:
@@ -315,6 +354,15 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         minute=15,
         id="earnings_calendar",
         **_catch_up(engine, "earnings_calendar"),
+    )
+    sched.add_job(
+        run_portfolio,
+        "cron",
+        hour=7,
+        minute=10,
+        id="portfolio",
+        # Startup catch-up waits for the prices catch-up (which starts at once) to land first.
+        **_catch_up(engine, "strategies", PORTFOLIO_CATCH_UP_DELAY),
     )
     # Alerts (M3): every 10 min; covers the hourly job-health check (spec §9).
     sched.add_job(

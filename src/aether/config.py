@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -210,6 +210,63 @@ class AlertsConfig(_Strict):
         return tuple(sorted(v, reverse=True))
 
 
+Profile = Literal["safe", "medium", "aggressive"]
+PROFILES: tuple[Profile, ...] = ("safe", "medium", "aggressive")
+Fraction = Annotated[float, Field(ge=0, le=1)]
+
+
+class BacktestParams(_Strict):
+    estimation_window: int = Field(ge=20)  # sessions; also the in-sample warm-up
+    min_sessions: int = Field(ge=2)  # a name joins once it has this many return sessions
+    cost_bps: float = Field(ge=0, le=100)  # per unit of turnover (sum of |weight change|)
+    rebalance: Literal["monthly"]
+    momentum_lookback: int = Field(ge=2)
+    momentum_top_n: int = Field(ge=1)
+    min_var_iterations: int = Field(ge=10, le=100_000)
+    annualization: int = Field(ge=1)
+
+    @field_validator("min_sessions")
+    @classmethod
+    def _min_sessions(cls, v: int, info: ValidationInfo) -> int:
+        window = info.data.get("estimation_window")
+        if window is not None and v > window:
+            raise ValueError("min_sessions must be <= estimation_window")
+        return v
+
+
+class ProfileParams(_Strict):
+    min_qtum: Fraction
+    max_per_name: Annotated[float, Field(gt=0, le=1)]
+    vol_limit_x: Annotated[float, Field(gt=0)] | None  # x QTUM's OOS volatility; None = no limit
+    max_dd_limit_pp: Annotated[float, Field(ge=0)] | None  # QTUM's OOS max DD + N pp; None = none
+    rank_metric: Literal["cvar95_low", "sortino_high"]
+    qtum_grid: tuple[Fraction, ...] = Field(min_length=1)
+
+    @field_validator("qtum_grid")
+    @classmethod
+    def _grid(cls, v: tuple[float, ...], info: ValidationInfo) -> tuple[float, ...]:
+        floor = info.data.get("min_qtum")
+        if floor is not None and any(q < floor for q in v):
+            raise ValueError("every qtum_grid value must be >= min_qtum")
+        if len(set(v)) != len(v):
+            raise ValueError("qtum_grid values must be distinct")
+        return tuple(sorted(v))
+
+
+class StrategiesConfig(_Strict):
+    """`config/strategies.yaml`: backtest parameters and risk profiles (M4). Numbers only."""
+
+    backtest: BacktestParams
+    profiles: dict[Profile, ProfileParams]
+
+    @field_validator("profiles")
+    @classmethod
+    def _all_profiles(cls, v: dict[Profile, ProfileParams]) -> dict[Profile, ProfileParams]:
+        if set(v) != set(PROFILES):
+            raise ValueError(f"profiles must be exactly {list(PROFILES)}")
+        return {p: v[p] for p in PROFILES}
+
+
 def _load_yaml(path: Path) -> object:
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -229,6 +286,10 @@ def load_rubric(config_dir: Path) -> Rubric:
 
 def load_alerts_config(config_dir: Path) -> AlertsConfig:
     return AlertsConfig.model_validate(_load_yaml(config_dir / "alerts.yaml"))
+
+
+def load_strategies(config_dir: Path) -> StrategiesConfig:
+    return StrategiesConfig.model_validate(_load_yaml(config_dir / "strategies.yaml"))
 
 
 def get_settings() -> Settings:

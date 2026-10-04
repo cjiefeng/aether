@@ -5,8 +5,8 @@ STRICT tables accept only INTEGER/REAL/TEXT/BLOB/ANY, so columns use only `Integ
 VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
-events, M3: alerts outbox). Keep this file and `migrations/versions/*` in sync (a test compares
-them).
+events, M3: alerts outbox, M4: dividends + backtests). Keep this file and
+`migrations/versions/*` in sync (a test compares them).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -511,5 +512,105 @@ event_classifications = Table(
         "materiality",
         sqlite_where=text("class != 'NOISE'"),
     ),
+    sqlite_strict=True,
+)
+
+# --------------------------------------------------------------------------- M4: portfolio
+
+PROFILES = ("safe", "medium", "aggressive")
+DIVIDEND_PROVIDERS = ("yfinance", "massive", "synthetic")
+
+# Cash dividends per share, split-adjusted like prices_daily. Total return is computed in code
+# from prices_daily + this table, so the providers' own adjusted-close conventions never mix.
+dividends = Table(
+    "dividends",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("ex_date", Text, nullable=False),
+    Column("amount_micros", Micros, nullable=False),
+    Column("currency", Text, nullable=False, server_default="USD"),
+    Column("provider", Text, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("symbol", "ex_date"),
+    CheckConstraint("amount_micros > 0", name="amount"),
+    CheckConstraint("currency = 'USD'", name="currency"),
+    _in_ck("provider", DIVIDEND_PROVIDERS),
+    _date_ck("ex_date"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# One row per distinct (as_of, input_hash): a re-run on identical inputs writes nothing.
+strategy_runs = Table(
+    "strategy_runs",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("as_of", Text, nullable=False),  # last QTUM session in the inputs
+    Column("input_hash", LargeBinary, nullable=False),
+    Column("config", Text, nullable=False),
+    Column("summary", Text, nullable=False),  # selections, caveats, OOS window
+    Column("created_at", Text, nullable=False),
+    UniqueConstraint("as_of", "input_hash"),
+    _date_ck("as_of"),
+    CheckConstraint("length(input_hash) = 32", name="input_hash_len"),
+    _json_ck("config"),
+    _json_ck("summary"),
+    sqlite_strict=True,
+)
+
+strategy_metrics = Table(
+    "strategy_metrics",
+    metadata,
+    Column("run_id", Integer, ForeignKey("strategy_runs.id", ondelete="CASCADE"), nullable=False),
+    Column("strategy_id", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("profile", Text),
+    Column("family", Text),
+    Column("qtum_weight", REAL),
+    Column("metrics", Text, nullable=False),
+    Column("qualifies", Text, nullable=False),
+    PrimaryKeyConstraint("run_id", "strategy_id"),
+    _in_ck("kind", ("candidate", "benchmark")),
+    CheckConstraint(
+        "profile IS NULL OR profile IN (" + ",".join(f"'{p}'" for p in PROFILES) + ")",
+        name="profile",
+    ),
+    CheckConstraint(
+        "(kind = 'benchmark') = (profile IS NULL AND family IS NULL AND qtum_weight IS NULL)",
+        name="kind_fields",
+    ),
+    _json_ck("metrics"),
+    _json_ck("qualifies"),
+    sqlite_strict=True,
+)
+
+# Current target weights per strategy (weights for the session after as_of). M5 reads these.
+strategy_weights = Table(
+    "strategy_weights",
+    metadata,
+    Column("run_id", Integer, nullable=False),
+    Column("strategy_id", Text, nullable=False),
+    Column("symbol", Text, nullable=False),
+    Column("weight", REAL, nullable=False),
+    PrimaryKeyConstraint("run_id", "strategy_id", "symbol"),
+    ForeignKeyConstraint(
+        ["run_id", "strategy_id"],
+        ["strategy_metrics.run_id", "strategy_metrics.strategy_id"],
+        ondelete="CASCADE",
+    ),
+    CheckConstraint("weight >= 0 AND weight <= 1", name="weight"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# Equity curves for the page (recommended strategies + benchmarks). Pruned to recent runs.
+strategy_curves = Table(
+    "strategy_curves",
+    metadata,
+    Column("run_id", Integer, ForeignKey("strategy_runs.id", ondelete="CASCADE"), nullable=False),
+    Column("series_id", Text, nullable=False),
+    Column("points", Text, nullable=False),  # JSON [[YYYY-MM-DD, level], ...]
+    PrimaryKeyConstraint("run_id", "series_id"),
+    _json_ck("points"),
     sqlite_strict=True,
 )
