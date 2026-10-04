@@ -102,4 +102,4 @@ make secrets-scan    # gitleaks: no leaks
 - **Removed the CIDR allow-list.** That means `AETHER_ALLOWED_CIDRS`, `AETHER_TRUSTED_PROXY`, `security/network.py`, the X-Forwarded-For handling and their tests are all gone. The dashboard has no IP-based access control now. It relies on the LAN boundary and host firewall, plus CSRF and the rate limit for commands. This is a deliberate deviation from spec S2 and from the original M0 acceptance criterion.
 - **Added `httpx2`** as a dev dependency and removed the pytest warning filter. The test run is now warning-free.
 - **Added `./deploy.sh`** in place of `make up`/`make build`/`make check-env`. It checks `.env` is 0600, refuses to run with uncommitted tracked changes, fast-forwards to `origin/main`, then runs `docker compose up -d --build --remove-orphans --wait` and checks `/healthz`.
-
+- **Added GitHub Actions CI** (`.github/workflows/ci.yml`), which runs on pull requests and on pushes to `main`. It has four jobs: test, lint, secrets-scan and a runtime image build. Actions are pinned to commit SHAs, and permissions are `contents: read`. From now on, changes land through PRs only (see CLAUDE.md "Git workflow").

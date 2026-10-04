@@ -22,8 +22,14 @@ Start every session by reading this file, `AETHER_BUILD_PROMPT.md` (the spec), `
 - Migrations are **hand-written** in `src/aether/db/migrations/versions/` (render_as_batch). Update `db/models.py` alongside them: `tests/test_strict_schema.py` checks models == migrations and that every table is STRICT. Batch-mode table rebuilds must keep `sqlite_strict=True` (pass it via `table_kwargs`).
 - Each milestone adds its own tables in a new migration. The §7 outline in the spec is the target.
 
+## Git workflow
+- **Never push to `main` directly.** Every change goes on a branch (e.g. `m1/market-data`, `fix/…`) and lands through a pull request.
+- After opening the PR, **wait for the GitHub Actions run** (`.github/workflows/ci.yml`: test, lint, secrets-scan, runtime image) to finish. Fix any failures on the branch before calling the work done.
+- Don't merge the PR yourself unless the owner asks; the owner reviews and merges. `./deploy.sh` then deploys `main`.
+- CI runs the same Docker-wrapped make targets as local (`make test`, `make lint`, `make secrets-scan`). Keep them CI-safe: no TTY, no host tools beyond Docker and make.
+
 ## Milestone close-out
-Tests green, `make lint` clean, `make secrets-scan` clean, README updated, a MILESTONE_REPORT.md entry (built / decisions / open questions / facts / owner checklist), then commit, push and stop.
+Tests green, `make lint` clean, `make secrets-scan` clean, README updated, a MILESTONE_REPORT.md entry (built / decisions / open questions / facts / owner checklist), then commit on a branch, open a PR, wait for CI to pass, and stop for review.
 
 ## Deploy
 `./deploy.sh` (not a make target) fast-forwards to `origin/main` and runs `docker compose up -d --build --wait`. There's no IP allow-list (removed by the owner); the dashboard relies on the LAN boundary + CSRF.

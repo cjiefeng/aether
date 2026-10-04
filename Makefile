@@ -1,7 +1,8 @@
 # Everything runs in Docker; nothing is installed on the host.
 SHELL := /bin/sh
 DC := docker compose
-DEV := $(DC) run --rm dev
+# -T: no TTY in CI (GitHub Actions sets CI=true).
+DEV := $(DC) run --rm $(if $(CI),-T,) dev
 UV := uv run --frozen
 GITLEAKS_IMAGE := ghcr.io/gitleaks/gitleaks:v8.30.1
 GITLEAKS := docker run --rm -v "$(CURDIR):/repo" -w /repo $(GITLEAKS_IMAGE)
