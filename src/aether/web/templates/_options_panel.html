@@ -1,0 +1,55 @@
+{# Options panel (spec §6.8). Research only: options are never held, suggested or used in sizing. #}
+{% set o = options.panel %}
+<section class="card">
+  <div class="card-head"><h2>Options (research only)</h2>
+    <span class="muted small reason">{% if o.d %}Snapshot {{ o.d }} · {{ o.provider }}{% endif %}</span></div>
+  {% if options.stale %}<p class="banner stale">{% if options.last_ok %}Options snapshot stale since {{ options.last_ok }}.{% else %}No successful options snapshot yet.{% endif %}</p>{% endif %}
+  {% if not o.d %}
+  <p class="muted">No options snapshot yet.</p>
+  {% elif o.thin %}
+  <p class="banner stale"><strong>Thin chain: not reported.</strong> No at-the-money contract passed the quality gates
+    (open interest and bid-ask spread limits in <code>config/options.yaml</code>).</p>
+  {% else %}
+  <table class="num compact">
+    <thead><tr><th>ATM IV 30d</th><th>IV rank</th><th>IV percentile</th><th>30d</th><th>60d</th><th>90d</th><th>Skew 30d (25Δ put − call)</th></tr></thead>
+    <tbody><tr>
+      <td>{{ o.atm_iv_30|pct(false) }}</td>
+      <td>{% if o.iv_rank is not none %}{{ o.iv_rank|pct(false) }}{% else %}<span class="muted small reason">{{ o.reasons.get("iv_rank", "—") }}</span>{% endif %}</td>
+      <td>{{ o.iv_percentile|pct(false) }}</td>
+      <td>{{ o.term.get("30")|pct(false) }}</td>
+      <td>{{ o.term.get("60")|pct(false) }}</td>
+      <td>{{ o.term.get("90")|pct(false) }}</td>
+      <td>{% if o.skew_30 is not none %}{{ o.skew_30|pct }} pts{% else %}<span class="muted small reason">{{ o.reasons.get("skew_30", "—") }}</span>{% endif %}</td>
+    </tr></tbody>
+  </table>
+  <h3>Positioning</h3>
+  <table class="num compact">
+    <thead><tr><th>Put/call volume</th><th>Put/call open interest</th><th>Volume vs 20-snapshot median</th></tr></thead>
+    <tbody><tr>
+      <td>{{ "%.2f"|format(o.put_call_volume) if o.put_call_volume is not none else "—" }}</td>
+      <td>{{ "%.2f"|format(o.put_call_oi) if o.put_call_oi is not none else "—" }}</td>
+      <td>{% if o.volume_vs_median is not none %}{{ "%.2f"|format(o.volume_vs_median) }}×{% else %}<span class="muted small reason">{{ o.reasons.get("volume_vs_median", "—") }}</span>{% endif %}</td>
+    </tr></tbody>
+  </table>
+  {% endif %}
+  {% if o.d and o.implied_moves %}
+  <h3>Implied moves into catalysts</h3>
+  <table class="num compact">
+    <thead><tr><th>Catalyst</th><th>Date</th><th>Expiry used</th><th>Straddle</th><th>Implied move</th></tr></thead>
+    <tbody>
+    {% for m in o.implied_moves %}
+      <tr>
+        <td>{{ m.label }}</td>
+        <td>{{ m.date }}</td>
+        <td>{{ m.expiry or "—" }}</td>
+        <td>{{ "%.2f"|format(m.straddle) if m.straddle is not none else "—" }}</td>
+        <td>{% if m.move is not none %}±{{ m.move|pct(false) }}{% else %}<span class="muted small reason">{{ m.reason }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="muted small">ATM IV interpolated in total variance between listed expiries; skew uses Black-Scholes deltas (r = 0) from each
+    contract's own IV; implied move = at-the-money straddle mid on the first listed expiry after the catalyst ÷ spot. Nothing is
+    extrapolated past the listed expiries. IV rank uses Aether's own daily snapshots (252 needed). Never used for sizing or trades.</p>
+</section>

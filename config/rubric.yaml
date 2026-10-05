@@ -36,6 +36,18 @@ risk_flags:
   shelf_active_days: 1095   # Rule 415 shelves are usable for three years
   atm_active_days: 365
 
+# FINRA bi-weekly short interest (M8; spec §5.1 short_interest_spike). Short % = short shares ÷
+# shares outstanding (XBRL dei:EntityCommonStockSharesOutstanding); FINRA publishes no float. The
+# rule fires on a rise of at least rise_pp points vs the prior report, or on crossing above
+# level_pct (not again at each report above it). Initial values for owner review.
+short_interest:
+  rule_id: finra_short_interest_spike
+  rise_pp: 5.0
+  level_pct: 25.0
+  materiality: 3
+  months_back: 12
+  min_age_days: 5
+
 # --------------------------------------------------------------------------- classifier (M7)
 # The LLM rubric (spec §5.1) plus deterministic news rules (spec §5.2 step 1). Definitions are the
 # spec's category rubric, not views on any company. Materiality ranges are typical values shown to

@@ -25,7 +25,13 @@ from aether.db.types import to_iso
 CLASSES = ("SIGNAL", "NOISE", "RISK")
 TIERS = ("T1", "T2", "T3")
 NEWS_ORIGINS = ("rss", "web_search", "manual")
-ORIGIN_LABELS = {"rss": "RSS", "web_search": "Research", "edgar": "SEC EDGAR", "manual": "Manual"}
+ORIGIN_LABELS = {
+    "rss": "RSS",
+    "web_search": "Research",
+    "edgar": "SEC EDGAR",
+    "manual": "Manual",
+    "finra": "FINRA",
+}
 COUNT_DAYS = 30
 
 

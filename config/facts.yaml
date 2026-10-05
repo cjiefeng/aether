@@ -64,6 +64,15 @@ facts:
     status: signed_off
     notes: "All 11 names match the DARPA page, which dates the list 'as of Nov. 6, 2025'."
 
+  - id: darpa_qbi_stage_b_duration
+    claim: "DARPA describes QBI Stage B (selections as of 2025-11-06) as 'yearlong'; companies that succeed are invited to the final stage (Stage C). DARPA states no date for Stage C invitations"
+    sources:
+      - https://darpa.mil/research/programs/quantum-benchmarking-initiative/stage-b-selection
+    retrieved_at: "2026-10-05"
+    status: verified_by_claude
+    notes: "Added in M8 for the QBI Stage C catalysts (IONQ, QNT). The catalyst window starts 2026-11-06 (one year after the Stage B list) and has no end date, because DARPA gives none; the start is a day count from DARPA's wording, not an announced date."
+    open_question: "When DARPA will announce Stage C invitations, and whether Stage B runs past one year."
+
   - id: ibm_roadmap_ftqc
     claim: "IBM roadmap (blog, 2025-06-10): Kookaburra 2026, Cockatoo 2027, Starling 2029 (200 logical qubits, 100 million gates)"
     sources:

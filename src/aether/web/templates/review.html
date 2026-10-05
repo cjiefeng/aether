@@ -60,6 +60,37 @@
       </ul>
     </div>
   </div>
+  {% if pk.catalysts is defined %}
+  <h3>Catalysts, next 90 days</h3>
+  {% if pk.catalysts %}
+  <ul class="small">
+    {% for c in pk.catalysts %}<li>{{ c.window_start }}{% if c.window_end != c.window_start %} → {{ c.window_end or "no stated end" }}{% endif %}
+      {% if c.symbol %}{{ c.symbol }}{% else %}theme{% endif %}: {{ c.title }}{% if c.fact_id %} <span class="badge fact-{{ c.fact_status }}">{{ c.fact_status|replace("_", " ") }}</span>{% endif %}</li>{% endfor %}
+  </ul>
+  {% else %}<p class="muted small">None in the window.</p>{% endif %}
+  {% endif %}
+  {% if pk.options is defined %}
+  <h3>Options (research only, never trades or sizing)</h3>
+  <table class="num compact">
+    <thead><tr><th>Symbol</th><th>ATM IV 30d</th><th>IV rank</th><th>Skew 30d</th><th>P/C volume</th><th>Next implied move</th></tr></thead>
+    <tbody>
+    {% for o in pk.options %}
+      <tr>
+        <td>{{ o.symbol }}</td>
+        {% if not o.d %}<td colspan="5" class="muted small">No snapshot.</td>
+        {% elif o.thin %}<td colspan="5" class="muted small">Thin chain: not reported.</td>
+        {% else %}
+        <td>{{ o.atm_iv_30|pct(false) }}</td>
+        <td>{% if o.iv_rank is not none %}{{ o.iv_rank|pct(false) }}{% else %}<span class="muted small">building history ({{ o.iv_history_days or 0 }} days)</span>{% endif %}</td>
+        <td>{{ o.skew_30|pct }}</td>
+        <td>{{ "%.2f"|format(o.put_call_volume) if o.put_call_volume is not none else "—" }}</td>
+        <td class="small">{% set mv = o.implied_moves|selectattr("move")|first %}{% if mv %}±{{ mv.move|pct(false) }} into {{ mv.date }} ({{ mv.label }}){% else %}—{% endif %}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
   {% if p.telegram_text %}
   <details><summary class="small">Telegram text (no share counts, dollar values or account number)</summary><pre class="alert-text">{{ p.telegram_text }}</pre></details>
   {% endif %}

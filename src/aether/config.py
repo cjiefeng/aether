@@ -359,12 +359,26 @@ class ClassifierRubric(_Strict):
         return v
 
 
+class ShortInterestRule(_Strict):
+    """FINRA short-interest ingest and the `short_interest_spike` rule (spec §5.1, §5.2; M8).
+
+    Short % is short shares ÷ shares outstanding (FINRA publishes no float figure)."""
+
+    rule_id: str = Field(pattern=RULE_ID)
+    rise_pp: Annotated[float, Field(gt=0, le=100)]  # fire on a rise of at least this many points
+    level_pct: Annotated[float, Field(gt=0, le=100)]  # ... or on crossing above this level
+    materiality: Materiality
+    months_back: int = Field(ge=1, le=60)  # backfill / probe window for FINRA files
+    min_age_days: int = Field(ge=0, le=30)  # files appear about a week after settlement
+
+
 class Rubric(_Strict):
     edgar_form_rules: tuple[FormRule, ...]
     edgar_8k_item_rules: tuple[ItemRule, ...]
     insider_selling: InsiderSellingRule
     going_concern: TextRule
     risk_flags: RiskFlagParams
+    short_interest: ShortInterestRule
     classifier: ClassifierRubric
 
     @field_validator("edgar_form_rules")
@@ -519,6 +533,88 @@ class OptionsConfig(_Strict):
 
 def load_options_config(config_dir: Path) -> OptionsConfig:
     return OptionsConfig.model_validate(_load_yaml(config_dir / "options.yaml"))
+
+
+# --------------------------------------------------------------------------- catalysts (M8)
+
+CatalystKind = Literal["roadmap", "program", "regulatory", "lockup"]
+ResolveCategory = Literal["roadmap_hit", "roadmap_slip", "qbi_stage_change"]
+SYMBOL_RE = r"^[A-Z][A-Z0-9.\-]{0,9}$"
+DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
+# Titles name the milestone and its stated timing; nothing descriptive (that belongs in facts).
+Title = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 .,:()\-]{2,119}$")]
+
+
+class SeedCatalyst(_Strict):
+    id: str = Field(pattern=r"^[a-z0-9_]{3,64}$")
+    symbol: str | None = Field(default=None, pattern=SYMBOL_RE)
+    title: Title
+    kind: CatalystKind
+    window_start: str = Field(pattern=DATE_RE)
+    window_end: str | None = Field(default=None, pattern=DATE_RE)  # None = no stated end
+    fact_id: str = Field(pattern=r"^[a-z0-9_]{3,64}$")
+    source_url: str = Field(pattern=r"^https://\S+$")
+    keywords: tuple[Keyword, ...] = ()  # product/program names that tie an event to it
+    resolve_categories: tuple[ResolveCategory, ...] = ()
+
+    @field_validator("window_end")
+    @classmethod
+    def _window(cls, v: str | None, info: ValidationInfo) -> str | None:
+        start = info.data.get("window_start")
+        if v is not None and start is not None and v < start:
+            raise ValueError("window_end before window_start")
+        return v
+
+    @field_validator("resolve_categories")
+    @classmethod
+    def _needs_keywords(cls, v: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+        if v and not info.data.get("keywords"):
+            raise ValueError("event resolution needs at least one keyword")
+        return v
+
+
+class CatalystRules(_Strict):
+    """Deterministic resolution parameters (catalysts/resolve.py). Initial values for review."""
+
+    min_materiality: Materiality  # post-cap, non-quarantined events only
+    lead_days: int = Field(ge=0, le=365)  # events this long before window_start still count
+    grace_days: int = Field(ge=0, le=365)  # ... and after window_end; then `window_passed`
+    earnings_match_days: int = Field(ge=0, le=14)  # 8-K 2.02 within ± this many days
+    lockup_lookahead_days: int = Field(ge=1, le=730)
+
+
+class CatalystsConfig(_Strict):
+    """`config/catalysts_seed.yaml` (M8): identifiers, dates, fact ids and source URLs only."""
+
+    rules: CatalystRules
+    catalysts: tuple[SeedCatalyst, ...]
+
+    @field_validator("catalysts")
+    @classmethod
+    def _unique(cls, v: tuple[SeedCatalyst, ...]) -> tuple[SeedCatalyst, ...]:
+        ids = [c.id for c in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate catalyst ids")
+        return v
+
+
+def load_catalysts_config(
+    config_dir: Path, fact_ids: set[str] | None = None, symbols: set[str] | None = None
+) -> CatalystsConfig:
+    """Load and cross-check against facts.yaml and the watchlist (unknown ids are errors)."""
+    cfg = CatalystsConfig.model_validate(_load_yaml(config_dir / "catalysts_seed.yaml"))
+    if fact_ids is None:
+        from aether.facts import load_facts
+
+        fact_ids = {f.id for f in load_facts(config_dir)}
+    if symbols is None:
+        symbols = {t.symbol for t in load_watchlist(config_dir).tickers}
+    for c in cfg.catalysts:
+        if c.fact_id not in fact_ids:
+            raise ValueError(f"catalyst {c.id}: unknown fact_id {c.fact_id!r}")
+        if c.symbol is not None and c.symbol not in symbols:
+            raise ValueError(f"catalyst {c.id}: symbol {c.symbol!r} is not on the watchlist")
+    return cfg
 
 
 Usd = Annotated[Decimal, Field(ge=0)]

@@ -59,7 +59,7 @@ def test_secrets_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_facts_verified_and_partly_signed_off() -> None:
     facts = load_facts(CONFIG_DIR)
-    assert len(facts) == 8
+    assert len(facts) == 9  # M8 added darpa_qbi_stage_b_duration
     # M2 verified every seed against a primary source; the owner signed off five (2026-10-05).
     assert {f.status for f in facts} == {"verified_by_claude", "signed_off"}
     assert sum(f.status == "signed_off" for f in facts) == 5

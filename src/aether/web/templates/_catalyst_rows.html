@@ -1,0 +1,40 @@
+{# Upcoming catalysts table. `rows`: catalysts.view.upcoming(); `mark`: show the owner's Mark form. #}
+{% set fact_labels = {"signed_off": "Signed off", "verified_by_claude": "Verified by Claude", "unverified": "Unverified"} %}
+{% if rows %}
+<table class="compact">
+  <thead><tr><th>Window</th><th>Symbol</th><th>Kind</th><th>Catalyst</th><th>Source</th>{% if mark %}<th>Mark</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for c in rows %}
+    <tr>
+      <td class="nowrap">{{ c.window_start }}{% if c.window_end != c.window_start %} → {{ c.window_end or "no stated end" }}{% endif %}{% if c.overdue %} <span class="badge risk">no result yet</span>{% endif %}</td>
+      <td>{% if c.symbol %}<a href="/t/{{ c.symbol }}">{{ c.symbol }}</a>{% else %}theme{% endif %}</td>
+      <td>{{ c.kind_label }}</td>
+      <td>{{ c.title }}{% if c.fact_id %} <span class="badge fact-{{ c.fact_status }}" title="fact {{ c.fact_id }}">{{ fact_labels.get(c.fact_status, c.fact_status) }}</span>{% endif %}</td>
+      <td>{% if c.source_url %}<span class="nowrap">{{ c.source_url|extlink("source") }}</span>{% else %}—{% endif %}</td>
+      {% if mark %}
+      <td>
+        <details><summary class="small">Mark…</summary>
+        <form class="form-row" hx-disabled-elt="find button[type=submit]" hx-post="/commands/mark-catalyst" hx-target="#mark-{{ c.id }}" hx-swap="innerHTML">
+          <input type="hidden" name="catalyst_id" value="{{ c.id }}">
+          <label class="small">Status
+            <select name="status">
+              <option value="hit">Hit</option>
+              <option value="slipped">Slipped</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </label>
+          <label class="small">Event #<input name="event_id" inputmode="numeric" size="6"></label>
+          <label class="small">Note<input name="note" maxlength="200" size="16"></label>
+          <button type="submit">Mark</button>
+          <span id="mark-{{ c.id }}" class="result" role="status"></span>
+        </form>
+        </details>
+      </td>
+      {% endif %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No upcoming catalysts.</p>
+{% endif %}

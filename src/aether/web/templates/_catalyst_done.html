@@ -1,0 +1,34 @@
+{# Resolved catalysts (hit / slipped / cancelled). `rows`: catalysts.view.resolved(); `mark`: allow reopening. #}
+{% if rows %}
+<table class="compact">
+  <thead><tr><th>Window</th><th>Symbol</th><th>Catalyst</th><th>Status</th><th>How</th>{% if mark %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+  {% for c in rows %}
+    <tr>
+      <td class="nowrap">{{ c.window_start }}{% if c.window_end and c.window_end != c.window_start %} → {{ c.window_end }}{% endif %}</td>
+      <td>{% if c.symbol %}<a href="/t/{{ c.symbol }}">{{ c.symbol }}</a>{% else %}theme{% endif %}</td>
+      <td>{{ c.title }}</td>
+      <td><span class="badge {{ 'signal' if c.status == 'hit' else ('risk' if c.status == 'slipped' else 'noise') }}">{{ c.status }}</span></td>
+      <td class="small">
+        {% if c.resolution == "owner" %}marked by you{% elif c.resolution == "event" %}event{% elif c.resolution == "date" %}date reached{% elif c.resolution == "window_passed" %}window passed{% elif c.resolution == "rescheduled" %}date moved{% endif %}
+        {% if c.event_url %} · {{ c.event_url|extlink("#" ~ c.resolved_by_event_id ~ " " ~ c.event_title) }}{% endif %}
+        {% if c.note %} · {{ c.note }}{% endif %}
+        {% if c.resolved_at %} · {{ c.resolved_at[:10] }}{% endif %}
+      </td>
+      {% if mark %}
+      <td>
+        <form hx-disabled-elt="find button[type=submit]" hx-post="/commands/mark-catalyst" hx-target="#reopen-{{ c.id }}" hx-swap="innerHTML">
+          <input type="hidden" name="catalyst_id" value="{{ c.id }}">
+          <input type="hidden" name="status" value="upcoming">
+          <button type="submit">Reopen</button>
+          <span id="reopen-{{ c.id }}" class="result" role="status"></span>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">Nothing resolved yet.</p>
+{% endif %}

@@ -13,7 +13,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from aether.config import ClassifierRubric, Rubric
+from aether.config import ClassifierRubric, Rubric, ShortInterestRule
 from aether.edgar.form4 import InsiderTxn
 from aether.edgar.submissions import FilingMeta
 
@@ -53,6 +53,38 @@ def _hit(
         title=title,
         rationale=rationale,
         evidence_quote=evidence,
+    )
+
+
+def short_interest_spike(
+    symbol: str,
+    settlement: str,
+    pct: float | None,
+    prev_pct: float | None,
+    prev_settlement: str | None,
+    rule: ShortInterestRule,
+) -> RuleHit | None:
+    """`short_interest_spike` (spec §5.1): short % of shares outstanding up by at least
+    `rise_pp` points vs the prior report, or crossing above `level_pct`. Both reports must have a
+    percentage (same denominator source), otherwise nothing fires."""
+    if pct is None or prev_pct is None:
+        return None
+    rise = pct - prev_pct
+    reasons = []
+    if rise >= rule.rise_pp:
+        reasons.append(f"up {rise:.1f} points (threshold {rule.rise_pp:g})")
+    if prev_pct < rule.level_pct <= pct:
+        reasons.append(f"crossed above {rule.level_pct:g}%")
+    if not reasons:
+        return None
+    return _hit(
+        rule.rule_id,
+        "short_interest_spike",
+        rule.materiality,
+        f"{symbol} short interest {pct:.1f}% of shares outstanding at the {settlement} "
+        f"settlement ({rise:+.1f} pp vs {prev_settlement})",
+        f"FINRA short interest {prev_pct:.1f}% → {pct:.1f}% of shares outstanding: "
+        f"{'; '.join(reasons)}; rule {rule.rule_id}.",
     )
 
 

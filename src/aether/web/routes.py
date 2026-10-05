@@ -10,10 +10,13 @@ from pydantic import ValidationError
 
 from aether import feed_view, market, news_view, sec_view
 from aether.alerts import view as alerts_view
+from aether.catalysts import view as catalysts_view
+from aether.catalysts.mark import CatalystMark
 from aether.classify.prompt import prompt_version
 from aether.config import CATEGORY_CLASS, PROFILES, load_rubric
 from aether.db import health
 from aether.db.commands import count_recent_commands, enqueue_command
+from aether.options.view import options_panel, options_stale
 from aether.portfolio import holdings_view
 from aether.portfolio import view as strategies_view
 from aether.portfolio.holdings import (
@@ -92,11 +95,12 @@ def overview(request: Request) -> HTMLResponse:
             "pure": pure,
             "ranges": list(market.RANGES),
             "default_range": market.DEFAULT_RANGE,
-            "flags": open_flags(engine, rubric.risk_flags, today, pure),
+            "flags": open_flags(engine, rubric.risk_flags, today, pure, rubric.short_interest),
             "risk_events": sec_view.recent_events(engine, days=30),
             "sec_fresh": sec_view.sec_freshness(engine),
             "alerts": alerts_view.recent_alerts(engine, limit=5),
             "drift": holdings_view.drift_card(engine),
+            "catalysts": catalysts_view.upcoming(engine, today, days=365),
         },
     )
 
@@ -115,7 +119,7 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
         rubric = load_rubric(request.app.state.settings.config_dir)
         today = _today()
         sec = {
-            "flags": open_flags(engine, rubric.risk_flags, today, [symbol]),
+            "flags": open_flags(engine, rubric.risk_flags, today, [symbol], rubric.short_interest),
             "events": sec_view.recent_events(
                 engine, days=365, classes=("RISK", "SIGNAL"), symbol=symbol, limit=20
             ),
@@ -127,10 +131,21 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             "fresh": sec_view.sec_freshness(engine),
             "today": today.isoformat(),
         }
+    today = _today()
+    options: dict[str, object] = {}
+    if type_ in ("etf", "pure_play"):
+        last, stale = options_stale(engine)
+        options = {"panel": options_panel(engine, [symbol])[0], "last_ok": last, "stale": stale}
     return _render(
         request,
         "ticker.html",
         {
+            "catalysts": catalysts_view.upcoming(engine, today, days=730, symbol=symbol),
+            "catalysts_done": catalysts_view.resolved(engine, limit=10, symbol=symbol),
+            "short_interest": catalysts_view.short_interest_rows(engine, symbol)
+            if type_ in ("etf", "pure_play")
+            else [],
+            "options": options,
             "s": summary,
             "type_label": TYPE_LABELS[type_],
             "n_bars": len(series),
@@ -140,6 +155,22 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             if type_ in ("etf", "pure_play")
             else [],
             "origin_labels": news_view.ORIGIN_LABELS,
+        },
+    )
+
+
+@router.get("/catalysts", response_class=HTMLResponse)
+def catalysts_page(request: Request) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    today = _today()
+    return _render(
+        request,
+        "catalysts.html",
+        {
+            "upcoming": catalysts_view.upcoming(engine, today, days=3650),
+            "resolved": catalysts_view.resolved(engine, limit=200),
+            "counts": catalysts_view.hit_slip_counts(engine),
+            "today": today.isoformat(),
         },
     )
 
@@ -375,6 +406,15 @@ def api_dilution(request: Request, symbol: str) -> JSONResponse:
     )
 
 
+@router.get("/api/catalysts")
+def api_catalysts(request: Request) -> JSONResponse:
+    engine = request.app.state.ro_engine
+    today = _today()
+    return JSONResponse(
+        {"today": today.isoformat(), "items": catalysts_view.timeline(engine, today, days=365)}
+    )
+
+
 @router.get("/api/strategies/curves")
 def api_strategy_curves(request: Request, profile: str = "safe") -> JSONResponse:
     if profile not in PROFILES:
@@ -498,3 +538,21 @@ async def command_publish_targets(request: Request) -> Response:
             return HTMLResponse("Invalid input: trigger_event_id", status_code=400)
         args["trigger_event_id"] = int(raw)
     return _enqueue(request, "publish_targets", args)
+
+
+@router.post("/commands/mark-catalyst")
+async def command_mark_catalyst(request: Request) -> Response:
+    """Owner marks a catalyst hit / slipped / cancelled, or reopens it; the worker applies it."""
+    form = await request.form()
+    try:
+        mark = CatalystMark.model_validate(
+            {
+                "catalyst_id": _blank(form.get("catalyst_id")),
+                "status": _blank(form.get("status")),
+                "event_id": _blank(form.get("event_id")),
+                "note": str(form.get("note") or "").strip() or None,
+            }
+        )
+    except ValidationError as exc:
+        return _invalid(exc)
+    return _enqueue(request, "mark_catalyst", mark.model_dump())

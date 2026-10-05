@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M7** (classifier), the second Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`.
+Status: **M8** (catalysts + market structure), the third Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`. M8 adds dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. M8 spends nothing on LLMs.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -136,7 +136,7 @@ Freed weight goes to the other pure-plays pro rata, up to their caps; the rest g
 
 **USD/SGD (reporting only).** Daily 06:50 SGT from yfinance `SGD=X`, falling back to the ECB reference rates (EUR cross). Used only to show values in SGD.
 
-**Options snapshot (§6.8, research only).** Daily 06:40 SGT from yfinance for QTUM and the pure-plays: ATM IV at 30/60/90 days (variance-interpolated between listed expiries, never extrapolated), and put/call volume and open-interest ratios. Contracts must pass quality gates (`config/options.yaml`); a thin chain is stored as null with a reason. Options never feed sizing or trades. Analytics and the ticker-page panel come in M8. Tiger option chains aren't used: Tiger sells API option quotes as a separate paid permission.
+**Options snapshot (§6.8, research only).** Daily 06:40 SGT from yfinance for QTUM and the pure-plays: ATM IV at 30/60/90 days (variance-interpolated between listed expiries, never extrapolated), and put/call volume and open-interest ratios. Contracts must pass quality gates (`config/options.yaml`); a thin chain is stored as null with a reason. Options never feed sizing or trades. M8 adds the analytics and the ticker-page panel (below). Tiger option chains aren't used: Tiger sells API option quotes as a separate paid permission.
 
 **Tiger Brokers (optional, read-only, S8).** Set `TIGER_ID`, `TIGER_PRIVATE_KEY` (RSA key body; PEM headers and `\n` escapes are fine) and `TIGER_ACCOUNT`. They go to the worker only. Then switch "Holdings source" to Tiger. A daily 07:05 SGT job and **Sync from Tiger** replace the share counts of QTUM and the pure-plays with your account's positions. Other positions are ignored (only counted), and cash stays manual. A failed sync keeps the last snapshot with a "stale since" banner.
 - **The key can trade.** Tiger offers no read-only API key, so Aether walls it off in code: only `providers/tiger.py` may import `tigeropen`, it exposes positions only, and `scripts/check_broker_readonly.py` (in `make lint`) fails on any order method or stray import. Use a dedicated key and revoke it if unused.
@@ -200,6 +200,25 @@ The pipeline (job `classify`, every 10 minutes and right after each RSS or resea
 - Any rubric or prompt edit is a new `prompt_version`, so rerun the eval.
 - See `evals/README.md` for the under-sampled categories and how to extend the set (`make golden-candidates DB=…`).
 
+## Catalysts + market structure (M8)
+
+No LLM calls; every number is computed in code.
+
+**Catalysts.** `config/catalysts_seed.yaml` holds dated milestones, each linked to a fact in `config/facts.yaml` (its status badge shows wherever the catalyst does): the IBM roadmap (Kookaburra 2026, Cockatoo 2027, Starling 2029), the DARPA QBI Stage C decision for IONQ and QNT (window from 2026-11-06, no end date because DARPA states none), and the QNT IPO lock-up (2026-11-30). Earnings dates from the earnings calendar and lock-ups from final prospectuses become catalysts automatically. The `catalysts` job (every 30 minutes, and after the EDGAR, earnings and classifier runs) resolves them deterministically:
+- earnings → **hit** when an 8-K Item 2.02 lands within ±3 days; a future date that leaves the calendar → **cancelled** (moved);
+- lock-ups → **hit** once the date arrives;
+- roadmap/program → **hit** or **slipped** from a non-quarantined classified event (materiality ≥ 3 after caps) in one of the seed's categories that names a seed keyword, inside the window ± 90 days; **slipped** if nothing resolves it 90 days after the window ends.
+Each resolution cites the event. You can mark any catalyst hit / slipped / cancelled, or reopen it, from the Catalysts page (CSRF'd `mark_catalyst` command).
+
+**Short interest.** Daily 07:20 SGT the worker checks FINRA's free bi-weekly short-interest files (`cdn.finra.org`, mid-month and month-end settlement dates, published about a week later; 12 months backfilled). Only QTUM and pure-play rows are kept. FINRA publishes no float, so the percentage is **short shares ÷ shares outstanding** (SEC XBRL cover page), which understates short % of float. The `finra_short_interest_spike` rule (`config/rubric.yaml` → `short_interest`) raises a RISK event (materiality 3, T1) when a pure-play's percentage rises by ≥ 5 points vs the prior report or crosses above 25%, and the open-flag list shows it while it lasts. Backfilled spikes are dated by their settlement date, so they never alert.
+
+**Options analytics (§6.8, research only).** The daily options snapshot now also stores:
+- 30-day **skew** (25-delta put IV − 25-delta call IV; Black-Scholes deltas with r = 0 from each contract's own IV, interpolated in delta, then in days between expiries);
+- the **implied move** into each upcoming catalyst: the at-the-money straddle mid ÷ spot on the first listed expiry after the catalyst;
+- **positioning** (put/call volume and open interest, volume vs the median of the last 20 snapshots);
+- **IV rank / percentile** over Aether's own last 252 snapshots ("building history (N days)" until then).
+Nothing is extrapolated past the listed expiries; a thin chain is flagged, never reported. Options never reach targets, sizing or trades (a test checks that changing every snapshot leaves published targets byte-identical).
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -209,14 +228,16 @@ The pipeline (job `classify`, every 10 minutes and right after each RSS or resea
   - The watchlist's weight in QTUM.
   - Open risk flags, recent alerts and RISK filings from the last 30 days.
   - Position drift vs the selected profile, when holdings are saved (M5).
+  - Catalysts and earnings for the next 12 months (M8).
 - `/t/<SYMBOL>`: price and volume chart plus a summary. For pure-plays it also shows:
   - open risk flags, lock-ups (with the prospectus excerpt) and earnings dates
   - classified SEC events, a shares-outstanding chart (XBRL) and the capital-structure table
   - Form 4 insider transactions (10b5-1 badge) and the filings list with each rule hit.
-  All SEC links go to EDGAR.
+  All SEC links go to EDGAR. Every ticker page lists its catalysts (M8); QTUM and the pure-plays also get the short-interest table and the options panel (ATM IV and rank, term structure, skew, implied moves, positioning, quality flags).
+- `/catalysts`: a 12-month timeline, the upcoming list with fact-status badges and a **Mark** form per row, and the hit/slip record (M8).
 - `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
 - `/holdings`: holdings and cash (editable, or read-only rows in Tiger mode), settings (profile, whole/fractional shares, new-cash-only, holdings source), published targets with each overlay chain, off-cycle events and **Publish targets now**, and the rebalance plan with USD and SGD values (M5).
-- `/review`: monthly review packs, latest first (M5).
+- `/review`: monthly review packs, latest first (M5); from M8 with the next 90 days of catalysts and the options panel per name.
 - `/feed`: every classified event (SEC filings and news), newest first. Filter by class, category, ticker, minimum materiality and trust tier; NOISE is hidden unless you ask for it. Each row shows the materiality after caps ("capped from N"), the direction per ticker, confidence, rationale, evidence quote, sources with tiers, and the rule or model/prompt version. Quarantined items carry a warning. A strip at the top shows S/N/R counts for 30 days, quarantined, waiting and failed items, and the latest eval for the current prompt (M7).
 - `/news`: news and research items with their class badge (or "pending"), each with its tier and its independent and syndicated source counts. Filter by ticker and origin. Also LLM spend vs the soft budget, backfill status, feed health, research sweeps and **Run research sweep now** (M6). Ticker pages for QTUM and the pure-plays show their 10 latest items.
 - `/login`: the password form (M5).
@@ -224,7 +245,7 @@ The pipeline (job `classify`, every 10 minutes and right after each RSS or resea
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
 - `/health`: DB, schema and last run per job.
 
-Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*`, `/api/dilution/*` and `/api/strategies/curves` as JSON. There are no inline scripts, so the CSP stays strict.
+Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*`, `/api/dilution/*`, `/api/strategies/curves` and `/api/catalysts` as JSON. There are no inline scripts, so the CSP stays strict.
 
 ## Deploying
 
@@ -262,6 +283,7 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `make smoke` | Live check against the running stack (never part of acceptance) |
 | `make record-cassette NAME=… URL=… [UA=…] [GZIP=1]` | Record one live HTTP response as a test fixture (manual; SEC needs `UA`, large documents use `GZIP=1`) |
 | `make record-options SYMBOL=…` | Record one real yfinance option chain as a test fixture (manual, network) |
+| `make record-short-interest DATES="…"` | Record real FINRA short-interest files, filtered to the universe, as test fixtures (manual, network) |
 
 ## Layout
 
@@ -270,6 +292,7 @@ src/aether/
   config.py       env settings + typed YAML loaders (identifiers only; unknown keys rejected)
   providers/      typed provider interfaces: yfinance, Massive, failover; dividends; SEC EDGAR client
   ingest/         prices, dividends, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar,
+                  FINRA short interest (M8),
                   RSS news + the shared news/research event writer (dedupe, syndication)
   portfolio/      total return, metrics, strategy families, walk-forward backtest, selection, job, views
   edgar/          pure parsers: submissions, Form 4 XML, filing text extractors, XBRL
@@ -279,7 +302,10 @@ src/aether/
   classify/       rules (filings + news headlines), prompt, output validation, caps, the queue
                   (sync + Message Batches backlog) and `make eval` (M7)
   feed_view.py    read-side queries for /feed
-  risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
+  risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern,
+                  short-interest spike)
+  catalysts/      seed/earnings/lock-up sync, deterministic resolution, owner marks, views (M8)
+  options/        snapshot metrics, analytics (skew, implied moves, IV rank), job, panel view
   alerts/         candidates → outbox → Telegram; telegram_guard.py (S7 is_owner), dashboard views
   sec_view.py     read-side SEC queries for the dashboard
   market.py       read-side computations for the dashboard (basket, rebasing, staleness)
@@ -292,7 +318,7 @@ src/aether/
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
 config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml,
-                  options.yaml, llm.yaml
+                  options.yaml, llm.yaml, catalysts_seed.yaml
 evals/            classifier golden set (real items) + committed eval results
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```

@@ -2,7 +2,7 @@
 
 `fetch_raw` returns a plain JSON-able dict (spot + chains for the nearest expiries), so tests
 replay a dict recorded once from a real chain. Tiger option chains are not used: API option
-quotes need a paid market-data permission (checked 2026-10-04; revisit in M8).
+quotes need a paid market-data permission (checked 2026-10-04; unchanged in M8).
 
 Raises `ProviderError` on failure.
 """
@@ -49,7 +49,10 @@ class Expiry:
 class Chain:
     symbol: str
     spot: float | None
-    expiries: tuple[Expiry, ...]
+    expiries: tuple[Expiry, ...]  # the expiries fetched
+    # M8: every listed expiry (so "the first expiry after a catalyst" is never a fetched-only
+    # guess). Empty in chains recorded before M8: then the fetched expiries stand in.
+    listed: tuple[date, ...] = ()
 
 
 def _num(v: Any) -> float | None:
@@ -90,6 +93,7 @@ def parse_chain(raw: dict[str, Any]) -> Chain:
                 )
                 for e in raw["expiries"]
             ),
+            listed=tuple(sorted(date.fromisoformat(x) for x in raw.get("listed", []))),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ProviderError(f"options: malformed chain: {type(exc).__name__}") from exc
@@ -111,8 +115,14 @@ def _yf_fetch_raw(symbol: str, choose: Chooser) -> dict[str, Any]:
 
     yf.set_tz_cache_location("/tmp/yfinance")  # noqa: S108 - read-only root FS
     t = yf.Ticker(symbol)
-    expiries = [d.isoformat() for d in choose(sorted(date.fromisoformat(e) for e in t.options))]
-    out: dict[str, Any] = {"symbol": symbol, "spot": None, "expiries": []}
+    listed = sorted(date.fromisoformat(e) for e in t.options)
+    expiries = [d.isoformat() for d in choose(listed)]
+    out: dict[str, Any] = {
+        "symbol": symbol,
+        "spot": None,
+        "expiries": [],
+        "listed": [d.isoformat() for d in listed],
+    }
     for e in expiries:
         oc = t.option_chain(e)
         if out["spot"] is None:

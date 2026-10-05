@@ -1,0 +1,7 @@
+"accountingYearMonthNumber"|"symbolCode"|"issueName"|"issuerServicesGroupExchangeCode"|"marketClassCode"|"currentShortPositionQuantity"|"previousShortPositionQuantity"|"stockSplitFlag"|"averageDailyVolumeQuantity"|"daysToCoverQuantity"|"revisionFlag"|"changePercent"|"changePreviousNumber"|"settlementDate"
+"20260915"|"INFQ"|"Infleqtion, Inc."|"A"|"NYSE"|"20940612"|"24304462"||"7418001"|"2.82"||"-13.84"|"-3363850"|"2026-09-15"
+"20260915"|"IONQ"|"IonQ, Inc."|"A"|"NYSE"|"40486062"|"41053368"||"18457061"|"2.19"||"-1.38"|"-567306"|"2026-09-15"
+"20260915"|"QBTS"|"D-Wave Quantum Inc. Common Sto"|"R"|"NNM"|"67980668"|"71469896"||"14505498"|"4.69"||"-4.88"|"-3489228"|"2026-09-15"
+"20260915"|"QNT"|"Quantinuum Inc. Class A Common"|"R"|"NNM"|"3715253"|"2876958"||"1513172"|"2.46"||"29.14"|"838295"|"2026-09-15"
+"20260915"|"QTUM"|"Defiance Quantum ETF"|"R"|"NNM"|"458247"|"559553"||"235845"|"1.94"||"-18.10"|"-101306"|"2026-09-15"
+"20260915"|"RGTI"|"Rigetti Computing, Inc. Common"|"R"|"SC"|"62361304"|"58908223"||"16273065"|"3.83"||"5.86"|"3453081"|"2026-09-15"

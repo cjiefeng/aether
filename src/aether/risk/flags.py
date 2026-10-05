@@ -1,5 +1,6 @@
 """Open risk flags (spec §6.1 "risk load"): lock-up within N days, insider-selling cluster,
-active ATM / shelf, going-concern language. Read-only; thresholds from `config/rubric.yaml`.
+active ATM / shelf, going-concern language, and (M8) a short-interest spike in the latest FINRA
+report. Read-only; thresholds from `config/rubric.yaml`.
 
 M3 alerts and M9 scorecards consume these. Nothing here writes.
 """
@@ -13,8 +14,8 @@ from datetime import date, timedelta
 
 from sqlalchemy import Engine, func, select
 
-from aether.config import RiskFlagParams
-from aether.db.models import capital_structure, filings, insider_txns, lockups
+from aether.config import RiskFlagParams, ShortInterestRule
+from aether.db.models import capital_structure, filings, insider_txns, lockups, short_interest
 
 PERIODIC = ("10-K", "10-Q", "10-K/A", "10-Q/A")
 
@@ -23,6 +24,7 @@ PERIODIC = ("10-K", "10-Q", "10-K/A", "10-Q/A")
 class Flag:
     symbol: str
     kind: str  # lockup_expiry | insider_cluster | active_atm | active_shelf | going_concern
+    #            | short_interest_spike
     detail: str
     as_of: str  # the date the flag is anchored to (expiry, window end, filing date)
     url: str | None = None
@@ -91,8 +93,46 @@ def load_sales(engine: Engine, symbol: str, since: date) -> list[Sale]:
     ]
 
 
+def short_interest_flags(
+    engine: Engine, rule: ShortInterestRule, symbols: Sequence[str]
+) -> list[Flag]:
+    """Open while the latest report is at or above `level_pct`, or rose by at least `rise_pp`."""
+    out = []
+    with engine.connect() as conn:
+        for sym in symbols:
+            rows = conn.execute(
+                select(short_interest.c.settlement_date, short_interest.c.pct_shares_out)
+                .where(short_interest.c.symbol == sym)
+                .order_by(short_interest.c.settlement_date.desc())
+                .limit(2)
+            ).all()
+            if not rows or rows[0].pct_shares_out is None:
+                continue
+            d, pct = rows[0]
+            prev = rows[1].pct_shares_out if len(rows) > 1 else None
+            reasons = []
+            if pct >= rule.level_pct:
+                reasons.append(f"at or above {rule.level_pct:g}%")
+            if prev is not None and pct - prev >= rule.rise_pp:
+                reasons.append(f"up {pct - prev:.1f} points")
+            if reasons:
+                out.append(
+                    Flag(
+                        sym,
+                        "short_interest_spike",
+                        f"short interest {pct:.1f}% of shares outstanding ({', '.join(reasons)})",
+                        d,
+                    )
+                )
+    return out
+
+
 def open_flags(
-    engine: Engine, params: RiskFlagParams, today: date, symbols: Sequence[str]
+    engine: Engine,
+    params: RiskFlagParams,
+    today: date,
+    symbols: Sequence[str],
+    short_rule: ShortInterestRule | None = None,
 ) -> list[Flag]:
     out: list[Flag] = []
     syms = list(symbols)
@@ -179,4 +219,6 @@ def open_flags(
                     c.end.isoformat(),
                 )
             )
+    if short_rule is not None:
+        out += short_interest_flags(engine, short_rule, syms)
     return sorted(out, key=lambda f: (f.symbol, f.kind))

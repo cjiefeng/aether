@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Catalysts · Aether{% endblock %}
+{% block scripts %}
+  <script src="/static/echarts.min.js" defer></script>
+  <script src="/static/charts.js" defer></script>
+{% endblock %}
+{% block content %}
+<h1>Catalysts</h1>
+<p class="muted small">Roadmap milestones, program decisions, earnings dates and lock-ups. Seeded dates come from the facts registry
+  (badge = the fact's status); earnings and lock-ups come from SEC filings and the earnings calendar. Resolution is deterministic:
+  a classified, non-quarantined event that names the milestone, an 8-K Item 2.02 for earnings, or the date for lock-ups.
+  You can mark any catalyst yourself.</p>
+
+<section class="card">
+  <h2>Next 12 months</h2>
+  <div class="chart" data-chart="catalysts" data-src="/api/catalysts"></div>
+  <p class="muted small">Each point is a catalyst's window start (open windows are drawn from today).</p>
+</section>
+
+<section class="card">
+  <h2>Upcoming</h2>
+  {% with rows = upcoming, mark = true %}{% include "_catalyst_rows.html" %}{% endwith %}
+</section>
+
+<section class="card">
+  <h2>Hit / slip record</h2>
+  {% if counts %}
+  <table class="num compact">
+    <thead><tr><th>Symbol</th><th>Hit</th><th>Slipped</th><th>Cancelled</th></tr></thead>
+    <tbody>
+    {% for sym, c in counts.items() %}
+      <tr><td>{{ sym }}</td><td>{{ c.hit }}</td><td>{{ c.slipped }}</td><td>{{ c.cancelled }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% with rows = resolved, mark = true %}{% include "_catalyst_done.html" %}{% endwith %}
+</section>
+{% endblock %}
