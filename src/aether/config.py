@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     db_path: Path = Field(default=Path("data/aether.db"), validation_alias="AETHER_DB_PATH")
     config_dir: Path = Field(default=Path("config"), validation_alias="AETHER_CONFIG_DIR")
+    # M7: `make eval` results (committed); the worker loads them into eval_runs at startup.
+    eval_results_dir: Path = Field(
+        default=Path("evals/results"), validation_alias="AETHER_EVAL_RESULTS_DIR"
+    )
     bind: str = Field(default="0.0.0.0:8000", validation_alias="AETHER_BIND")
     csrf_secret: SecretStr | None = Field(default=None, validation_alias="AETHER_CSRF_SECRET")
     log_level: str = Field(default="INFO", validation_alias="AETHER_LOG_LEVEL")
@@ -33,7 +37,8 @@ class Settings(BaseSettings):
     backup_keep_days: int = Field(default=14, validation_alias="AETHER_BACKUP_KEEP_DAYS")
 
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    classifier_model: str | None = Field(default=None, validation_alias="CLASSIFIER_MODEL")
+    # M7: owner decision 2026-10-05: Sonnet 5.5.
+    classifier_model: str = Field(default="claude-sonnet-5-5", validation_alias="CLASSIFIER_MODEL")
     synth_model: str | None = Field(default=None, validation_alias="SYNTH_MODEL")
     # M6: web-search research runs (the only tool-enabled calls). Owner decision 2026-10-05: Opus.
     research_model: str = Field(default="claude-opus-5-5", validation_alias="RESEARCH_MODEL")
@@ -41,7 +46,7 @@ class Settings(BaseSettings):
     # set; this switch exists so an isolated test stack can turn it off.
     research_backfill: bool = Field(default=True, validation_alias="RESEARCH_BACKFILL")
     daily_llm_budget_usd: Decimal = Field(
-        default=Decimal("3.00"), validation_alias="DAILY_LLM_BUDGET_USD"
+        default=Decimal("5.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
     sec_user_agent: str | None = Field(default=None, validation_alias="SEC_USER_AGENT")
     # Massive (formerly Polygon) free "Stocks Basic" key: price fallback when yfinance fails.
@@ -70,7 +75,6 @@ class Settings(BaseSettings):
     @field_validator(
         "csrf_secret",
         "anthropic_api_key",
-        "classifier_model",
         "synth_model",
         "sec_user_agent",
         "massive_api_key",
@@ -90,7 +94,7 @@ class Settings(BaseSettings):
         # docker compose passes unset vars as "" — treat them as absent.
         return None if v == "" else v
 
-    @field_validator("research_model", "research_backfill", mode="before")
+    @field_validator("research_model", "classifier_model", "research_backfill", mode="before")
     @classmethod
     def _empty_is_default(cls, v: object, info: ValidationInfo) -> object:
         # docker compose passes unset vars as "": fall back to the field default.
@@ -99,11 +103,11 @@ class Settings(BaseSettings):
             return cls.model_fields[info.field_name].default
         return v
 
-    @field_validator("research_model", mode="after")
+    @field_validator("research_model", "classifier_model", mode="after")
     @classmethod
-    def _model_id(cls, v: str) -> str:
+    def _model_id(cls, v: str, info: ValidationInfo) -> str:
         if not re.fullmatch(r"claude-[a-z0-9\-]{1,60}", v):
-            raise ValueError("RESEARCH_MODEL must be a Claude model id")
+            raise ValueError(f"{info.field_name} must be a Claude model id")
         return v
 
     @property
@@ -253,12 +257,115 @@ class RiskFlagParams(_Strict):
     atm_active_days: int = Field(gt=0)
 
 
+EventClass = Literal["SIGNAL", "NOISE", "RISK"]
+# The spec §5.1 category → class mapping. The rubric YAML must match it exactly (and the DB CHECK
+# on event_classifications.category lists the same names).
+CATEGORY_CLASS: dict[str, EventClass] = {
+    "qbi_stage_change": "SIGNAL",
+    "roadmap_hit": "SIGNAL",
+    "roadmap_slip": "SIGNAL",
+    "logical_qubit_milestone": "SIGNAL",
+    "verified_advantage": "SIGNAL",
+    "revenue_quality": "SIGNAL",
+    "contract_with_value": "SIGNAL",
+    "m_and_a": "SIGNAL",
+    "earnings_release": "SIGNAL",
+    "physical_qubit_count": "NOISE",
+    "partnership_no_value": "NOISE",
+    "analyst_rating": "NOISE",
+    "synthetic_benchmark": "NOISE",
+    "listicle_or_momentum": "NOISE",
+    "dilution": "RISK",
+    "insider_selling": "RISK",
+    "lockup_expiry": "RISK",
+    "short_interest_spike": "RISK",
+    "resource_estimate_shift": "RISK",
+    "pqc_deadline_change": "RISK",
+    "exec_departure": "RISK",
+    "going_concern": "RISK",
+    "short_report": "RISK",
+    "guidance_cut": "RISK",
+    "delisting_or_compliance": "RISK",
+}
+Definition = Annotated[str, Field(min_length=10, max_length=400)]
+
+
+class CategoryRubric(_Strict):
+    cls: EventClass = Field(alias="class")
+    materiality: tuple[Materiality, Materiality]  # typical range, shown to the model as guidance
+    definition: Definition
+
+    @field_validator("materiality")
+    @classmethod
+    def _range(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if v[0] > v[1]:
+            raise ValueError("materiality range must be [low, high]")
+        return v
+
+
+def _compile_all(patterns: tuple[str, ...]) -> tuple[str, ...]:
+    for p in patterns:
+        try:
+            re.compile(p)
+        except re.error as exc:
+            raise ValueError(f"bad regex {p!r}: {exc}") from None
+    return patterns
+
+
+class HeadlineRule(_Strict):
+    rule_id: str = Field(pattern=RULE_ID)
+    category: Literal["analyst_rating", "listicle_or_momentum"]
+    materiality: Materiality
+    confidence: Annotated[float, Field(gt=0, le=1)]
+    patterns: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("patterns")
+    @classmethod
+    def _compiles(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        return _compile_all(v)
+
+
+class ClassifierRubric(_Strict):
+    """The M7 LLM rubric and deterministic news rules (spec §5.1, §5.2)."""
+
+    materiality_anchors: dict[Materiality, Definition]
+    categories: dict[str, CategoryRubric]
+    headline_rules: tuple[HeadlineRule, ...] = ()
+    noise_domains: tuple[Annotated[str, Field(pattern=DOMAIN_RE)], ...] = ()
+    injection_patterns: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("injection_patterns")
+    @classmethod
+    def _compiles(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        return _compile_all(v)
+
+    @field_validator("materiality_anchors")
+    @classmethod
+    def _anchors(cls, v: dict[int, str]) -> dict[int, str]:
+        if set(v) != {1, 2, 3, 4, 5}:
+            raise ValueError("materiality_anchors must define exactly 1-5")
+        return dict(sorted(v.items()))
+
+    @field_validator("categories")
+    @classmethod
+    def _categories(cls, v: dict[str, CategoryRubric]) -> dict[str, CategoryRubric]:
+        if set(v) != set(CATEGORY_CLASS):
+            missing = sorted(set(CATEGORY_CLASS) - set(v))
+            extra = sorted(set(v) - set(CATEGORY_CLASS))
+            raise ValueError(f"categories must be the spec set (missing {missing}, extra {extra})")
+        wrong = [k for k, c in v.items() if c.cls != CATEGORY_CLASS[k]]
+        if wrong:
+            raise ValueError(f"category/class mismatch for {wrong}")
+        return v
+
+
 class Rubric(_Strict):
     edgar_form_rules: tuple[FormRule, ...]
     edgar_8k_item_rules: tuple[ItemRule, ...]
     insider_selling: InsiderSellingRule
     going_concern: TextRule
     risk_flags: RiskFlagParams
+    classifier: ClassifierRubric
 
     @field_validator("edgar_form_rules")
     @classmethod
@@ -438,8 +545,20 @@ class ResearchParams(_Strict):
     est_base_input_tokens: int = Field(ge=0)
 
 
+class ClassifyParams(_Strict):
+    """M7 classifier call parameters."""
+
+    max_tokens: int = Field(ge=256, le=32_000)
+    effort: Literal["low", "medium", "high"]
+    batch_threshold: int = Field(ge=1)  # a backlog above this goes to one Message Batch
+    batch_max_items: int = Field(ge=1, le=10_000)
+    max_attempts: int = Field(ge=1, le=5)
+    max_per_run: int = Field(ge=1, le=1000)
+
+
 class LlmConfig(_Strict):
-    """`config/llm.yaml` (M6): prices and research parameters. Numbers and identifiers only."""
+    """`config/llm.yaml` (M6, M7): prices, research and classifier parameters. Numbers and
+    identifiers only."""
 
     prices: dict[Annotated[str, Field(pattern=r"^claude-[a-z0-9\-]+$")], ModelPrice]
     web_search_per_1k: Usd
@@ -447,6 +566,7 @@ class LlmConfig(_Strict):
     budget_alert_fraction: Annotated[Decimal, Field(gt=0, lt=1)]
     chars_per_token: Annotated[int, Field(ge=1, le=10)]  # input estimate for the budget guard
     research: ResearchParams
+    classify: ClassifyParams
 
 
 def load_llm_config(config_dir: Path) -> LlmConfig:

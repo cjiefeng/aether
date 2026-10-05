@@ -6,7 +6,8 @@ VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
 events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance, M6: news +
-research). Keep this file and `migrations/versions/*` in sync (a test compares them).
+research, M7: classifier state + eval runs). Keep this file and `migrations/versions/*` in sync
+(a test compares them).
 """
 
 from __future__ import annotations
@@ -503,7 +504,11 @@ event_tickers = Table(
     metadata,
     Column("event_id", Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False),
     Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    # M7: the classifier's direction for this ticker (spec §5: per affected ticker). NULL until
+    # classified; EDGAR rule events get the rule's direction.
+    Column("direction", Integer),
     PrimaryKeyConstraint("event_id", "symbol"),
+    CheckConstraint("direction IS NULL OR direction IN (-1, 0, 1)", name="direction"),
     Index(None, "symbol"),
     sqlite_strict=True,
     sqlite_with_rowid=False,
@@ -866,5 +871,48 @@ research_runs = Table(
     _json_ck("payload"),
     Index(None, "kind", "status"),
     Index(None, "batch_id"),
+    sqlite_strict=True,
+)
+
+
+# --------------------------------------------------------------------------- classifier (M7)
+# Per-event classifier bookkeeping. `retry`: an attempt failed (invalid answer or API error) and
+# the item is picked up again; `failed`: max attempts reached, shown on the Feed; `batched`: in a
+# pending Message Batch (backlog); `done`: classified by the model. Rule hits get no state row.
+CLASSIFY_STATUSES = ("retry", "batched", "failed", "done")
+
+classify_state = Table(
+    "classify_state",
+    metadata,
+    Column("event_id", Integer, ForeignKey("events.id", ondelete="CASCADE"), primary_key=True),
+    Column("status", Text, nullable=False),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("last_error", Text),
+    Column("batch_id", Text),
+    Column("custom_id", Text, unique=True),
+    Column("updated_at", Text, nullable=False),
+    _in_ck("status", CLASSIFY_STATUSES),
+    CheckConstraint("attempts >= 0", name="attempts"),
+    Index(None, "status"),
+    Index(None, "batch_id"),
+    sqlite_strict=True,
+)
+
+# One row per `make eval` run (spec §5.3: store the eval result per prompt version).
+eval_runs = Table(
+    "eval_runs",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("prompt_version", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("n_items", Integer, nullable=False),
+    Column("provisional", Integer, nullable=False),  # 1 while any label isn't owner-reviewed
+    Column("passed", Integer, nullable=False),
+    Column("metrics", Text, nullable=False),
+    _bool_ck("provisional"),
+    _bool_ck("passed"),
+    _json_ck("metrics"),
+    Index(None, "prompt_version"),
     sqlite_strict=True,
 )

@@ -1,0 +1,32 @@
+{% if rows %}
+<table>
+  <thead><tr><th>Date</th><th>Class</th><th>Item</th><th>Tickers</th><th>Sources</th></tr></thead>
+  <tbody>
+  {% for e in rows %}
+    <tr{% if e.quarantined %} class="quarantined"{% endif %}>
+      <td class="nowrap">{{ e.published_at[:10] }}</td>
+      <td class="nowrap">
+        <span class="badge {{ e.cls|lower }}">{{ e.cls }}</span><br>
+        <span class="small">{{ e.category|replace("_", " ") }}</span><br>
+        <span class="small">materiality {{ e.materiality }}/5{% if e.capped %} <span class="muted" title="Trust-tier cap applied">(capped from {{ e.materiality_raw }})</span>{% endif %}</span><br>
+        <span class="muted small">confidence {{ "%.2f"|format(e.confidence) }}</span>
+      </td>
+      <td>
+        {% if e.quarantined %}<p class="banner stale small">Quarantined: this item appears to contain instructions aimed at the classifier. It is excluded from alerts, scores and synthesis.</p>{% endif %}
+        {{ e.url|extlink(e.title) }} <span class="muted small">{{ e.domain }} · {{ origin_labels.get(e.origin, e.origin) }}</span>
+        {% if e.rationale %}<p class="small">{{ e.rationale }}</p>{% endif %}
+        {% if e.evidence_quote and e.evidence_quote != e.title %}<blockquote class="small">{{ e.evidence_quote }}</blockquote>{% endif %}
+        <span class="muted small">{% if e.rule_id %}rule {{ e.rule_id }}{% else %}{{ e.model }} · {{ e.prompt_version }}{% endif %}</span>
+      </td>
+      <td class="nowrap">{% for sym, d in e.tickers %}<a href="/t/{{ sym }}">{{ sym }}</a>{% if d is not none %} <span class="{{ 'ok' if d > 0 else ('bad' if d < 0 else 'muted') }}">{{ '+1' if d > 0 else ('−1' if d < 0 else '0') }}</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">theme</span>{% endfor %}</td>
+      <td class="small">
+        {% for s in e.sources %}<span class="badge tier-{{ s.tier|lower }}">{{ s.tier }}</span> {{ s.url|extlink(s.domain) }}{% if s.syndicated %} <span class="muted">(syndicated)</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}
+        <br><span class="muted">{{ e.independent }} independent</span>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No classified events match.</p>
+{% endif %}

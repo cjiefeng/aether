@@ -35,3 +35,83 @@ risk_flags:
   insider_cluster_window_days: 30
   shelf_active_days: 1095   # Rule 415 shelves are usable for three years
   atm_active_days: 365
+
+# --------------------------------------------------------------------------- classifier (M7)
+# The LLM rubric (spec §5.1) plus deterministic news rules (spec §5.2 step 1). Definitions are the
+# spec's category rubric, not views on any company. Materiality ranges are typical values shown to
+# the model as guidance; trust-tier caps are applied in code afterwards (classify/caps.py).
+# Any edit here changes the classifier's prompt_version, so rerun `make eval` (spec §5.3).
+classifier:
+  materiality_anchors:
+    1: "Trivial or no bearing on the company's fundamentals or risk."
+    2: "Minor: worth logging, unlikely to change the investment picture."
+    3: "Notable: a real but contained change to fundamentals, risk or the timeline."
+    4: "Major: likely to change the investment picture for the affected company."
+    5: "Critical: changes the company's outlook or survival (e.g. going concern, a large dilutive financing, a program decision)."
+
+  categories:
+    # SIGNAL: moves fundamentals
+    qbi_stage_change: {class: SIGNAL, materiality: [4, 5], definition: "DARPA Quantum Benchmarking Initiative (QBI) stage selection or elimination of a company."}
+    roadmap_hit: {class: SIGNAL, materiality: [3, 4], definition: "A dated, previously announced roadmap milestone was delivered."}
+    roadmap_slip: {class: SIGNAL, materiality: [3, 4], definition: "A dated, previously announced roadmap milestone was missed or postponed. Direction is negative."}
+    logical_qubit_milestone: {class: SIGNAL, materiality: [3, 5], definition: "A result about logical qubits: logical-qubit count or logical error rate. Only logical qubits count; a logical error rate at or below 1e-6 is major."}
+    verified_advantage: {class: SIGNAL, materiality: [4, 5], definition: "Quantum advantage on a useful problem, independently verified by outside scientists or peer review."}
+    revenue_quality: {class: SIGNAL, materiality: [3, 4], definition: "Recurring commercial revenue, bookings, backlog or a guidance change. Commercial recurring revenue weighs more than one-off government or system sales. A guidance cut is guidance_cut (RISK) instead."}
+    contract_with_value: {class: SIGNAL, materiality: [2, 4], definition: "A contract or partnership with a disclosed dollar value."}
+    m_and_a: {class: SIGNAL, materiality: [3, 5], definition: "An acquisition or merger, with deal value and financing method where stated."}
+    earnings_release: {class: SIGNAL, materiality: [3, 4], definition: "Periodic financial results. Direction comes from results versus the company's own prior guidance, not analyst consensus; 0 if the text doesn't say."}
+    # NOISE: usually a short-term pop, low materiality
+    physical_qubit_count: {class: NOISE, materiality: [1, 2], definition: "A physical qubit count announcement with no logical-qubit or error-rate data."}
+    partnership_no_value: {class: NOISE, materiality: [1, 2], definition: "A memorandum of understanding, collaboration or partnership without a disclosed dollar amount."}
+    analyst_rating: {class: NOISE, materiality: [1, 2], definition: "Analyst upgrades, downgrades, initiations or price targets."}
+    synthetic_benchmark: {class: NOISE, materiality: [1, 2], definition: "Claimed advantage on a made-up benchmark problem, or a claim not independently verified."}
+    listicle_or_momentum: {class: NOISE, materiality: [1, 1], definition: "Stock lists ('best quantum stocks'), price-move recaps, social-media chatter, general commentary, event or conference announcements and other items with no new company fact."}
+    # RISK: downside drivers
+    dilution: {class: RISK, materiality: [2, 5], definition: "Share issuance: shelf registrations, prospectuses, at-the-market programs, secondary offerings, convertible notes, warrant exercises. Larger relative to the share count is more material."}
+    insider_selling: {class: RISK, materiality: [1, 3], definition: "Sales of stock by officers, directors or major holders. Pre-arranged 10b5-1 plan sales weigh less."}
+    lockup_expiry: {class: RISK, materiality: [2, 4], definition: "An upcoming or passed expiry of an IPO or deal lock-up."}
+    short_interest_spike: {class: RISK, materiality: [2, 3], definition: "A sharp rise in short interest in the company's stock."}
+    resource_estimate_shift: {class: RISK, materiality: [2, 4], definition: "New estimates of the qubits or resources needed for applications or for breaking RSA. Direction depends on whether the bar moved closer or further."}
+    pqc_deadline_change: {class: RISK, materiality: [2, 3], definition: "A change to NIST, EU or other government post-quantum cryptography migration timelines."}
+    exec_departure: {class: RISK, materiality: [2, 4], definition: "Departure of a CEO, CFO, CTO, founder or other senior executive or director."}
+    going_concern: {class: RISK, materiality: [5, 5], definition: "Substantial doubt about the company's ability to continue as a going concern."}
+    short_report: {class: RISK, materiality: [3, 4], definition: "A published short-seller report or activist short campaign against the company."}
+    guidance_cut: {class: RISK, materiality: [3, 5], definition: "The company lowered or withdrew its own revenue, bookings or other guidance."}
+    delisting_or_compliance: {class: RISK, materiality: [3, 5], definition: "Exchange listing-compliance notices, delisting, late filings or regulatory enforcement."}
+
+  # Deterministic headline rules for non-T1 sources (a company's own release always goes to the
+  # model). Python regexes, matched against the headline; the first matching rule wins.
+  headline_rules:
+    - rule_id: news_headline_analyst_rating
+      category: analyst_rating
+      materiality: 1
+      confidence: 0.9
+      patterns:
+        - '(?i)\bprice target\b'
+        - '(?i)\b(upgrades?|downgrades?|upgraded|downgraded)\b'
+        - '(?i)\binitiates? coverage\b'
+        - '(?i)\breiterates? (a )?(buy|sell|hold|outperform|underperform|overweight|underweight)\b'
+    - rule_id: news_headline_listicle
+      category: listicle_or_momentum
+      materiality: 1
+      confidence: 0.9
+      patterns:
+        - '(?i)\b(best|top) (\d+ )?quantum([ -]computing)? stocks?\b'
+        - '(?i)\bstocks? to (buy|watch|sell)\b'
+        - '(?i)\b(stock|shares) (soars?|surges?|jumps?|plunges?|tumbles?|sinks?|rall(y|ies)|skyrockets?|craters?)\b'
+        - '(?i)\bwhy .{1,60} stock (is|was|went|jumped|fell|dropped|soared|plunged)\b'
+
+  # Domains whose items are always listicle_or_momentum (identifiers only; empty by default).
+  noise_domains: []
+
+  # Deterministic backstop for the injection flag (spec S1): an item matching any of these is
+  # flagged and quarantined whatever the model says.
+  injection_patterns:
+    - '(?i)\b(ignore|disregard|forget|override)\s+(all\s+|any\s+)?(the\s+|your\s+)?(previous|prior|above|earlier|preceding|system)\s+(instructions?|prompts?|rules|directions)'
+    - '(?i)\byou are now\b'
+    - '(?i)\b(system|developer)\s+(prompt|message|instructions?)\b'
+    - '(?i)\b(classify|label|mark|categori[sz]e|rate)\s+(this|it|the\s+(article|item|event|story|document))\s+as\b'
+    - '(?i)\b(set|assign|give)\s+(the\s+|a\s+)?materiality\b'
+    - '(?i)\binjection_suspected\b'
+    - '(?i)\bnew\s+instructions?\s*:'
+    - '(?i)<\s*/?\s*untrusted_document'

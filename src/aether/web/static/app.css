@@ -68,3 +68,7 @@ input.num { width: 9rem; text-align: right; }
 tr.sell td:first-child, tr.buy td:first-child { font-weight: 600; }
 .badge.tier-t1 { color: var(--ok); border-color: var(--ok); }
 .badge.tier-t3 { color: var(--warn-fg); border-color: var(--warn-fg); }
+/* M7 Feed */
+.stats { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; align-items: center; }
+tr.quarantined td { background: var(--warn-bg); }
+blockquote { margin: .25rem 0; padding-left: .6rem; border-left: 3px solid var(--line); color: var(--muted); }

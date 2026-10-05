@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Feed · Aether{% endblock %}
+{% block content %}
+<h1>Feed</h1>
+<p class="muted small">Every classified event: SEC filings (deterministic rules) and news and research items (headline rules, then the
+  {{ classifier_model }} classifier with no tools). Materiality is shown after the trust-tier caps: T3-only items stop at 2, a single T2
+  source at 3; 4–5 needs a T1 source or two independent T2 sources. Items where someone tried to instruct the classifier are quarantined:
+  they are shown with a warning and never alert, score or reach synthesis. NOISE is hidden unless you ask for it.</p>
+
+<section class="card">
+  <div class="stats">
+    <span><span class="badge signal">SIGNAL</span> {{ counts.by_class.SIGNAL }}</span>
+    <span><span class="badge risk">RISK</span> {{ counts.by_class.RISK }}</span>
+    <span><span class="badge noise">NOISE</span> {{ counts.by_class.NOISE }}</span>
+    <span class="muted small">last 30 days, excluding quarantined</span>
+    <span>Quarantined: {% if counts.quarantined %}<span class="bad">{{ counts.quarantined }}</span>{% else %}0{% endif %}</span>
+    <span>Waiting: {{ counts.pending }}{% if counts.batched %} · in a batch: {{ counts.batched }}{% endif %}</span>
+    <span>Failed: {% if counts.failed %}<span class="bad">{{ counts.failed }}</span>{% else %}0{% endif %}</span>
+  </div>
+  <p class="muted small">Classifier prompt <code>{{ prompt_version }}</code>.
+    {% if eval %}Last eval {{ eval.created_at[:10] }} ({{ eval.model }}, {{ eval.n_items }} items{% if eval.provisional %}, <span class="warn">provisional: labels not yet owner-reviewed</span>{% endif %}):
+      class agreement {{ "%.0f"|format(eval.class_agreement * 100) }}%,
+      RISK recall {% if eval.risk_recall is none %}n/a (no RISK rows){% else %}{{ "%.0f"|format(eval.risk_recall * 100) }}%{% endif %},
+      adversarial flagged {{ eval.adversarial_flagged }} ·
+      {% if eval.passed %}<span class="ok">passes</span>{% else %}<span class="bad">below the acceptance bar</span>{% endif %}.
+    {% else %}<span class="warn">No eval result for this prompt version yet (<code>make eval</code>).</span>{% endif %}</p>
+</section>
+
+<section class="card">
+  <form class="form-row" method="get" action="/feed">
+    <label>Class <select name="cls"><option value="">all</option>
+      {% for c in classes %}<option value="{{ c }}"{% if c == f.cls %} selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+    <label>Category <select name="category"><option value="">all</option>
+      {% for c in categories %}<option value="{{ c }}"{% if c == f.category %} selected{% endif %}>{{ c|replace("_", " ") }}</option>{% endfor %}</select></label>
+    <label>Ticker <select name="symbol"><option value="">all</option>
+      {% for s in symbols %}<option value="{{ s }}"{% if s == f.symbol %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+    <label>Materiality ≥ <select name="min_materiality">
+      {% for m in range(1, 6) %}<option value="{{ m }}"{% if m == f.min_materiality %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Tier <select name="tier"><option value="">all</option>
+      {% for t in tiers %}<option value="{{ t }}"{% if t == f.tier %} selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
+    <label><input type="checkbox" name="noise" value="1"{% if f.show_noise %} checked{% endif %}> show NOISE</label>
+    <button type="submit">Filter</button>
+  </form>
+  {% include "_feed_rows.html" %}
+</section>
+
+{% if failed %}
+<section class="card">
+  <h2>Classification failed</h2>
+  <p class="muted small">The classifier's answer was invalid (or the API failed) on every attempt. These items stay unclassified and don't alert.</p>
+  <table class="small">
+    <thead><tr><th>Date</th><th>Item</th><th>Attempts</th><th>Last error</th></tr></thead>
+    <tbody>
+    {% for r in failed %}
+      <tr><td class="nowrap">{{ r.published_at[:10] }}</td><td>{{ r.url|extlink(r.title) }}</td><td>{{ r.attempts }}</td><td class="muted">{{ r.error or "" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

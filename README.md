@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M6** (news & research ingest), the first Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 adds RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. News items are stored **unclassified** until M7.
+Status: **M7** (classifier), the second Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -161,7 +161,7 @@ How feeds are fetched:
 
 **LLM wrapper (`llm/client.py`).** The only module that may import `anthropic` (`scripts/check_llm_imports.py` in `make lint` enforces this).
 - **Model must be priced:** every call needs a price in `config/llm.yaml`, or it's refused.
-- **Soft budget:** a call runs only if today's spend (SGT day) plus the call's worst case fits `DAILY_LLM_BUDGET_USD` (default $3). Otherwise it's refused and logged as `budget_refused`, and no request is sent. One Telegram/dashboard alert goes out per day at 80%.
+- **Soft budget:** a call runs only if today's spend (SGT day) plus the call's worst case fits `DAILY_LLM_BUDGET_USD` (default $5 from M7). Otherwise it's refused and logged as `budget_refused`, and no request is sent. One Telegram/dashboard alert goes out per day at 80%.
 - **The hard cap is your Console workspace spend limit.**
 - **Tools:** only `research*` purposes may carry tools, and then only web search. Classification and synthesis never get tools.
 - **Logging:** every call is a row in `llm_calls` (tokens, searches, cost; never prompt text). The API key is scrubbed from errors and the HTTP loggers stay at WARNING.
@@ -170,11 +170,35 @@ How feeds are fetched:
 - **Identifiers only:** the prompt carries the ticker, company name and dates, nothing else.
 - **No fabricated items:** events come only from the search engine's result blocks (URL and title), with the excerpt taken from a verbatim citation. The model's own text is kept for audit only and never becomes an item.
 - **Dates:** from the result's `page_age`. Items without a date are marked "found" and dated when Aether found them.
-- **Sweep:** 08:00 and 20:00 SGT for QTUM and the five pure-plays, last 3 days, ≤5 searches each. Roughly $1.5–2/day with Opus, so most of the $3 soft budget. There's also **Run research sweep now** on `/news`.
+- **Sweep:** 08:00 and 20:00 SGT for QTUM and the five pure-plays, last 3 days, ≤5 searches each. Roughly $1.5–2/day with Opus. There's also **Run research sweep now** on `/news`.
 - **Backfill:** **runs once, automatically**, a couple of minutes after the worker first starts with `ANTHROPIC_API_KEY` set. It's one Message Batch: 6 names × 12 monthly windows, ≤5 searches each.
   - Estimated **$10–15 one-time** with Opus (tokens at the 50% batch price, searches at $10/1,000).
   - It sits outside the daily soft budget by your decision; only the Console limit caps it.
   - `RESEARCH_BACKFILL=false` turns it off.
+
+## Classifier (M7)
+
+Every news and research item gets a classification record (spec §5): class (SIGNAL / NOISE / RISK), category, materiality 1–5 (with the pre-cap value kept), a direction per affected ticker, confidence, rationale, an evidence quote, the injection flag, and either a `rule_id` or the model plus `prompt_version`. SEC filings keep their deterministic rules from M2.
+
+The pipeline (job `classify`, every 10 minutes and right after each RSS or research ingest):
+1. **Rules first** (`classify/rules.py`, no LLM): headline patterns for analyst ratings and listicles, and an optional noise-domain list (`config/rubric.yaml`). A company's own (T1) release always goes to the model.
+2. **The model** (`CLASSIFIER_MODEL`, default `claude-sonnet-5-5`; **no tools**). The system prompt is the rubric in `config/rubric.yaml` (the spec's category definitions and materiality anchors) plus the untrusted-content notice. The user message holds only the item's watchlist tickers, its source and tier, its date and the wrapped title and excerpt. The answer is structured JSON, validated in code:
+   - the category must belong to the class;
+   - the evidence quote must be a verbatim quote from the item;
+   - directions must cover exactly the item's tickers.
+   An invalid answer is rejected, never repaired. It gets one retry, after which the item is marked `failed` and listed on the Feed.
+3. **Trust-tier caps** (`classify/caps.py`), applied in code after the model. T3 sources only → at most 2; a single independent T2 source → at most 3; 4–5 needs a T1 source or two independent T2 domains (syndicated copies don't count). When a better source merges into the story later, the stored materiality rises back towards the model's value.
+4. **Injection guard.** If the model flags an instruction aimed at it, or a backstop regex (`injection_patterns`) matches, the event is **quarantined**. It's shown on the Feed with a warning and is excluded from alerts, the off-cycle review, scores and synthesis.
+
+**Backlog.** When more than 25 items wait (e.g. after the research backfill), they go to one Message Batch (50% price). By your decision it sits outside the daily soft budget; a poller ingests the results.
+
+**Alerts.** Classified news RISK at or above `risk_event_min_materiality` alerts like an EDGAR RISK event, and materiality ≥4 on a pure-play suggests an off-cycle review (M5). Quarantined items never alert.
+
+**Evals (`make eval`, spec §5.3).** `evals/classifier_golden.jsonl` holds **real ingested items only**. Claude Code proposed the labels and you review them (`labeled_by: owner`). The harness also builds 5 adversarial cases: a real excerpt with an injected instruction appended, which must be flagged without changing class or materiality. The report gives per-class precision/recall, a confusion matrix and the acceptance bar (≥85% class agreement, ≥95% RISK recall, 100% of adversarial cases flagged).
+- The eval is live: it calls the API with the key in `.env`, against a throwaway DB (about $0.20 per run).
+- Each result is committed as `evals/results/<prompt_version>.json` and shown on the Feed.
+- Any rubric or prompt edit is a new `prompt_version`, so rerun the eval.
+- See `evals/README.md` for the under-sampled categories and how to extend the set (`make golden-candidates DB=…`).
 
 ## Dashboard
 
@@ -193,7 +217,8 @@ How feeds are fetched:
 - `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
 - `/holdings`: holdings and cash (editable, or read-only rows in Tiger mode), settings (profile, whole/fractional shares, new-cash-only, holdings source), published targets with each overlay chain, off-cycle events and **Publish targets now**, and the rebalance plan with USD and SGD values (M5).
 - `/review`: monthly review packs, latest first (M5).
-- `/news`: news and research items (unclassified), each with its tier and its independent and syndicated source counts. Filter by ticker and origin. Also LLM spend vs the soft budget, backfill status, feed health, research sweeps and **Run research sweep now** (M6). Ticker pages for QTUM and the pure-plays show their 10 latest items.
+- `/feed`: every classified event (SEC filings and news), newest first. Filter by class, category, ticker, minimum materiality and trust tier; NOISE is hidden unless you ask for it. Each row shows the materiality after caps ("capped from N"), the direction per ticker, confidence, rationale, evidence quote, sources with tiers, and the rule or model/prompt version. Quarantined items carry a warning. A strip at the top shows S/N/R counts for 30 days, quarantined, waiting and failed items, and the latest eval for the current prompt (M7).
+- `/news`: news and research items with their class badge (or "pending"), each with its tier and its independent and syndicated source counts. Filter by ticker and origin. Also LLM spend vs the soft budget, backfill status, feed health, research sweeps and **Run research sweep now** (M6). Ticker pages for QTUM and the pure-plays show their 10 latest items.
 - `/login`: the password form (M5).
 - `/alerts`: delivery status (Telegram or dashboard only, and why), the last 100 alerts, and **Send test alert**.
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
@@ -232,7 +257,8 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `make secrets-scan` | gitleaks over git history and the working tree |
 | `make facts` | Regenerate `FACTS.md` from `config/facts.yaml` |
 | `make lock` | Re-resolve `uv.lock` |
-| `make eval` | Classifier evals (from M7) |
+| `make eval` | Live classifier eval on the golden set + adversarial cases (reads the key from `.env`; costs about $0.20) |
+| `make golden-candidates DB=…` | Export real ingested events from a DB copy as golden-set candidates (read-only) |
 | `make smoke` | Live check against the running stack (never part of acceptance) |
 | `make record-cassette NAME=… URL=… [UA=…] [GZIP=1]` | Record one live HTTP response as a test fixture (manual; SEC needs `UA`, large documents use `GZIP=1`) |
 | `make record-options SYMBOL=…` | Record one real yfinance option chain as a test fixture (manual, network) |
@@ -250,7 +276,9 @@ src/aether/
   llm/            the one Anthropic client: budget guard, tool gate, pricing, llm_calls (M6)
   research/       web-search research runs: sweep + Message Batches backfill (M6)
   news_view.py    read-side queries for /news
-  classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M7)
+  classify/       rules (filings + news headlines), prompt, output validation, caps, the queue
+                  (sync + Message Batches backlog) and `make eval` (M7)
+  feed_view.py    read-side queries for /feed
   risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
   alerts/         candidates → outbox → Telegram; telegram_guard.py (S7 is_owner), dashboard views
   sec_view.py     read-side SEC queries for the dashboard
@@ -265,6 +293,7 @@ src/aether/
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
 config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml,
                   options.yaml, llm.yaml
+evals/            classifier golden set (real items) + committed eval results
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```
 

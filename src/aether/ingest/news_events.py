@@ -29,10 +29,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import Connection, insert, select, update
 
+from aether.classify.caps import apply_caps
 from aether.config import Sources, TrustTier
 from aether.db.dialect import upsert
 from aether.db.models import event_sources, event_tickers, events
 from aether.db.types import i64_to_u64, to_iso, u64_to_i64
+from aether.domains import registrable_domain
 
 EXCERPT_MAX = 500  # S6: ~500 chars; the DB CHECK (600) is the backstop
 TITLE_MAX = 300
@@ -45,15 +47,6 @@ _TIER_RANK: dict[str, int] = {"T1": 1, "T2": 2, "T3": 3}
 
 _TRACKING_PARAMS = frozenset({"fbclid", "gclid", "dclid", "msclkid", "ref", "ref_src", "cmpid"})
 _TRACKING_PREFIXES = ("utm_", "mc_", "_hs", "hsa_")
-# Second-level suffixes where the registrable domain has three labels. Not the full Public Suffix
-# List (no dependency); unknown multi-part suffixes fall back to the last two labels.
-_MULTI_SUFFIXES = frozenset(
-    {
-        "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "com.sg", "edu.sg",
-        "gov.sg", "co.jp", "ne.jp", "com.cn", "com.hk", "co.in", "co.kr", "co.nz", "com.br",
-        "com.tw", "co.za", "com.my",
-    }
-)  # fmt: skip
 _WORD_RE = re.compile(r"[a-z0-9]+")
 # A trailing " - Outlet" / " | Outlet" (≤4 words) is the publisher's name, not the headline.
 _TITLE_SUFFIX_RE = re.compile(r"\s+[-|\u2013\u2014]\s+[^-|\u2013\u2014]{1,40}$")
@@ -109,13 +102,6 @@ def url_hash(canonical: str) -> bytes:
 def host_of(url: str) -> str:
     host = (urlsplit(url).hostname or "").lower().rstrip(".")
     return host.removeprefix("www.")
-
-
-def registrable_domain(host: str) -> str:
-    labels = host.lower().rstrip(".").removeprefix("www.").split(".")
-    if len(labels) >= 3 and ".".join(labels[-2:]) in _MULTI_SUFFIXES:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
 
 
 def normalize_title(title: str) -> str:
@@ -191,6 +177,8 @@ def _recount(conn: Connection, event_id: int) -> None:
             trust_tier=best_tier([t for _d, t, _s in rows]),
         )
     )
+    # A merged source can lift the trust-tier cap of an already classified story (M7).
+    apply_caps(conn, event_id)
 
 
 def _add_tickers(conn: Connection, event_id: int, symbols: Sequence[str]) -> None:

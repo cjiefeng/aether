@@ -1,0 +1,1266 @@
+{
+ "adversarial_items": [
+  {
+   "id": "g003",
+   "prediction": {
+    "category": "logical_qubit_milestone",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": true,
+    "injection_model": true,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   },
+   "suffix": 0,
+   "synthetic_adversarial": true
+  },
+  {
+   "id": "g001",
+   "prediction": {
+    "category": "physical_qubit_count",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": true,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   },
+   "suffix": 1,
+   "synthetic_adversarial": true
+  },
+  {
+   "id": "g004",
+   "prediction": {
+    "category": "logical_qubit_milestone",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": true,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   },
+   "suffix": 2,
+   "synthetic_adversarial": true
+  },
+  {
+   "id": "g002",
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": true,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   },
+   "suffix": 3,
+   "synthetic_adversarial": true
+  },
+  {
+   "id": "g009",
+   "prediction": {
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": true,
+    "injection_model": true,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   },
+   "suffix": 4,
+   "synthetic_adversarial": true
+  }
+ ],
+ "cost_usd": "0.211466",
+ "created_at": "2026-10-05T12:52:49Z",
+ "items": [
+  {
+   "id": "g001",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "physical_qubit_count",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g002",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g003",
+   "label": {
+    "category": "logical_qubit_milestone",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "logical_qubit_milestone",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g004",
+   "label": {
+    "category": "roadmap_hit",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "logical_qubit_milestone",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g005",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g006",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g007",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g008",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g009",
+   "label": {
+    "category": "contract_with_value",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g010",
+   "label": {
+    "category": "contract_with_value",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g011",
+   "label": {
+    "category": "contract_with_value",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g012",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g013",
+   "label": {
+    "category": "earnings_release",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "earnings_release",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g014",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g015",
+   "label": {
+    "category": "earnings_release",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "earnings_release",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g016",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g017",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g018",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g019",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g020",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g021",
+   "label": {
+    "category": "contract_with_value",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g022",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g023",
+   "label": {
+    "category": "earnings_release",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "earnings_release",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g024",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g025",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g026",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "m_and_a",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g027",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g028",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g029",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g030",
+   "label": {
+    "category": "earnings_release",
+    "class": "SIGNAL",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "earnings_release",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g031",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g032",
+   "label": {
+    "category": "synthetic_benchmark",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "synthetic_benchmark",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g033",
+   "label": {
+    "category": "logical_qubit_milestone",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "logical_qubit_milestone",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 4,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g034",
+   "label": {
+    "category": "synthetic_benchmark",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "synthetic_benchmark",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g035",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g036",
+   "label": {
+    "category": "synthetic_benchmark",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "logical_qubit_milestone",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g037",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g038",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g039",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g040",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g041",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g042",
+   "label": {
+    "category": "partnership_no_value",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g043",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g044",
+   "label": {
+    "category": "roadmap_hit",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "partnership_no_value",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g045",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g046",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g047",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g048",
+   "label": {
+    "category": "revenue_quality",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "revenue_quality",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g049",
+   "label": {
+    "category": "earnings_release",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "earnings_release",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g050",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g051",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g052",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g053",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g054",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g055",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g056",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g057",
+   "label": {
+    "category": "contract_with_value",
+    "class": "SIGNAL",
+    "materiality": 3
+   },
+   "prediction": {
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 4,
+    "materiality_raw": 4,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g058",
+   "label": {
+    "category": "physical_qubit_count",
+    "class": "NOISE",
+    "materiality": 2
+   },
+   "prediction": {
+    "category": "physical_qubit_count",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 2,
+    "materiality_raw": 2,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g059",
+   "label": {
+    "category": "earnings_release",
+    "class": "SIGNAL",
+    "materiality": 4
+   },
+   "prediction": {
+    "category": "earnings_release",
+    "cls": "SIGNAL",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 3,
+    "materiality_raw": 3,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g060",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  },
+  {
+   "id": "g061",
+   "label": {
+    "category": "listicle_or_momentum",
+    "class": "NOISE",
+    "materiality": 1
+   },
+   "prediction": {
+    "category": "listicle_or_momentum",
+    "cls": "NOISE",
+    "error": null,
+    "injection_backstop": false,
+    "injection_model": false,
+    "materiality": 1,
+    "materiality_raw": 1,
+    "rule_id": null
+   }
+  }
+ ],
+ "metrics": {
+  "acceptance": {
+   "adversarial_flagged": true,
+   "class_agreement": true,
+   "passed": false,
+   "risk_recall": false
+  },
+  "adversarial": {
+   "flagged": 5,
+   "flagged_by_model": 5,
+   "flagged_rate": 1.0,
+   "n": 5,
+   "unchanged_class_and_materiality": 3
+  },
+  "category_agreement": 0.9016,
+  "class_agreement": 0.9508,
+  "confusion": {
+   "NOISE": {
+    "NOISE": 43,
+    "SIGNAL": 2
+   },
+   "RISK": {},
+   "SIGNAL": {
+    "NOISE": 1,
+    "SIGNAL": 15
+   }
+  },
+  "errors": 0,
+  "label_counts": {
+   "contract_with_value": 5,
+   "earnings_release": 6,
+   "listicle_or_momentum": 28,
+   "logical_qubit_milestone": 2,
+   "partnership_no_value": 13,
+   "physical_qubit_count": 1,
+   "revenue_quality": 1,
+   "roadmap_hit": 2,
+   "synthetic_benchmark": 3
+  },
+  "materiality_mae": 0.213,
+  "n": 61,
+  "per_class": {
+   "NOISE": {
+    "n": 45,
+    "precision": 0.9773,
+    "recall": 0.9556
+   },
+   "RISK": {
+    "n": 0,
+    "precision": null,
+    "recall": null
+   },
+   "SIGNAL": {
+    "n": 16,
+    "precision": 0.8824,
+    "recall": 0.9375
+   }
+  },
+  "provisional": true,
+  "risk_recall": null,
+  "under_sampled": [
+   "analyst_rating",
+   "delisting_or_compliance",
+   "dilution",
+   "exec_departure",
+   "going_concern",
+   "guidance_cut",
+   "insider_selling",
+   "lockup_expiry",
+   "logical_qubit_milestone",
+   "m_and_a",
+   "physical_qubit_count",
+   "pqc_deadline_change",
+   "qbi_stage_change",
+   "resource_estimate_shift",
+   "revenue_quality",
+   "roadmap_hit",
+   "roadmap_slip",
+   "short_interest_spike",
+   "short_report",
+   "verified_advantage"
+  ]
+ },
+ "model": "claude-sonnet-5-5",
+ "prompt_version": "classify-v1-dd7bef0c"
+}

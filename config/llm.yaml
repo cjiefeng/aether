@@ -23,3 +23,14 @@ research:
   backfill_months: 12
   est_input_tokens_per_search: 6000
   est_base_input_tokens: 3000
+
+# Classifier (M7). No tools, ever (S1). Structured JSON output; effort low (Sonnet 5.5 thinking
+# stays on adaptively). A backlog larger than batch_threshold goes to one Message Batch (50%),
+# outside the daily soft budget (owner decision 2026-10-05), at most batch_max_items per batch.
+classify:
+  max_tokens: 4000
+  effort: low
+  batch_threshold: 25
+  batch_max_items: 2000
+  max_attempts: 2              # an invalid answer is retried once, then the item is `failed`
+  max_per_run: 60              # synchronous calls per job run

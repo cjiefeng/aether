@@ -9,7 +9,8 @@ GITLEAKS := docker run --rm -v "$(CURDIR):/repo" -w /repo $(GITLEAKS_IMAGE)
 PIP_AUDIT := pip-audit==2.9.0
 
 .PHONY: help down logs ps dev-image lock test lint fmt typecheck eval migrate backup \
-        secrets-scan smoke facts hooks record-cassette hash-password record-options
+        secrets-scan smoke facts hooks record-cassette hash-password record-options \
+        golden-candidates
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1 | sort | xargs
@@ -60,8 +61,17 @@ lint:
 	  uv export --frozen --no-emit-project --format requirements-txt -o /tmp/req.txt >/dev/null; \
 	  uvx $(PIP_AUDIT) --strict --require-hashes --disable-pip -r /tmp/req.txt'
 
+# Live classifier eval (spec §5.3; costs real money, never part of `make test`). The key is read
+# from .env inside the dev container (it never appears on the host command line).
 eval:
-	@echo "No evals until M7 (classifier). Nothing to run."
+	$(DEV) sh -c 'export ANTHROPIC_API_KEY="$$(sed -n "s/^ANTHROPIC_API_KEY=//p" .env 2>/dev/null)"; \
+	  export CLASSIFIER_MODEL="$$(sed -n "s/^CLASSIFIER_MODEL=//p" .env 2>/dev/null)"; \
+	  $(UV) python -m aether.classify.eval $(EVAL_ARGS)'
+
+# Export real ingested events from a DB as golden-set candidates (read-only):
+# make golden-candidates DB=data/scratch.db
+golden-candidates:
+	$(DEV) $(UV) python scripts/golden_candidates.py "$(DB)"
 
 facts:
 	$(DEV) $(UV) python -m aether.facts render

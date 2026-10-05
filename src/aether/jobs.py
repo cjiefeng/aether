@@ -21,6 +21,12 @@ from sqlalchemy import Engine, delete, select, update
 
 from aether.alerts.dispatch import enqueue_test_alert, run_alerts
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
+from aether.classify.pipeline import (
+    classifier_context,
+    has_classifier_work,
+    poll_batches,
+    run_classify,
+)
 from aether.config import (
     Settings,
     load_alerts_config,
@@ -273,6 +279,7 @@ def research_sweep_job(engine: Engine, settings: Settings, llm: LlmClient | None
 
 
 NEWS_RSS_MINUTES = 60
+CLASSIFY_MINUTES = 10
 BACKFILL_POLL_MINUTES = 15
 BACKFILL_SUBMIT_DELAY = timedelta(minutes=2)
 CATCH_UP_AFTER = timedelta(hours=24)
@@ -449,11 +456,36 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     llm, llm_off = make_llm(engine, settings)
     research_lock = threading.Lock()
 
+    # Classifier (M7): rules → LLM (no tools) → caps. Runs every 10 minutes and right after each
+    # news/research ingest; a job_runs row only when something waits (no idle noise).
+    classify_lock = threading.Lock()
+
+    def run_classifier() -> None:
+        if not classify_lock.acquire(blocking=False):
+            return  # another run is in progress; it will pick the new items up
+        try:
+            ctx = classifier_context(settings)
+            if llm is not None and has_classifier_work(engine, batches_only=True):
+                run_job(
+                    engine,
+                    "classify_batch_poll",
+                    lambda: poll_batches(engine, llm, ctx) or JobResult(warning="nothing open"),
+                )
+            if has_classifier_work(engine):
+                run_job(engine, "classify", lambda: run_classify(engine, llm, ctx))
+        finally:
+            classify_lock.release()
+
+    def run_news_rss() -> None:
+        run_job(engine, "news_rss", lambda: news_rss_job(engine, settings))
+        run_classifier()
+
     def run_research_sweep() -> None:
         if llm is None:
             return  # disabled: logged once at startup, no job_runs noise
         with research_lock:
             run_job(engine, "research_sweep", lambda: research_sweep_job(engine, settings, llm))
+        run_classifier()
 
     def research_sweep_command(_args: dict[str, Any]) -> dict[str, Any]:
         if llm is None:
@@ -466,6 +498,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             )
         finally:
             research_lock.release()
+        run_classifier()
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
 
     def run_backfill_submit() -> None:
@@ -500,6 +533,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                     or JobResult(warning="nothing open")
                 ),
             )
+        run_classifier()
 
     handlers = {
         **COMMAND_HANDLERS,
@@ -656,12 +690,13 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     # News & research (M6): RSS hourly; research sweeps 08:00 / 20:00 SGT (spec §9); the backfill
     # is submitted once shortly after start and polled every 15 min while its batch is open.
     sched.add_job(
-        wrap("news_rss", lambda: news_rss_job(engine, settings)),
+        run_news_rss,
         "interval",
         minutes=NEWS_RSS_MINUTES,
         id="news_rss",
         next_run_time=datetime.now(ZoneInfo(TZ)) + timedelta(minutes=1),
     )
+    sched.add_job(run_classifier, "interval", minutes=CLASSIFY_MINUTES, id="classify")
     sched.add_job(run_research_sweep, "cron", hour="8,20", minute=0, id="research_sweep")
     sched.add_job(
         run_backfill_submit,
