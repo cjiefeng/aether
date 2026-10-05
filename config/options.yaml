@@ -1,0 +1,13 @@
+# Daily options snapshot (spec §6.8, M5). Research only: never used for sizing or trades.
+# Numbers only (the model forbids unknown keys). Initial values for owner review.
+
+# Expiries considered: listed within this many calendar days, at most this many.
+max_days: 120
+max_expiries: 8
+# Quality gates for the contracts used for at-the-money IV. A metric that fails them is stored
+# as null with a reason ("thin chain"), never reported as a number.
+min_open_interest: 50
+max_spread_pct: 0.5     # (ask - bid) / mid
+# ATM IV interpolated at these horizons (days) between the two nearest listed expiries; never
+# extrapolated beyond the listed expiries.
+term_days: [30, 60, 90]

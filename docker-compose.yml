@@ -32,6 +32,10 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_ALLOWED_USER_ID: ${TELEGRAM_ALLOWED_USER_ID:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      # S8 (optional): Tiger Brokers read-only holdings sync. The key can trade; Aether only reads.
+      TIGER_ID: ${TIGER_ID:-}
+      TIGER_PRIVATE_KEY: ${TIGER_PRIVATE_KEY:-}
+      TIGER_ACCOUNT: ${TIGER_ACCOUNT:-}
     volumes:
       - aether-data:/data
     healthcheck:
@@ -50,6 +54,9 @@ services:
       AETHER_BIND: 0.0.0.0:8082
       AETHER_LOG_LEVEL: ${AETHER_LOG_LEVEL:-INFO}
       AETHER_CSRF_SECRET: ${AETHER_CSRF_SECRET:-}
+      # S2 (M5): the app refuses to start without both (`make hash-password`).
+      AETHER_DASHBOARD_PASSWORD_HASH: ${AETHER_DASHBOARD_PASSWORD_HASH:-}
+      AETHER_SESSION_SECRET: ${AETHER_SESSION_SECRET:-}
     ports:
       - "8080:8082"
     # rw at the filesystem level so the WAL reader can map -shm; the SQLite connection itself is mode=ro.

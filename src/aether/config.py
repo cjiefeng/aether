@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     )
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
 
+    # S2 (M5): dashboard password (scrypt hash, see security/auth.py) and session-cookie key.
+    # The app refuses to start without both; the worker doesn't use them.
+    dashboard_password_hash: SecretStr | None = Field(
+        default=None, validation_alias="AETHER_DASHBOARD_PASSWORD_HASH"
+    )
+    session_secret: SecretStr | None = Field(default=None, validation_alias="AETHER_SESSION_SECRET")
+
+    # S8 (M5): optional read-only Tiger Brokers holdings sync (worker only).
+    tiger_id: str | None = Field(default=None, validation_alias="TIGER_ID")
+    tiger_private_key: SecretStr | None = Field(default=None, validation_alias="TIGER_PRIVATE_KEY")
+    tiger_account: SecretStr | None = Field(default=None, validation_alias="TIGER_ACCOUNT")
+
     @field_validator(
         "csrf_secret",
         "anthropic_api_key",
@@ -59,6 +71,11 @@ class Settings(BaseSettings):
         "telegram_bot_token",
         "telegram_allowed_user_id",
         "telegram_chat_id",
+        "dashboard_password_hash",
+        "session_secret",
+        "tiger_id",
+        "tiger_private_key",
+        "tiger_account",
         "backup_dir",
         mode="before",
     )
@@ -235,29 +252,57 @@ class BacktestParams(_Strict):
 
 
 class ProfileParams(_Strict):
-    min_qtum: Fraction
+    # Fixed by the owner (spec §1.4, §6.5 amended 2026-10-04): risk appetite is the size of the
+    # QTUM core. The backtest chooses only the sleeve method, never this weight.
+    qtum_weight: Fraction
     max_per_name: Annotated[float, Field(gt=0, le=1)]
-    vol_limit_x: Annotated[float, Field(gt=0)] | None  # x QTUM's OOS volatility; None = no limit
-    max_dd_limit_pp: Annotated[float, Field(ge=0)] | None  # QTUM's OOS max DD + N pp; None = none
+    vol_limit_x: Annotated[float, Field(gt=0)] | None  # x QTUM's OOS volatility; None = shown only
+    max_dd_limit_pp: Annotated[float, Field(ge=0)] | None  # QTUM's OOS max DD + N pp; None = shown
     rank_metric: Literal["cvar95_low", "sortino_high"]
-    qtum_grid: tuple[Fraction, ...] = Field(min_length=1)
 
-    @field_validator("qtum_grid")
-    @classmethod
-    def _grid(cls, v: tuple[float, ...], info: ValidationInfo) -> tuple[float, ...]:
-        floor = info.data.get("min_qtum")
-        if floor is not None and any(q < floor for q in v):
-            raise ValueError("every qtum_grid value must be >= min_qtum")
-        if len(set(v)) != len(v):
-            raise ValueError("qtum_grid values must be distinct")
-        return tuple(sorted(v))
+
+class RebalanceParams(_Strict):
+    """The rebalance no-trade band (spec §6.6, M5)."""
+
+    drift_abs: Annotated[float, Field(ge=0, le=1)]  # trade if |drift| >= this ...
+    drift_rel: Annotated[float, Field(ge=0)]  # ... or >= this fraction of the target weight
+    min_trade_usd: Annotated[Decimal, Field(ge=0)]
+
+
+class PublishParams(_Strict):
+    """Monthly target publishing (spec §6.6, M5)."""
+
+    # A non-quarantined event at or above this materiality on a pure-play suggests an
+    # off-cycle review (alert only; targets never change automatically).
+    off_cycle_min_materiality: Materiality
+
+
+ACCESSION_RE = r"^\d{10}-\d{2}-\d{6}$"
+
+
+class OverlayParams(_Strict):
+    """Research overlay layer 1: filing hard rules (spec §6.6.1, M5)."""
+
+    enabled: bool
+    # An 8-K Item 3.01 (listing-compliance notice) zeroes the name for this many days.
+    compliance_notice_days: int = Field(ge=1, le=3650)
+    # A Form 25/15 for the common stock counts only once the stock has stopped trading: no
+    # close for this many QTUM sessions.
+    delisted_stale_sessions: int = Field(ge=1, le=250)
+    # Filings the owner has reviewed and cleared (e.g. a Form 25 for an exchange transfer, or a
+    # resolved compliance notice). Identifiers only.
+    cleared_accessions: tuple[Annotated[str, Field(pattern=ACCESSION_RE)], ...] = ()
 
 
 class StrategiesConfig(_Strict):
-    """`config/strategies.yaml`: backtest parameters and risk profiles (M4). Numbers only."""
+    """`config/strategies.yaml`: backtest parameters and risk profiles (M4); rebalance band,
+    monthly publishing and the research overlay (M5). Numbers and identifiers only."""
 
     backtest: BacktestParams
     profiles: dict[Profile, ProfileParams]
+    rebalance: RebalanceParams
+    publish: PublishParams
+    overlay: OverlayParams
 
     @field_validator("profiles")
     @classmethod
@@ -290,6 +335,21 @@ def load_alerts_config(config_dir: Path) -> AlertsConfig:
 
 def load_strategies(config_dir: Path) -> StrategiesConfig:
     return StrategiesConfig.model_validate(_load_yaml(config_dir / "strategies.yaml"))
+
+
+class OptionsConfig(_Strict):
+    """`config/options.yaml`: daily options snapshot quality gates (spec §6.8, M5). Research
+    only: nothing here feeds sizing or trades."""
+
+    max_days: int = Field(ge=30, le=730)  # expiries considered (calendar days ahead)
+    max_expiries: int = Field(ge=1, le=24)
+    min_open_interest: int = Field(ge=0)  # per contract used for ATM IV
+    max_spread_pct: Annotated[float, Field(gt=0, le=2)]  # (ask - bid) / mid
+    term_days: tuple[int, ...] = Field(min_length=1)  # ATM IV interpolated at these horizons
+
+
+def load_options_config(config_dir: Path) -> OptionsConfig:
+    return OptionsConfig.model_validate(_load_yaml(config_dir / "options.yaml"))
 
 
 def get_settings() -> Settings:

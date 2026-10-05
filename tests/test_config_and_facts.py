@@ -57,11 +57,12 @@ def test_secrets_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "synthetic-not-a-real" not in repr(Settings())
 
 
-def test_facts_verified_in_m2_but_not_signed_off() -> None:
+def test_facts_verified_and_partly_signed_off() -> None:
     facts = load_facts(CONFIG_DIR)
     assert len(facts) == 8
-    # M2 verified every seed against a primary source; only the owner signs off (end of M3).
-    assert {f.status for f in facts} == {"verified_by_claude"}
+    # M2 verified every seed against a primary source; the owner signed off five (2026-10-05).
+    assert {f.status for f in facts} == {"verified_by_claude", "signed_off"}
+    assert sum(f.status == "signed_off" for f in facts) == 5
     assert all(f.sources and f.retrieved_at for f in facts)
     lockup = next(f for f in facts if f.id == "qnt_lockup_expiry")
     assert "2026-11-30" in lockup.claim
@@ -71,10 +72,13 @@ def test_facts_verified_in_m2_but_not_signed_off() -> None:
 def test_unconfirmed_facts_are_labelled_in_prompts() -> None:
     facts = load_facts(CONFIG_DIR)
     block = render_for_prompt(facts)
-    assert block.count("[UNCONFIRMED") == len(facts)
-    assert "[FACT " not in block
+    unsigned = [f for f in facts if f.status != "signed_off"]
+    assert block.count("[UNCONFIRMED") == len(unsigned) > 0
+    assert block.count("[FACT ") == len(facts) - len(unsigned)
     signed = facts[0].model_copy(update={"status": "signed_off"})
     assert render_for_prompt([signed]).startswith("[FACT ")
+    pending = facts[0].model_copy(update={"status": "verified_by_claude"})
+    assert render_for_prompt([pending]).startswith("[UNCONFIRMED")
 
 
 def test_facts_md_in_sync() -> None:

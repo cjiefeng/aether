@@ -21,21 +21,41 @@ from sqlalchemy import Engine, delete, select, update
 
 from aether.alerts.dispatch import enqueue_test_alert, run_alerts
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
-from aether.config import Settings, load_alerts_config, load_rubric, load_strategies
+from aether.config import (
+    Settings,
+    load_alerts_config,
+    load_options_config,
+    load_rubric,
+    load_strategies,
+)
 from aether.db.engine import write_tx
 from aether.db.models import commands, job_runs
 from aether.db.types import to_iso, utcnow_iso
 from aether.ingest.dividends import ingest_dividends
 from aether.ingest.earnings_calendar import ingest_earnings_calendar
 from aether.ingest.edgar import ingest_edgar
+from aether.ingest.fx import ingest_fx
 from aether.ingest.prices import ingest_prices
 from aether.ingest.qtum_holdings import ingest_qtum_holdings
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
+from aether.options.job import snapshot_options
+from aether.portfolio.holdings import (
+    HoldingsUpdate,
+    SettingsUpdate,
+    apply_holdings_update,
+    apply_settings_update,
+)
 from aether.portfolio.job import run_strategies
+from aether.portfolio.publish import publish_targets, run_rebalance, sgt_today
+from aether.portfolio.tiger_sync import sync_holdings
 from aether.providers.dividends import FallbackDividends, MassiveDividends, YFinanceDividends
 from aether.providers.edgar import EdgarClient
+from aether.providers.fx import EcbFx, FallbackFx, YFinanceFx
+from aether.providers.options import YFinanceOptions
 from aether.providers.prices import FailoverPriceProvider, MassiveProvider, YFinanceProvider
+from aether.providers.tiger import TigerConfig, TigerReadOnly
+from aether.review.pack import monthly_review
 from aether.runs import JobResult, run_job
 
 __all__ = ["JobResult", "build_scheduler", "process_commands", "run_job"]
@@ -55,7 +75,8 @@ def heartbeat() -> JobResult:
 CommandHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
 # Handlers for dashboard-requested commands. Each returns a JSON-serialisable result.
-# Handlers that need the engine/providers are added in `build_scheduler`.
+# Handlers that need the engine/providers are added in `build_scheduler`. `process_commands`
+# adds the command's id to the args as `_command_id` (for holdings_history).
 COMMAND_HANDLERS: dict[str, CommandHandler] = {
     "ping": lambda _args: {"pong": utcnow_iso()},
 }
@@ -79,7 +100,7 @@ def process_commands(
             status, result = "rejected", {"error": f"unknown command kind {kind!r}"}
         else:
             try:
-                status, result = "done", handler(json.loads(args))
+                status, result = "done", handler({**json.loads(args), "_command_id": cmd_id})
             except Exception as exc:
                 log.exception("command %s (%s) failed", cmd_id, kind)
                 status, result = "failed", {"error": repr(exc)[:500]}
@@ -137,6 +158,24 @@ def strategies_job(engine: Engine, settings: Settings) -> JobResult:
     return run_strategies(engine, load_strategies(settings.config_dir))
 
 
+def rebalance_job(engine: Engine, settings: Settings) -> JobResult:
+    return run_rebalance(engine, load_strategies(settings.config_dir))
+
+
+def make_tiger(settings: Settings) -> tuple[TigerReadOnly | None, str | None]:
+    """The read-only Tiger client, or (None, reason) when not configured (fail closed)."""
+    config, reason = TigerConfig.from_settings(settings)
+    if config is None:
+        log.info("tiger sync disabled: %s; holdings stay manual", reason)
+        return None, reason
+    try:
+        return TigerReadOnly.connect(config), None
+    except Exception as exc:  # SDK construction error: disable, never log the key
+        reason = f"Tiger client setup failed: {type(exc).__name__}"
+        log.error("tiger sync disabled: %s", reason)
+        return None, reason
+
+
 def qtum_holdings_job(engine: Engine) -> JobResult:
     with httpx.Client(timeout=30) as client:
         return ingest_qtum_holdings(engine, client)
@@ -174,7 +213,19 @@ def alerts_job(
         load_rubric(settings.config_dir).risk_flags,
         service,
         reason,
+        off_cycle_min_materiality=load_strategies(
+            settings.config_dir
+        ).publish.off_cycle_min_materiality,
     )
+
+
+def fx_job(engine: Engine) -> JobResult:
+    with httpx.Client(timeout=30) as client:
+        return ingest_fx(engine, FallbackFx(YFinanceFx(), EcbFx(client)))
+
+
+def options_job(engine: Engine, settings: Settings) -> JobResult:
+    return snapshot_options(engine, YFinanceOptions(), load_options_config(settings.config_dir))
 
 
 CATCH_UP_AFTER = timedelta(hours=24)
@@ -251,10 +302,16 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     dividend_provider = make_dividend_provider(settings)
     portfolio_lock = threading.Lock()
 
+    def run_rebalance_step() -> JobResult | None:
+        return run_job(engine, "rebalance", lambda: rebalance_job(engine, settings))
+
     def portfolio_pipeline() -> JobResult | None:
         run_job(engine, "dividends", lambda: ingest_dividends(engine, dividend_provider))
         # Backtests run even if the dividend fetch failed: stored dividends are still valid.
-        return run_job(engine, "strategies", lambda: strategies_job(engine, settings))
+        result = run_job(engine, "strategies", lambda: strategies_job(engine, settings))
+        # Published targets + plan (M5) follow the backtest (they use whatever run is latest).
+        run_rebalance_step()
+        return result
 
     def run_portfolio() -> None:
         with portfolio_lock:
@@ -268,6 +325,58 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         finally:
             portfolio_lock.release()
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
+
+    def replan() -> dict[str, Any]:
+        """Re-run targets + plan after an owner change; waits for a running pipeline."""
+        with portfolio_lock:
+            result = run_rebalance_step()
+        return {"replanned": result is not None}
+
+    def update_holdings(args: dict[str, Any]) -> dict[str, Any]:
+        command_id = args.pop("_command_id", None)
+        out = apply_holdings_update(engine, HoldingsUpdate.model_validate(args), command_id)
+        return {**out, **replan()}
+
+    def publish_now(args: dict[str, Any]) -> dict[str, Any]:
+        """Publish targets now (off-cycle). The owner's decision; cites the event if given."""
+        args.pop("_command_id", None)
+        eid = args.get("trigger_event_id")
+        eid = eid if isinstance(eid, int) and not isinstance(eid, bool) and eid > 0 else None
+        with portfolio_lock:
+            result = run_job(
+                engine,
+                "publish_targets",
+                lambda: publish_targets(
+                    engine,
+                    load_strategies(settings.config_dir),
+                    trigger="off_cycle",
+                    trigger_event_id=eid,
+                ),
+            )
+        return {"ok": result is not None, "rows": result.rows_written if result else 0}
+
+    def update_portfolio_settings(args: dict[str, Any]) -> dict[str, Any]:
+        args.pop("_command_id", None)
+        out = apply_settings_update(engine, SettingsUpdate.model_validate(args))
+        return {**out, **replan()}
+
+    # Tiger holdings sync (S8, M5): daily 07:05 SGT when configured, and on demand.
+    tiger, tiger_off = make_tiger(settings)
+
+    def tiger_sync_once(command_id: int | None) -> JobResult | None:
+        return run_job(
+            engine, "tiger_sync", lambda: sync_holdings(engine, tiger, tiger_off, command_id)
+        )
+
+    def run_tiger_sync() -> None:
+        if tiger_sync_once(None) is not None:
+            replan()
+
+    def sync_holdings_command(args: dict[str, Any]) -> dict[str, Any]:
+        result = tiger_sync_once(args.pop("_command_id", None))
+        if result is None:
+            return {"ok": False, "error": "sync failed; last snapshot kept (see Holdings page)"}
+        return {"ok": True, "rows": result.rows_written, **replan()}
 
     telegram, telegram_off = make_telegram(settings)
     # The cron job and the test command share the outbox; never deliver concurrently.
@@ -295,6 +404,10 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         "refresh_edgar": refresh_edgar,
         "test_alert": test_alert,
         "recompute_strategies": recompute_strategies,
+        "update_holdings": update_holdings,
+        "update_portfolio_settings": update_portfolio_settings,
+        "sync_holdings": sync_holdings_command,
+        "publish_targets": publish_now,
     }
 
     def commands_tick() -> None:
@@ -364,6 +477,44 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         # Startup catch-up waits for the prices catch-up (which starts at once) to land first.
         **_catch_up(engine, "strategies", PORTFOLIO_CATCH_UP_DELAY),
     )
+    if tiger is not None:
+        sched.add_job(run_tiger_sync, "cron", hour=7, minute=5, id="tiger_sync")
+    # Options snapshot (06:40) and USD/SGD (06:50), M5; research/reporting only.
+    sched.add_job(
+        wrap("options", lambda: options_job(engine, settings)),
+        "cron",
+        hour=6,
+        minute=40,
+        id="options",
+        **_catch_up(engine, "options", PORTFOLIO_CATCH_UP_DELAY),
+    )
+    sched.add_job(
+        wrap("fx", lambda: fx_job(engine)),
+        "cron",
+        hour=6,
+        minute=50,
+        id="fx",
+        **_catch_up(engine, "fx"),
+    )
+
+    # Monthly publish + review pack: the 1st at 10:30 SGT; the 2nd is the retry (it does nothing
+    # if the month's pack is already done).
+    def run_monthly_review() -> None:
+        on = telegram is not None and telegram.blocked is None
+        with portfolio_lock:
+            run_job(
+                engine,
+                "review_pack",
+                lambda: monthly_review(
+                    engine,
+                    load_strategies(settings.config_dir),
+                    load_rubric(settings.config_dir).risk_flags,
+                    today=sgt_today(),
+                    telegram=on,
+                ),
+            )
+
+    sched.add_job(run_monthly_review, "cron", day="1,2", hour=10, minute=30, id="review_pack")
     # Alerts (M3): every 10 min; covers the hourly job-health check (spec §9).
     sched.add_job(
         run_alerts_job,

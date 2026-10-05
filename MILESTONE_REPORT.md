@@ -1,5 +1,156 @@
 # Milestone report
 
+## M5: Password, holdings & rebalance (2026-10-05)
+
+Phase 1b is complete. $0 LLM: every number is computed in code, and nothing calls a model. Built against the amended spec (PR #10: family-fund sleeve mandate, monthly targets, research overlay, options snapshots, review pack).
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Unauthenticated request to any data route → `/login` | ✅ | `tests/test_auth.py::test_unauthenticated_data_routes_redirect_to_login`: 10 pages and JSON APIs → 303 to `/login?next=…`; htmx requests get 401 + `HX-Redirect`. Commands without a session are refused too. Live: `curl /holdings` → 303. |
+| 6th failed login in 15 min → 429 | ✅ | `test_sixth_failed_login_is_429_and_password_never_logged`: 5 × 401, then 429 even with the right password. Another IP is unaffected. The log has the IP and never the password. |
+| Missing hash/secret → app won't start | ✅ | `test_missing_or_malformed_secrets_app_wont_start` (6 cases: missing, short secret, plaintext, weak scrypt cost, bad base64), `test_web_main_exits_without_password` (exit 1, uvicorn never runs). Live: the image without the env vars logs "refusing to start" and exits. |
+| Holdings edit goes through `commands`; the authorizer still denies direct writes | ✅ | `tests/test_holdings.py::test_holdings_edit_goes_through_commands` (POST → `commands` row → worker → `holdings` + `holdings_history` with the command id), `test_command_engine_cannot_write_holdings` (INSERT/UPDATE/DELETE on holdings, history and settings: "not authorized"), `test_worker_handlers_apply_update_and_replan` (through the real scheduler wiring). |
+| Same inputs → identical plan | ✅ | `tests/test_rebalance.py::test_same_inputs_give_identical_plan_and_hash` (canonical JSON and input hash equal; one cent of cash changes the hash). |
+| Targets change only on a monthly publish or **Publish targets now** | ✅ | `tests/test_overlay_publish.py::test_targets_change_only_on_publish`: new daily backtests refresh the plan, not the targets; the off-cycle command publishes and cites the event. |
+| Going-concern 10-Q or 8-K 3.01 on a held name → weight 0 at the next publish, cited by event ID; freed weight within the sleeve up to caps, remainder to QTUM | ✅ | `test_hard_rule_on_held_name_zeroes_it_at_next_publish[*]` (going concern, 3.01 deficiency, delisted common stock): nothing moves before the publish, then DEMO = 0, the chain cites the event, and the other pure-plays get the freed weight. `test_remainder_beyond_caps_goes_to_qtum`. |
+| Materiality-5 RISK event → one off-cycle review alert, no automatic target change | ✅ | `test_materiality_5_event_sends_one_off_cycle_alert_and_changes_nothing` (3 alert runs → 1 alert; targets identical; materiality 3 and quarantined events don't alert). |
+| Each profile's QTUM weight equals its fixed value | ✅ | `tests/test_portfolio_job.py::test_each_profile_uses_its_fixed_qtum_weight` (75 / 45 / 15%). |
+| No suggested trade below the minimum | ✅ | `test_no_trade_below_minimum` (and every trade ≥ $100 across several cash levels). |
+| Review pack Telegram text: plain, ≤4096 chars, no share counts, dollar values or account number; once per month | ✅ | `tests/test_review_pack.py`: one pack and one `review_pack:YYYY-MM` alert across the 1st, the retry on the 2nd and a rerun; the text has no `$`, share counts, cash or position values; overflow ends "… more lines on /review". |
+| Options snapshot stores a row from a recorded fixture and nulls a thin chain with a reason | ✅ | `tests/test_fx_options.py` on a real IONQ chain recorded 2026-10-04 (`make record-options`): 30/60/90-day ATM IV inside the bracketing expiries, no extrapolation, and a thin chain → nulls + "thin chain: …". |
+| Holdings never in a prompt or `llm_calls` | ✅ | `test_holdings_never_reach_llm_calls`: `llm_calls` stays empty, and the portfolio modules import no LLM client. `drift_summary` (the only thing that may ever reach synthesis, M10) carries percentages only: `test_drift_output_has_percentages_only`. |
+| Tiger: sync replaces only universe symbols and leaves cash; failed sync keeps the snapshot with a stale banner; missing credentials disable the module; lint fails on a planted `place_order` / stray import | ✅ | `tests/test_tiger.py` (12 tests). **Synthetic SDK-shaped fixtures, not recorded responses**: there are no Tiger credentials to record with. Real SDK construction is exercised offline (`test_connect_builds_sdk_client_without_network`). |
+| Tests green, no network | ✅ | `make test`: 357 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 88 files, `check_broker_readonly: ok`, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Login (`security/auth.py`)**:
+  - scrypt hash `scrypt:n:r:p:salt:hash` (no `$`, so compose never interpolates it); `make hash-password` prints it and a session secret.
+  - Signed 30-day HttpOnly, SameSite=Strict cookie carrying a password fingerprint, so a new password logs everyone out.
+  - `AuthMiddleware` (headers → CSRF → auth → routes); the login form posts via htmx, so CSRF stays header-only.
+  - In-memory failed-login limiter per IP; `/logout`.
+- **Schema `0006_holdings`** (hand-written, STRICT):
+  - `holdings` (`$CASH` row), `holdings_history`, `portfolio_settings`;
+  - `profile_targets` (base/published weights, adjustment chain, trigger, trigger event, input hash);
+  - `rebalance_plans`, `fx_rates`, `options_snapshots`, `review_packs`;
+  - `alerts` rebuilt in batch mode for two new kinds (`off_cycle_review`, `review_pack`), keeping its rows and STRICT (tested).
+- **Holdings (`portfolio/holdings.py`)**:
+  - pydantic `HoldingsUpdate`/`SettingsUpdate`, validated in the app and again in the worker;
+  - universe-only (QTUM + pure-plays + cash), up to 6 dp shares;
+  - tiger mode applies cash only;
+  - one-time `positions.yaml` import.
+- **Fixed-QTUM profiles (M4 change)**: `qtum_weight` 75/45/15%, caps 10/20/35%, vol/DD limits `null` (shown, not enforced). 12 candidates + 3 benchmarks per run. `ALGO_VERSION` bumped, so the first run after deploy is a new backtest.
+- **Monthly publishing (`portfolio/publish.py`)**:
+  - base weights (the selected sleeve method) → overlay → `profile_targets`;
+  - bootstrap publish when nothing exists;
+  - the daily plan runs against the latest published targets;
+  - `publish_targets` command (CSRF) for off-cycle publishes, citing an event.
+- **Research overlay layer 1 (`portfolio/overlay.py`)**:
+  - going concern (latest 10-K/10-Q);
+  - 8-K 3.01 **deficiency** notices (180 days);
+  - **delisted common stock**: a Form 25/25-NSE/15-12B/15-12G covering the common stock **and** no close for 10 QTUM sessions.
+
+  Freed weight goes to the other pure-plays pro rata within caps, then QTUM. Each name's chain is stored and shown, linked to the filing. `cleared_accessions` lets you clear a reviewed filing.
+- **EDGAR ingest**:
+  - now fetches and parses 8-K Item 3.01 bodies (`extract_listing_notice`: deficiency / transfer / ambiguous / unclear) and Form 25/15 documents (`extract_delisted_class`: security title, covers common stock?);
+  - new rubric rules: Form 25/15 → `delisting_or_compliance` at materiality 3 (alert only), and 8-K 5.01 at 4 (off-cycle alert only).
+- **Rebalance plan (`portfolio/rebalance.py`)**:
+  - no-trade band (3 pp or 25% of target; trades ≥ $100), sells first, then buys most-underweight first;
+  - each buy is capped by cash after the 10 bps cost;
+  - whole or fractional shares, new-cash-only mode, and a "needs cash" flag;
+  - `drift_summary`/`drift_lines` for M10.
+- **Off-cycle alert** (`alerts/candidates.py`): one alert per material (≥4) non-quarantined event on a pure-play.
+- **Review pack (`review/pack.py`)**:
+  - the 1st at 10:30 SGT, with a retry on the 2nd;
+  - targets + chains, plan, drift, USD/SGD value, open flags, earnings and lock-ups;
+  - a holdings-free Telegram text through the outbox;
+  - `/review` page.
+- **USD/SGD (`providers/fx.py`, `ingest/fx.py`)**: yfinance `SGD=X`, ECB reference-rate cross fallback (DTD-rejecting stdlib XML). Daily 06:50.
+- **Options snapshot (`providers/options.py`, `options/`)**:
+  - yfinance chains, choosing the nearest expiry plus the ones bracketing 30/60/90 days;
+  - ATM IV with quality gates (`config/options.yaml`), total-variance interpolation and no extrapolation;
+  - put/call volume and OI ratios. Daily 06:40.
+- **Tiger (`providers/tiger.py`, `portfolio/tiger_sync.py`)**: read-only facade holding only the bound `get_positions`, fail-closed config, scrubbed errors, masked account, daily 07:05 job and `sync_holdings` command. `scripts/check_broker_readonly.py` is in `make lint`.
+- **Dashboard**:
+  - `/login`, `/holdings` (settings, holdings form, published targets with chains, off-cycle events + **Publish targets now**, plan with SGD value), `/review`, the Overview drift card, and Holdings, Review and Log out in the nav;
+  - htmx `responseHandling` now swaps 4xx/5xx bodies, so error messages (rate limit, invalid input, wrong password) show.
+
+  There's still no inline script or style.
+
+### Decisions (deviations from the spec / plan)
+1. **Layer-1 rules tightened after the live check** (your decision, 2026-10-05). Read literally (any Form 25/25-NSE/15-12B, any 8-K 3.01 or 5.01), the rules would have zeroed **QBTS, INFQ and IONQ**, and every one was a false positive:
+   - IONQ's 25-NSE (2026-09-30) and QBTS's 25-NSE (2025-11-19) delist **warrants**.
+   - QBTS's 8-K 3.01 (2026-07-14) and Churchill X's (INFQ, 2026-02-03) announce **voluntary exchange transfers**, and their common-stock Form 25s belong to those transfers.
+   - INFQ's 8-K 5.01 is its own de-SPAC close.
+
+   Now 3.01 needs deficiency language with no transfer language, delisting needs the common stock **and** a halt in trading, and 5.01 only alerts. These six real filings are a regression fixture.
+2. **`profile_targets.as_of` is the publish date (SGT)**, with `prices_as_of` for the backtest session. A second publish on the same day replaces the row.
+3. **Bootstrap**: with no published targets at all, the daily job publishes once (trigger `monthly`), so the page isn't empty for a month.
+4. **The review pack is monthly only.** "Publish targets now" updates targets and the plan but sends no pack.
+5. **The Telegram pack shows target weights and chains, not current weights or drift**, per spec ("target weights, flags, dates and the number of suggested trades only").
+6. **Options from yfinance only**: Tiger sells API option quotes separately (no free delayed options endpoint in the SDK). Skew, implied moves and IV rank wait for M8.
+7. **Holdings are limited to the strategy universe** and cost basis is per share (your answer). In tiger mode, manual saves change only the cash.
+8. **The login limiter is in memory** (the app can't write SQLite), so an app restart resets it.
+9. **The ECB fallback is a EUR cross** (SGD/EUR ÷ USD/EUR) and exists only on ECB business days.
+10. **Delisting/deregistration forms alert at materiality 3**, below the off-cycle threshold, because most are warrant or transfer filings.
+11. **`tigeropen` 3.8.0 added** (approved). It pulls in pandas (already present), protobuf, stomp.py, delorean, getmac and others; pip-audit is clean. It's imported lazily, only in `providers/tiger.py`, with dynamic-domain lookup off and props/token files in `/tmp`.
+
+### Facts
+- **You signed off five facts** (included in this PR as you asked): `ionq_revenue_fy2025_guidance_2026`, `qnt_ipo`, `darpa_qbi_stage_b`, `ibm_roadmap_ftqc`, `pqc_deadlines`. `FACTS.md` is regenerated, and the tests now check that exactly these are signed off and that the rest are labelled UNCONFIRMED in prompts.
+- **Still `verified_by_claude`** (each has an open question): `ionq_acquire_skywater`, `qnt_lockup_expiry`, `infq_listing`.
+- **Observed, not added as facts**: the IONQ and QBTS warrant delistings and the QBTS NYSE→Nasdaq transfer (filings above).
+
+### Open questions
+- **Tiger API**:
+  - No read-only key scope exists (the `TIGERMCP_READONLY` flag is for Tiger's MCP server), so the key can trade.
+  - The SDK sends a MAC-address `device_id`; in Docker that's the container's.
+  - Holdings sync is untested against a real account.
+- **Tiger option quotes**: confirm whether your API account has US options permission (check `get_quote_permission` once credentials exist) before M8 considers it.
+- **3.01 text classification is regex-based.** An "unclear" or "ambiguous" notice never zeroes a name; it only alerts. Review those by hand.
+- **The `qnt_lockup_expiry` first sale day** and the other carried-over questions are unchanged.
+
+### Live check (isolated compose project `aether-m5` on port 8090, its own volume and image tag, Telegram and Tiger blanked; your stack wasn't touched)
+- Migration `0006_holdings` applied on a fresh DB. The prices, EDGAR backfill (2,382 rows), dividends, strategies (one run, 15 metric rows), `fx` (21 USD/SGD rows, yfinance), `options` (6 snapshots) and `rebalance` jobs all came back `ok`.
+- **Layer 1 on real EDGAR data: no name was zeroed.** The ingest parsed all six listing filings:
+  - IONQ and QBTS 25-NSE: warrants (`covers_common: false`);
+  - QBTS and INFQ 8-K 3.01: `transfer`;
+  - QBTS and INFQ Form 25: common stock, but still trading.
+- **First publish (bootstrap)**: safe = QTUM 75% + inverse-volatility sleeve (each pure-play 4.7–5.4%); medium = QTUM 45% + min-variance (IONQ 20%, RGTI 18.5%, QNT 16.5%); aggressive = QTUM 15% + min-variance (IONQ 35%, QNT 25.3%, RGTI 24.7%). The QTUM weights are exactly the configured values.
+- **Options**: 30/60/90-day ATM IV for the five pure-plays (e.g. IONQ 73.8% / 75.0% / 71.5%, INFQ 85.5% / 86.3% / 84.4%). QTUM's 30/60/90-day IVs are null with "beyond the last usable expiry (12 days); not extrapolated": its 2026-11-20 ATM contracts failed the gates.
+- **Browser flow, logged in**:
+  - wrong password → "Wrong password." (401);
+  - right password → redirect to `/holdings`;
+  - synthetic holdings saved → command done → plan with sells before buys, cash after trades $124.61, S$ value at USD/SGD 1.2791;
+  - Overview drift card;
+  - **Publish targets now** → three `off_cycle` rows.
+- A review pack built in the test stack: Telegram text of 632 chars with target weights, risk flags and dates only; the `/review` page rendered; one `review_pack:2026-10` alert (dashboard only, Telegram blanked).
+- `curl /holdings` without a session → 303 to `/login`. The image started without a password hash logged "refusing to start" and exited.
+- **No CSP errors.** The only console errors were the deliberate wrong-password 401. The stack and its volume were removed afterwards.
+
+### Owner checklist
+- [ ] `make hash-password`, then put `AETHER_DASHBOARD_PASSWORD_HASH` and `AETHER_SESSION_SECRET` in `.env` **before deploying**. The dashboard won't start without them.
+- [ ] Review `config/strategies.yaml`:
+  - fixed QTUM weights 75/45/15% and caps 10/20/35%;
+  - no-trade band 3 pp / 25% / $100;
+  - off-cycle threshold 4;
+  - overlay `compliance_notice_days: 180` and `delisted_stale_sessions: 10`.
+- [ ] Review `config/options.yaml` (OI ≥ 50, spread ≤ 50%, 30/60/90 days, 120 days / 8 expiries).
+- [ ] Review decision 1 (tightened layer 1). If you'd rather have the literal rules, say so and I'll switch back.
+- [ ] Optional Tiger setup: create a **dedicated** API key, set `TIGER_ID`, `TIGER_PRIVATE_KEY` and `TIGER_ACCOUNT` in `.env`, then pick "Tiger" as the holdings source and press **Sync from Tiger**.
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0006_holdings`, re-runs the backtest with the fixed QTUM weights, publishes the first targets about 5 minutes after start, and builds the first review pack on 2026-11-01.
+- [ ] Still open from earlier milestones: `MASSIVE_API_KEY`, the Telegram bot setup, and the three facts not yet signed off.
+
+### How to verify
+```bash
+make test            # 357 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker read-only check, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then log in at http://<lan-ip>:8080/holdings and /review
+```
+
 ## Roadmap change: family-fund sleeve mandate, research overlay, options analytics (2026-10-04, owner-approved)
 
 Docs only: no code or config changes. The new values below land in `config/strategies.yaml` with M5. Spec: §1 (items 7–9), §1.1, §1.3, **new §1.4**, §3, S8, §4, §6.2, §6.4, §6.5, §6.6, **new §6.6.1, §6.8, §6.9**, §7, §8, §9, §10, §11 (M5, M8–M12).

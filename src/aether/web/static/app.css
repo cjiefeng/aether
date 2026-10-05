@@ -55,3 +55,14 @@ tr.group th { color: var(--fg); padding-top: .9rem; }
 .badge.fact-verified_by_claude { color: var(--warn-fg); border-color: var(--warn-fg); }
 .badge.fact-unverified { color: var(--bad); border-color: var(--bad); }
 .warn { color: var(--warn-fg); }
+/* M5: login, holdings */
+.top button.link { margin-left: auto; background: transparent; color: var(--muted); border: 1px solid var(--line); padding: .2rem .6rem; }
+.login { max-width: 360px; margin: 3rem auto; }
+.login label, .form-row label { display: block; margin-bottom: .25rem; color: var(--muted); font-size: 13px; }
+input[type=password], input[type=text], select { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .35rem .5rem; font: inherit; }
+.login input[type=password] { width: 100%; box-sizing: border-box; margin-bottom: .75rem; }
+input.num { width: 9rem; text-align: right; }
+.form-row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: .75rem; }
+.result { margin-left: .5rem; font-size: 13px; }
+.htmx-request button { opacity: .6; }
+tr.sell td:first-child, tr.buy td:first-child { font-weight: 600; }

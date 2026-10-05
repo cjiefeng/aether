@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Log in · Aether{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<section class="card login">
+  <h1>Aether</h1>
+  <form hx-post="/login" hx-target="#login-result" hx-swap="innerHTML">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit">Log in</button>
+    <span id="login-result" class="result bad" role="alert"></span>
+  </form>
+  <p class="muted small">LAN-only dashboard over plain HTTP. Never expose it to the internet.</p>
+</section>
+{% endblock %}

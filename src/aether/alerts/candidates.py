@@ -10,6 +10,9 @@ alert fire at most once however often this runs.
 - `lockup:{accession}:T-{n}` / `earnings:{symbol}:{date}:T-{n}`: the tightest reminder that
   applies (T-7, then T-1); a missed day still alerts, a late first run doesn't send both.
 - `job_failing:{job}:{first failure}` and later `job_recovered:{job}:{first failure}`.
+- `off_cycle:{event_id}` (M5): a non-quarantined event at or above the publish threshold on a
+  pure-play suggests an off-cycle review. Targets never change automatically; the owner decides
+  with "Publish targets now".
 
 Message text is plain text built from DB fields; Telegram gets no parse_mode, so nothing in a
 filing title is interpreted.
@@ -127,6 +130,59 @@ def risk_events(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[Aler
             )
         )
     return out
+
+
+# --------------------------------------------------------------------------- off-cycle review (M5)
+
+
+def off_cycle_reviews(
+    conn: Connection, cfg: AlertsConfig, now: datetime, min_materiality: int
+) -> list[AlertCandidate]:
+    since = to_iso(now - timedelta(days=cfg.event_lookback_days))
+    rows = conn.execute(
+        select(
+            events.c.id,
+            events.c.title,
+            events.c.published_at,
+            event_classifications.c["class"],
+            event_classifications.c.category,
+            event_classifications.c.materiality,
+            event_tickers.c.symbol,
+        )
+        .join(event_classifications, event_classifications.c.event_id == events.c.id)
+        .join(event_tickers, event_tickers.c.event_id == events.c.id)
+        .join(tickers, tickers.c.symbol == event_tickers.c.symbol)
+        .where(
+            tickers.c.type == "pure_play",
+            event_classifications.c.materiality >= min_materiality,
+            events.c.quarantined == 0,
+            events.c.injection_suspected == 0,
+            events.c.published_at >= since,
+        )
+        .order_by(events.c.published_at, events.c.id, event_tickers.c.symbol)
+    ).all()
+    out: dict[int, AlertCandidate] = {}
+    for r in rows:
+        if r.id in out:
+            continue
+        cls = r._mapping["class"]
+        out[r.id] = AlertCandidate(
+            kind="off_cycle_review",
+            dedupe_key=f"off_cycle:{r.id}",
+            text="\n".join(
+                [
+                    f"Off-cycle review suggested · {r.symbol} · {cls} "
+                    f"{r.category.replace('_', ' ')} (materiality {r.materiality}/5)",
+                    _clip(r.title, 300),
+                    f"Published {r.published_at[:10]} · event #{r.id}",
+                    "Targets are unchanged until you press Publish targets now on the "
+                    "Holdings page.",
+                ]
+            ),
+            payload={"symbol": r.symbol, "category": r.category, "materiality": r.materiality},
+            event_id=r.id,
+        )
+    return list(out.values())
 
 
 # --------------------------------------------------------------------------- insider clusters
@@ -340,11 +396,20 @@ def job_health(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[Alert
 
 
 def collect(
-    engine: Engine, cfg: AlertsConfig, params: RiskFlagParams, now: datetime
+    engine: Engine,
+    cfg: AlertsConfig,
+    params: RiskFlagParams,
+    now: datetime,
+    off_cycle_min_materiality: int | None = None,
 ) -> list[AlertCandidate]:
     with engine.connect() as conn:
         out = [
             *risk_events(conn, cfg, now),
+            *(
+                off_cycle_reviews(conn, cfg, now, off_cycle_min_materiality)
+                if off_cycle_min_materiality is not None
+                else []
+            ),
             *lockup_reminders(conn, cfg, now),
             *earnings_reminders(conn, cfg, now),
             *job_health(conn, cfg, now),

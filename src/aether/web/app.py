@@ -1,7 +1,8 @@
 """FastAPI app factory. The dashboard reads SQLite via a `mode=ro` engine, and its only write
 is `enqueue_command` on the authorizer-restricted command engine. Page paths never call an LLM.
 
-Middleware order, outermost first: security headers → CSRF → routes.
+Middleware order, outermost first: security headers → CSRF → auth (M5 password) → routes.
+The app refuses to start without a valid password hash and session secret (S2, fail closed).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from aether.config import Settings, get_settings
 from aether.db.engine import make_command_engine, make_ro_engine
+from aether.security.auth import AuthConfig, AuthMiddleware, LoginLimiter
 from aether.security.csrf import CSRFMiddleware, CSRFSigner
 from aether.security.headers import SecurityHeadersMiddleware
 from aether.security.sanitize import register_filters
@@ -58,6 +60,7 @@ def make_templates() -> Jinja2Templates:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    auth = AuthConfig.from_settings(settings)  # raises: no password, no app
     secret = (
         settings.csrf_secret.get_secret_value().encode()
         if settings.csrf_secret
@@ -69,12 +72,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ro_engine = make_ro_engine(settings.db_path)
     app.state.command_engine = make_command_engine(settings.db_path)
     app.state.csrf = CSRFSigner(secret)
+    app.state.auth = auth
+    app.state.login_limiter = LoginLimiter()
     app.state.templates = make_templates()
 
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 
     # add_middleware wraps: the last one added is the outermost.
+    app.add_middleware(AuthMiddleware, config=auth)
     app.add_middleware(CSRFMiddleware, signer=app.state.csrf)
     app.add_middleware(SecurityHeadersMiddleware)
     return app

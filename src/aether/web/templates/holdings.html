@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Holdings · Aether{% endblock %}
+{% macro w(x) -%}{% if x is none %}—{% else %}{{ "%.1f"|format(x * 100) }}%{% endif %}{%- endmacro %}
+{% macro money(x) -%}{% if x is none %}—{% else %}${{ "{:,.2f}".format(x|float) }}{% endif %}{%- endmacro %}
+{% set s = h.settings %}
+{% set tiger_mode = s.holdings_source == "tiger" %}
+{% block content %}
+<h1>Holdings</h1>
+
+<p class="banner stale"><strong>{{ banner }}</strong> Model strategies, not advice. You place any trades yourself.</p>
+
+{% if h.pending %}
+<p class="banner stale">{{ h.pending }} change(s) waiting for the worker (it checks every 30 s). Reload to see them applied.</p>
+{% endif %}
+{% if h.rebalance_stale %}
+<p class="banner stale">
+  {% if h.rebalance_last_ok %}Targets and plan stale since {{ h.rebalance_last_ok }} (last successful run).
+  {% else %}No targets yet. They appear after the first daily run (07:10 SGT) once a backtest exists.{% endif %}
+</p>
+{% endif %}
+{% if tiger_mode and h.tiger_stale %}
+<p class="banner stale">
+  Tiger holdings {% if h.tiger and h.tiger.last_ok %}stale since {{ h.tiger.last_ok }}{% else %}never synced{% endif %}{% if h.tiger and h.tiger.error %}: {{ h.tiger.error }}{% endif %}.
+  The last saved snapshot is in use.
+</p>
+{% endif %}
+{% set stale_px = h.prices|dictsort|selectattr("1.stale")|list %}
+{% if stale_px %}
+<p class="banner stale">Stale prices: {% for sym, p in stale_px %}{{ sym }} (last {{ p.d }}){% if not loop.last %}, {% endif %}{% endfor %}. The plan uses the last close.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Settings</h2>
+  <form class="form-row" hx-post="/commands/portfolio-settings" hx-target="#settings-result" hx-swap="innerHTML">
+    <div><label for="selected_profile">Risk profile</label>
+      <select id="selected_profile" name="selected_profile">
+        {% for p in profiles %}<option value="{{ p }}"{{ " selected" if p == s.selected_profile }}>{{ p|capitalize }}</option>{% endfor %}
+      </select></div>
+    <div><label for="whole_shares">Trade size</label>
+      <select id="whole_shares" name="whole_shares">
+        <option value="1"{{ " selected" if s.whole_shares }}>Whole shares</option>
+        <option value="0"{{ " selected" if not s.whole_shares }}>Fractional shares</option>
+      </select></div>
+    <div><label for="new_cash_only">Mode</label>
+      <select id="new_cash_only" name="new_cash_only">
+        <option value="0"{{ " selected" if not s.new_cash_only }}>Rebalance (sells allowed)</option>
+        <option value="1"{{ " selected" if s.new_cash_only }}>New cash only, no sells</option>
+      </select></div>
+    <div><label for="holdings_source">Holdings source</label>
+      <select id="holdings_source" name="holdings_source">
+        <option value="manual"{{ " selected" if not tiger_mode }}>Manual entry</option>
+        <option value="tiger"{{ " selected" if tiger_mode }}>Tiger Brokers (read-only sync)</option>
+      </select></div>
+    <div><button type="submit">Save settings</button><span id="settings-result" class="result"></span></div>
+  </form>
+</section>
+
+{% if tiger_mode %}
+<section class="card">
+  <div class="card-head"><h2>Tiger Brokers</h2>
+    <span><button hx-post="/commands/sync-holdings" hx-target="#sync-result" hx-swap="innerHTML">Sync from Tiger</button><span id="sync-result" class="result"></span></span></div>
+  {% if h.tiger %}
+  <ul class="small">
+    <li>Account {{ h.tiger.account_masked or "—" }}; last successful sync {{ h.tiger.last_ok or "never" }}.</li>
+    {% if h.tiger.last_ok %}<li>{{ h.tiger.universe_positions }} strategy-universe position(s) imported; {{ h.tiger.outside_universe }} position(s) outside the universe ignored.</li>{% endif %}
+    {% if h.tiger.error %}<li class="bad">Last error ({{ h.tiger.last_error_at }}): {{ h.tiger.error }}</li>{% endif %}
+  </ul>
+  {% else %}<p class="muted">Not synced yet.</p>{% endif %}
+  <p class="muted small">Read-only: Aether only reads positions. QTUM and pure-play share counts come from the account; cash stays a manual entry.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Your holdings</h2>
+  <form hx-post="/commands/update-holdings" hx-target="#holdings-result" hx-swap="innerHTML">
+    <table class="num">
+      <thead><tr><th>Symbol</th><th>Shares</th><th>Avg cost / share (USD, optional)</th><th>Last close</th><th>Value</th><th>Source</th></tr></thead>
+      <tbody>
+      {% for sym in h.universe %}
+        {% set pos = h.holdings.positions.get(sym) %}
+        {% set px = h.prices.get(sym) %}
+        <tr>
+          <td>{{ sym }}</td>
+          {% if tiger_mode %}
+          <td>{{ pos.shares if pos else "0" }}</td><td>{{ money(pos.cost_basis) if pos else "—" }}</td>
+          {% else %}
+          <td><input class="num" type="text" inputmode="decimal" name="shares_{{ sym }}" value="{{ pos.shares if pos else '' }}" aria-label="{{ sym }} shares"></td>
+          <td><input class="num" type="text" inputmode="decimal" name="cost_{{ sym }}" value="{{ pos.cost_basis if pos and pos.cost_basis is not none else '' }}" aria-label="{{ sym }} average cost"></td>
+          {% endif %}
+          <td>{% if px %}{{ "%.2f"|format(px.c) }} <span class="muted small">{{ px.d }}</span>{% else %}—{% endif %}</td>
+          <td>{% if pos and px %}{{ money(pos.shares|float * px.c) }}{% else %}—{% endif %}</td>
+          <td class="muted small">{{ pos.source if pos else "" }}</td>
+        </tr>
+      {% endfor %}
+        <tr>
+          <td>Cash (USD)</td>
+          <td colspan="2"><input class="num" type="text" inputmode="decimal" name="cash" value="{{ h.holdings.cash }}" aria-label="Cash in USD"></td>
+          <td></td><td>{{ money(h.holdings.cash) }}</td><td class="muted small">manual</td>
+        </tr>
+      </tbody>
+    </table>
+    <p><button type="submit">Save holdings</button><span id="holdings-result" class="result"></span></p>
+    <p class="muted small">Only QTUM, the pure-plays and USD cash. Saving queues an update for the worker (CSRF-protected, rate-limited);
+      {% if tiger_mode %}in Tiger mode only the cash is saved here.{% else %}an empty or zero row removes that position.{% endif %}
+      Holdings stay on this machine and never go into an LLM prompt.</p>
+  </form>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Published targets: {{ s.selected_profile|capitalize }}</h2>
+    {% if h.targets %}<span class="muted small">Targets published {{ h.targets.as_of }}{% if h.targets.trigger == "off_cycle" %} (off-cycle{% if h.targets.trigger_event_id %}, event #{{ h.targets.trigger_event_id }}{% endif %}){% endif %}; next publish {{ h.next_publish }}</span>{% endif %}</div>
+  {% if not h.targets %}
+  <p class="muted">No targets published yet. The first publish happens after the first backtest (daily 07:10 SGT), then on the 1st of each month.</p>
+  {% else %}
+  <p class="muted small">From prices through {{ h.targets.prices_as_of }}{% if h.targets.strategy_id %} · {{ family_labels.get(h.targets.strategy_id.split(":")[1], h.targets.strategy_id) }}{% endif %}.
+    Base weights from the model strategy, then the research overlay (filing hard rules). Targets don't move between publishes.</p>
+  {% if h.targets.adjustments.note %}<p class="banner stale">{{ h.targets.adjustments.note }}</p>{% endif %}
+  <table class="num">
+    <thead><tr><th>Symbol</th><th>Base</th><th>Published</th><th>Adjustment chain</th></tr></thead>
+    <tbody>
+    {% for c in h.chains %}
+      <tr><td>{{ c.symbol }}</td><td>{{ w(c.base) }}</td><td>{{ w(c.final) }}</td>
+        <td class="small">{% if c.steps or c.redistributed %}{{ c.text }}{% for st in c.steps %} {{ st.url|extlink(st.form) }}{% endfor %}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <h3>Off-cycle review</h3>
+  {% if h.off_cycle %}
+  <p>Material events on pure-plays since the last publish (targets are unchanged until you publish):</p>
+  <ul class="small">
+    {% for e in h.off_cycle %}<li>#{{ e.id }} {{ e.symbol }} · {{ e.category|replace("_", " ") }} (materiality {{ e.materiality }}) · {{ e.published_at[:10] }} · {{ e.title }}</li>{% endfor %}
+  </ul>
+  {% else %}<p class="muted small">No material events on pure-plays since the last publish.</p>{% endif %}
+  <form class="form-row" hx-post="/commands/publish-targets" hx-target="#publish-result" hx-swap="innerHTML">
+    {% if h.off_cycle %}<input type="hidden" name="trigger_event_id" value="{{ h.off_cycle[0].id }}">{% endif %}
+    <div><button type="submit">Publish targets now</button><span id="publish-result" class="result"></span></div>
+  </form>
+  <p class="muted small">Re-runs the overlay on the latest backtest and publishes immediately{% if h.off_cycle %}, citing event #{{ h.off_cycle[0].id }}{% endif %}. Otherwise targets publish on the 1st (10:30 SGT).</p>
+</section>
+
+{% if h.holdings.empty %}
+<section class="card"><p class="muted">No holdings saved, so there's no plan. Enter your positions and cash above.</p></section>
+{% elif not h.plan %}
+<section class="card"><p class="muted">No plan yet. It's built once targets are published, and refreshed daily (07:10 SGT) and after each update.</p></section>
+{% else %}
+{% set plan = h.plan %}
+<section class="card">
+  <div class="card-head"><h2>Rebalance plan: {{ plan.profile|capitalize }}</h2>
+    <span class="muted small">Against targets published {{ plan.targets_as_of }}; next publish {{ plan.next_publish }}</span></div>
+  {% for n in plan.notes %}<p class="muted small">{{ n }}</p>{% endfor %}
+
+  <table class="num">
+    <thead><tr><th>Symbol</th><th>Shares</th><th>Value</th><th>Weight</th><th>Target</th><th>Drift</th><th>Trade</th><th>After</th></tr></thead>
+    <tbody>
+    {% for r in plan.rows %}
+      <tr class="{{ r.action or '' }}">
+        <td>{{ r.symbol }}</td><td>{{ r.shares }}</td><td>{{ money(r.value) }}</td><td>{{ w(r.weight) }}</td>
+        <td>{{ w(r.target) }}</td><td>{{ r.drift|pct }}</td>
+        <td>{% if r.action %}<span class="badge {{ 'risk' if r.action == 'sell' else 'signal' }}">{{ r.action }} {{ r.trade_shares }}</span> {{ money(r.trade_value) }}{% elif r.unfunded %}<span class="warn small">needs cash</span>{% elif r.band %}<span class="muted small">below ${{ plan.band.min_trade_usd }}</span>{% else %}—{% endif %}</td>
+        <td>{{ w(r.post_weight) }}</td>
+      </tr>
+    {% endfor %}
+      <tr><td>Cash</td><td></td><td>{{ money(plan.cash) }}</td><td>{{ w(plan.cash_weight) }}</td><td>—</td><td></td><td></td><td>{{ w(plan.cash_weight_after) }}</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Trades ({{ "new cash only" if plan.mode == "new_cash_only" else "sells first, then buys" }})</h3>
+  {% if plan.trades %}
+  <ol>
+    {% for t in plan.trades %}<li>{{ t.action|capitalize }} {{ t.shares }} {{ t.symbol }} (≈ {{ money(t.value) }})</li>{% endfor %}
+  </ol>
+  {% else %}<p class="muted">No trades: every holding is inside the no-trade band.</p>{% endif %}
+  <p class="small">Portfolio {{ money(plan.total_value) }}{% if h.fx %} (≈ S${{ "{:,.2f}".format(plan.total_value|float * h.fx[1]) }} at USD/SGD {{ "%.4f"|format(h.fx[1]) }}, {{ h.fx[0] }}){% endif %}
+    · cash after trades {{ money(plan.cash_after) }} · turnover {{ money(plan.turnover) }} · est. cost {{ money(plan.est_cost) }} ({{ plan.cost_bps }} bps)</p>
+  {% if plan.unpriced %}<p class="bad small">No price for {{ plan.unpriced|join(", ") }}: left out of the plan.</p>{% endif %}
+  <p class="muted small">A holding trades only if its drift is ≥ {{ w(plan.band.drift_abs) }} or ≥ {{ "%d"|format(plan.band.drift_rel * 100) }}% of its target, and the trade is ≥ ${{ plan.band.min_trade_usd }}.
+    SGD values are for reporting only; targets, trades and the plan are in USD. Uses last closes; plan built {{ h.plan_created_at }}.</p>
+</section>
+{% endif %}
+{% endblock %}

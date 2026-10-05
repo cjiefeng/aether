@@ -9,7 +9,7 @@ GITLEAKS := docker run --rm -v "$(CURDIR):/repo" -w /repo $(GITLEAKS_IMAGE)
 PIP_AUDIT := pip-audit==2.9.0
 
 .PHONY: help down logs ps dev-image lock test lint fmt typecheck eval migrate backup \
-        secrets-scan smoke facts hooks record-cassette
+        secrets-scan smoke facts hooks record-cassette hash-password record-options
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1 | sort | xargs
@@ -55,6 +55,7 @@ lint:
 	  $(UV) ruff format --check .; \
 	  $(UV) mypy; \
 	  $(UV) python scripts/check_no_safe.py src; \
+	  $(UV) python scripts/check_broker_readonly.py src; \
 	  uv export --frozen --no-emit-project --format requirements-txt -o /tmp/req.txt >/dev/null; \
 	  uvx $(PIP_AUDIT) --strict --require-hashes --disable-pip -r /tmp/req.txt'
 
@@ -63,6 +64,14 @@ eval:
 
 facts:
 	$(DEV) $(UV) python -m aether.facts render
+
+# Prompts for the dashboard password; prints AETHER_DASHBOARD_PASSWORD_HASH + AETHER_SESSION_SECRET.
+hash-password:
+	$(DC) run --rm dev $(UV) python -m aether.security.auth hash
+
+# Record one real option chain for tests (network): make record-options SYMBOL=IONQ
+record-options:
+	$(DEV) $(UV) python scripts/record_options_fixture.py "$(SYMBOL)"
 
 record-cassette:
 	$(DEV) $(UV) python scripts/record_cassette.py "$(NAME)" "$(URL)" --user-agent "$(or $(UA),aether-cassette-recorder)" $(if $(GZIP),--gzip,)

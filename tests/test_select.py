@@ -9,20 +9,18 @@ from aether.portfolio.select import Candidate, choose, qualify
 
 QTUM = {"volatility": 0.30, "max_drawdown": 0.25}
 SAFE = ProfileParams(
-    min_qtum=0.8,
-    max_per_name=0.05,
+    qtum_weight=0.75,
+    max_per_name=0.10,
     vol_limit_x=1.15,
     max_dd_limit_pp=5,
     rank_metric="cvar95_low",
-    qtum_grid=(0.8,),
 )
 AGGR = ProfileParams(
-    min_qtum=0.0,
+    qtum_weight=0.15,
     max_per_name=0.35,
     vol_limit_x=None,
     max_dd_limit_pp=None,
     rank_metric="sortino_high",
-    qtum_grid=(0.0,),
 )
 
 

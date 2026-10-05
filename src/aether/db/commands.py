@@ -18,7 +18,18 @@ from aether.db.types import to_iso, utcnow_iso
 
 # Allow-list of command kinds the dashboard may request. Extended per milestone.
 ALLOWED_KINDS = frozenset(
-    {"ping", "refresh_prices", "refresh_edgar", "test_alert", "recompute_strategies"}
+    {
+        "ping",
+        "refresh_prices",
+        "refresh_edgar",
+        "test_alert",
+        "recompute_strategies",
+        # M5: owner data (holdings, portfolio settings) and the Tiger sync.
+        "update_holdings",
+        "update_portfolio_settings",
+        "sync_holdings",
+        "publish_targets",
+    }
 )
 
 

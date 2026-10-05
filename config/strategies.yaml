@@ -18,28 +18,53 @@ backtest:
   # Sessions per year for annualising.
   annualization: 252
 
-# Universe: QTUM + the pure-plays. No cash or T-bill sleeve: a safer profile means more QTUM.
-# Sleeve weight that per-name caps can't place goes to QTUM.
-# Risk limits are relative to QTUM's own out-of-sample result (null = no limit, shown only).
+# Universe: QTUM + the pure-plays. No cash or T-bill sleeve (spec §1.4): the family-fund sleeve
+# stays fully invested. Risk appetite is the FIXED QTUM weight per profile, set by the owner; the
+# backtest picks only the sleeve method. Sleeve weight the per-name caps can't place goes to QTUM.
+# The mandate accepts a 100% drawdown, so volatility/drawdown limits are null (shown, not
+# enforced). Set a number to enforce one, relative to QTUM's out-of-sample result.
 profiles:
   safe:
-    min_qtum: 0.80
-    max_per_name: 0.05
-    vol_limit_x: 1.15       # annualised volatility <= 1.15 x QTUM's
-    max_dd_limit_pp: 5      # max drawdown <= QTUM's + 5 percentage points
+    qtum_weight: 0.75
+    max_per_name: 0.10
+    vol_limit_x: null       # e.g. 1.15 = annualised volatility <= 1.15 x QTUM's
+    max_dd_limit_pp: null   # e.g. 5 = max drawdown <= QTUM's + 5 percentage points
     rank_metric: cvar95_low
-    qtum_grid: [0.80, 0.90]
   medium:
-    min_qtum: 0.50
-    max_per_name: 0.15
-    vol_limit_x: 1.6
-    max_dd_limit_pp: 15
+    qtum_weight: 0.45
+    max_per_name: 0.20
+    vol_limit_x: null
+    max_dd_limit_pp: null
     rank_metric: sortino_high
-    qtum_grid: [0.50, 0.65, 0.80]
   aggressive:
-    min_qtum: 0.0
+    qtum_weight: 0.15
     max_per_name: 0.35
     vol_limit_x: null
     max_dd_limit_pp: null
     rank_metric: sortino_high
-    qtum_grid: [0.0, 0.25, 0.50]
+
+# Rebalance planner (spec §6.6, M5). A holding trades only if its drift is >= 3 pp or >= 25% of
+# its target weight, and the trade is at least min_trade_usd.
+rebalance:
+  drift_abs: 0.03
+  drift_rel: 0.25
+  min_trade_usd: 100
+
+# Targets are published monthly (1st, 10:30 SGT) or when the owner presses "Publish targets now".
+publish:
+  # An event at or above this materiality on a pure-play sends an off-cycle review alert.
+  off_cycle_min_materiality: 4
+
+# Research overlay, layer 1: filing hard rules (spec §6.6.1). Each sets the name's weight to 0:
+# - going concern in the latest 10-K/10-Q;
+# - an 8-K Item 3.01 whose text is a listing-DEFICIENCY notice (voluntary exchange transfers
+#   don't count), for compliance_notice_days;
+# - a Form 25/25-NSE/15-12B/15-12G covering the COMMON STOCK (warrant, unit and note delistings
+#   don't count) once the stock has stopped trading for delisted_stale_sessions QTUM sessions.
+# Freed weight goes to the other pure-plays within caps, then QTUM. (8-K Item 5.01 only alerts.)
+overlay:
+  enabled: true
+  compliance_notice_days: 180
+  delisted_stale_sessions: 10
+  # Accession numbers you've reviewed and cleared (e.g. a Form 25 for an exchange transfer).
+  cleared_accessions: []
