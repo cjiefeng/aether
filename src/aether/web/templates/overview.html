@@ -81,6 +81,11 @@
   {% include "_flags.html" %}
 </section>
 
+<section class="card">
+  <div class="card-head"><h2>Catalysts and earnings, next 12 months</h2><a href="/catalysts">All catalysts</a></div>
+  {% with rows = catalysts, mark = false %}{% include "_catalyst_rows.html" %}{% endwith %}
+</section>
+
 {% if drift %}
 <section class="card">
   <div class="card-head"><h2>Position drift vs the {{ drift.profile }} profile</h2><a href="/holdings">Holdings</a></div>

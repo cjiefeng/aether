@@ -21,6 +21,8 @@ from sqlalchemy import Engine, delete, select, update
 
 from aether.alerts.dispatch import enqueue_test_alert, run_alerts
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
+from aether.catalysts.mark import CatalystMark, apply_mark
+from aether.catalysts.sync import refresh_catalysts
 from aether.classify.pipeline import (
     classifier_context,
     has_classifier_work,
@@ -30,6 +32,7 @@ from aether.classify.pipeline import (
 from aether.config import (
     Settings,
     load_alerts_config,
+    load_catalysts_config,
     load_llm_config,
     load_options_config,
     load_rubric,
@@ -47,6 +50,7 @@ from aether.ingest.fx import ingest_fx
 from aether.ingest.news_rss import ingest_news_rss
 from aether.ingest.prices import ingest_prices
 from aether.ingest.qtum_holdings import ingest_qtum_holdings
+from aether.ingest.short_interest import ingest_short_interest
 from aether.llm.client import LlmClient, LlmDisabled
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
@@ -62,9 +66,15 @@ from aether.portfolio.publish import publish_targets, run_rebalance, sgt_today
 from aether.portfolio.tiger_sync import sync_holdings
 from aether.providers.dividends import FallbackDividends, MassiveDividends, YFinanceDividends
 from aether.providers.edgar import EdgarClient
+from aether.providers.finra import FinraShortInterest
 from aether.providers.fx import EcbFx, FallbackFx, YFinanceFx
 from aether.providers.options import YFinanceOptions
-from aether.providers.prices import FailoverPriceProvider, MassiveProvider, YFinanceProvider
+from aether.providers.prices import (
+    US_EASTERN,
+    FailoverPriceProvider,
+    MassiveProvider,
+    YFinanceProvider,
+)
 from aether.providers.rss import RssClient
 from aether.providers.tiger import TigerConfig, TigerReadOnly
 from aether.research.runner import backfill_state, poll_backfill, run_sweep, submit_backfill
@@ -78,6 +88,7 @@ log = logging.getLogger(__name__)
 TZ = "Asia/Singapore"
 HEARTBEAT_MINUTES = 10
 ALERTS_MINUTES = 10
+CATALYSTS_MINUTES = 30
 INBOUND_POLL_SECONDS = 30
 
 
@@ -296,6 +307,12 @@ def _catch_up(engine: Engine, job: str, delay: timedelta = timedelta(0)) -> dict
     return {}
 
 
+def short_interest_job(engine: Engine, settings: Settings) -> JobResult:
+    return ingest_short_interest(
+        engine, FinraShortInterest(), load_rubric(settings.config_dir).short_interest
+    )
+
+
 def has_pending_commands(engine: Engine) -> bool:
     with engine.connect() as conn:
         return (
@@ -342,6 +359,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     def run_edgar() -> None:
         with edgar_lock:
             run_job(engine, "edgar", lambda: edgar_job(engine, settings))
+        run_catalysts()
 
     def refresh_edgar(_args: dict[str, Any]) -> dict[str, Any]:
         if not edgar_lock.acquire(blocking=False):
@@ -350,6 +368,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             result = run_job(engine, "edgar", lambda: edgar_job(engine, settings))
         finally:
             edgar_lock.release()
+        run_catalysts()
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
 
     # Dividends then backtests (M4), daily 07:10 SGT after prices. The command shares the lock.
@@ -475,6 +494,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                 run_job(engine, "classify", lambda: run_classify(engine, llm, ctx))
         finally:
             classify_lock.release()
+        run_catalysts()
 
     def run_news_rss() -> None:
         run_job(engine, "news_rss", lambda: news_rss_job(engine, settings))
@@ -535,8 +555,35 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             )
         run_classifier()
 
+    # Catalysts (M8): DB-only sync + deterministic resolution. Every 30 minutes and after the
+    # earnings, EDGAR and classifier runs; a job_runs row only when something changed (or failed).
+    catalysts_lock = threading.Lock()
+
+    def run_catalysts() -> None:
+        with catalysts_lock:
+            try:
+                cfg = load_catalysts_config(settings.config_dir)
+                summary = refresh_catalysts(engine, cfg, datetime.now(US_EASTERN).date())
+            except Exception as exc:
+                err = repr(exc)[:500]
+                log.exception("catalysts refresh failed")
+
+                def _fail() -> JobResult:
+                    raise RuntimeError(err)
+
+                run_job(engine, "catalysts", _fail)
+                return
+            if summary.changed:
+                run_job(engine, "catalysts", lambda: JobResult(rows_written=summary.changed))
+
+    def mark_catalyst(args: dict[str, Any]) -> dict[str, Any]:
+        args.pop("_command_id", None)
+        with catalysts_lock:
+            return apply_mark(engine, CatalystMark.model_validate(args))
+
     handlers = {
         **COMMAND_HANDLERS,
+        "mark_catalyst": mark_catalyst,
         "research_sweep": research_sweep_command,
         "refresh_prices": refresh_prices,
         "refresh_edgar": refresh_edgar,
@@ -598,8 +645,13 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         id="edgar_session_night",
     )
     sched.add_job(run_edgar, "cron", hour="9,17", minute=0, id="edgar_daytime")
+
+    def run_earnings_calendar() -> None:
+        run_job(engine, "earnings_calendar", lambda: earnings_calendar_job(engine))
+        run_catalysts()
+
     sched.add_job(
-        wrap("earnings_calendar", lambda: earnings_calendar_job(engine)),
+        run_earnings_calendar,
         "cron",
         hour=7,
         minute=15,
@@ -617,6 +669,23 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     )
     if tiger is not None:
         sched.add_job(run_tiger_sync, "cron", hour=7, minute=5, id="tiger_sync")
+    # Catalysts (M8): every 30 min, first run shortly after start.
+    sched.add_job(
+        run_catalysts,
+        "interval",
+        minutes=CATALYSTS_MINUTES,
+        id="catalysts",
+        next_run_time=datetime.now(ZoneInfo(TZ)) + timedelta(seconds=30),
+    )
+    # FINRA short interest (M8): daily check 07:20 SGT; new files arrive about twice a month.
+    sched.add_job(
+        wrap("short_interest", lambda: short_interest_job(engine, settings)),
+        "cron",
+        hour=7,
+        minute=20,
+        id="short_interest",
+        **_catch_up(engine, "short_interest", PORTFOLIO_CATCH_UP_DELAY),
+    )
     # Options snapshot (06:40) and USD/SGD (06:50), M5; research/reporting only.
     sched.add_job(
         wrap("options", lambda: options_job(engine, settings)),
@@ -649,6 +718,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                     load_rubric(settings.config_dir).risk_flags,
                     today=sgt_today(),
                     telegram=on,
+                    short_rule=load_rubric(settings.config_dir).short_interest,
                 ),
             )
 

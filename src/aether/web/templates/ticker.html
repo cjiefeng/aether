@@ -40,6 +40,44 @@
 </section>
 {% endif %}
 
+<section class="card">
+  <div class="card-head"><h2>Catalysts</h2><a href="/catalysts">All catalysts</a></div>
+  {% with rows = catalysts, mark = false %}{% include "_catalyst_rows.html" %}{% endwith %}
+  {% if catalysts_done %}
+  <h3>Resolved</h3>
+  {% with rows = catalysts_done, mark = false %}{% include "_catalyst_done.html" %}{% endwith %}
+  {% endif %}
+</section>
+
+{% if options %}{% include "_options_panel.html" %}{% endif %}
+
+{% if s.type in ("etf", "pure_play") %}
+<section class="card">
+  <h2>Short interest (FINRA)</h2>
+  {% if short_interest %}
+  <table class="num compact">
+    <thead><tr><th>Settlement</th><th>Short shares</th><th>% of shares outstanding</th><th>Change</th><th>Days to cover</th><th>Shares outstanding (as of)</th></tr></thead>
+    <tbody>
+    {% for r in short_interest %}
+      <tr>
+        <td>{{ r.source_url|extlink(r.settlement_date) }}</td>
+        <td>{{ r.short_shares|intc }}</td>
+        <td>{{ "%.1f"|format(r.pct_shares_out) ~ "%" if r.pct_shares_out is not none else "—" }}</td>
+        <td>{{ "%+.1f"|format(r.change_pp) ~ " pp" if r.change_pp is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(r.days_to_cover) if r.days_to_cover is not none else "—" }}</td>
+        <td>{% if r.shares_out %}{{ r.shares_out|intc }} ({{ r.shares_out_as_of }}){% else %}<span class="muted small">no XBRL share count</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">FINRA bi-weekly short interest. FINRA publishes no float, so the percentage is of shares outstanding
+    (SEC XBRL cover page), which understates short % of float.</p>
+  {% else %}
+  <p class="muted">No short-interest data yet.</p>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if sec %}
 {% if sec.fresh.edgar_stale %}
 <p class="banner stale">{% if sec.fresh.edgar_last_ok %}SEC filings stale since {{ sec.fresh.edgar_last_ok }}.{% else %}No successful EDGAR run yet.{% endif %}</p>

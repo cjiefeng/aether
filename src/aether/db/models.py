@@ -6,8 +6,8 @@ VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
 events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance, M6: news +
-research, M7: classifier state + eval runs). Keep this file and `migrations/versions/*` in sync
-(a test compares them).
+research, M7: classifier state + eval runs, M8: catalysts + short interest). Keep this file and
+`migrations/versions/*` in sync (a test compares them).
 """
 
 from __future__ import annotations
@@ -430,6 +430,8 @@ EVENT_CATEGORIES = (
     "delisting_or_compliance",
 )
 TRUST_TIERS = ("T1", "T2", "T3")
+# M8 adds `finra` (short-interest spike rule events from FINRA's bi-weekly short-interest files).
+EVENT_ORIGINS = ("rss", "edgar", "web_search", "manual", "finra")
 
 
 def _in_ck(col: str, values: tuple[str, ...], name: str | None = None) -> CheckConstraint:
@@ -458,7 +460,7 @@ events = Table(
     Column("raw", Text, nullable=False, server_default="{}"),
     Column("created_at", Text, nullable=False),
     _in_ck("trust_tier", TRUST_TIERS),
-    _in_ck("origin", ("rss", "edgar", "web_search", "manual")),
+    _in_ck("origin", EVENT_ORIGINS),
     CheckConstraint("independent_source_count >= 1", name="independent_source_count"),
     _excerpt_ck(),
     _bool_ck("injection_suspected"),
@@ -493,7 +495,8 @@ event_sources = Table(
     _excerpt_ck(),
     _bool_ck("syndicated"),
     CheckConstraint(
-        "origin IS NULL OR origin IN ('rss','edgar','web_search','manual')", name="origin"
+        "origin IS NULL OR origin IN (" + ",".join(f"'{o}'" for o in EVENT_ORIGINS) + ")",
+        name="origin",
     ),
     sqlite_strict=True,
     sqlite_with_rowid=False,
@@ -914,5 +917,97 @@ eval_runs = Table(
     _bool_ck("passed"),
     _json_ck("metrics"),
     Index(None, "prompt_version"),
+    sqlite_strict=True,
+)
+
+
+# --------------------------------------------------------------------------- M8: catalysts
+
+CATALYST_ORIGINS = ("seed", "earnings", "lockup")
+CATALYST_KINDS = ("roadmap", "program", "earnings", "lockup", "regulatory")
+CATALYST_STATUSES = ("upcoming", "hit", "slipped", "cancelled")
+CATALYST_RESOLUTIONS = ("event", "date", "window_passed", "owner", "rescheduled")
+
+# Dated catalysts (spec §1 item 3, §6.1 "catalyst position"). `key` is the natural key per origin:
+# `seed:<id>` (config/catalysts_seed.yaml), `earnings:<SYM>:<date>` (earnings_calendar),
+# `lockup:<accession>` (lockups). Resolution is deterministic (catalysts/resolve.py) or the owner's.
+catalysts = Table(
+    "catalysts",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("key", Text, nullable=False, unique=True),
+    Column("origin", Text, nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol")),  # NULL = theme-wide
+    Column("title", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("window_start", Text, nullable=False),
+    Column("window_end", Text),  # NULL = no stated end (never auto-slips)
+    Column("status", Text, nullable=False, server_default="upcoming"),
+    Column("fact_id", Text, ForeignKey("facts.id")),
+    Column("source_url", Text),
+    Column("keywords", Text, nullable=False, server_default="[]"),
+    Column("resolve_categories", Text, nullable=False, server_default="[]"),
+    Column("resolved_by_event_id", Integer, ForeignKey("events.id", ondelete="SET NULL")),
+    Column("resolution", Text),
+    Column("resolved_at", Text),
+    Column("note", Text),
+    Column("updated_at", Text, nullable=False),
+    _in_ck("origin", CATALYST_ORIGINS),
+    _in_ck("kind", CATALYST_KINDS),
+    _in_ck("status", CATALYST_STATUSES),
+    CheckConstraint(
+        "resolution IS NULL OR resolution IN ("
+        + ",".join(f"'{r}'" for r in CATALYST_RESOLUTIONS)
+        + ")",
+        name="resolution",
+    ),
+    CheckConstraint("(status = 'upcoming') = (resolution IS NULL)", name="resolved"),
+    _date_ck("window_start"),
+    _date_ck("window_end", nullable=True),
+    CheckConstraint("window_end IS NULL OR window_start <= window_end", name="window"),
+    CheckConstraint("note IS NULL OR length(note) <= 200", name="note_len"),
+    _json_ck("keywords"),
+    _json_ck("resolve_categories"),
+    Index(None, "status", "window_start"),
+    Index(None, "symbol"),
+    sqlite_strict=True,
+)
+
+# FINRA bi-weekly short interest (spec §4, §6.1). `pct_shares_out` = short shares ÷ shares
+# outstanding (XBRL dei:EntityCommonStockSharesOutstanding): FINRA publishes no float figure.
+short_interest = Table(
+    "short_interest",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("settlement_date", Text, nullable=False),
+    Column("short_shares", Integer, nullable=False),
+    Column("prev_short_shares", Integer),
+    Column("avg_daily_volume", Integer),
+    Column("days_to_cover", REAL),
+    Column("shares_out", Integer),
+    Column("shares_out_as_of", Text),
+    Column("pct_shares_out", REAL),
+    Column("source", Text, nullable=False, server_default="finra"),
+    Column("source_url", Text, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("symbol", "settlement_date"),
+    CheckConstraint("short_shares >= 0", name="short_shares"),
+    CheckConstraint("shares_out IS NULL OR shares_out > 0", name="shares_out"),
+    _in_ck("source", ("finra", "synthetic")),
+    _date_ck("settlement_date"),
+    _date_ck("shares_out_as_of", nullable=True),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# One row per FINRA file fetched, so each file is downloaded once.
+short_interest_files = Table(
+    "short_interest_files",
+    metadata,
+    Column("settlement_date", Text, primary_key=True),
+    Column("url", Text, nullable=False),
+    Column("rows", Integer, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    _date_ck("settlement_date"),
     sqlite_strict=True,
 )

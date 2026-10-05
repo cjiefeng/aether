@@ -223,11 +223,56 @@
       .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
   }
 
+  // ------------------------------------------------------------------ catalysts timeline (M8)
+
+  function setupCatalysts(el) {
+    var chart = init(el);
+    getJSON(el.dataset.src)
+      .then(function (body) {
+        if (body.items.length === 0) {
+          message(el, "No upcoming catalysts.");
+          return;
+        }
+        var t = theme();
+        var symbols = [];
+        body.items.forEach(function (it) {
+          if (symbols.indexOf(it.symbol) < 0) symbols.push(it.symbol);
+        });
+        var kinds = [];
+        body.items.forEach(function (it) {
+          if (kinds.indexOf(it.kind) < 0) kinds.push(it.kind);
+        });
+        var opt = baseOption(t);
+        opt.grid = { left: 64, right: 16, top: 36, bottom: 32 };
+        opt.tooltip.trigger = "item";
+        opt.tooltip.formatter = function (p) {
+          var it = p.data.item;
+          return it.start + (it.end && it.end !== it.start ? " to " + it.end : "") + "\n" +
+            it.symbol + ": " + it.title;
+        };
+        opt.xAxis = Object.assign({ type: "time" }, axisStyle(t), { splitLine: { show: false } });
+        opt.yAxis = Object.assign({ type: "category", data: symbols, inverse: true }, axisStyle(t));
+        opt.series = kinds.map(function (k) {
+          return {
+            name: k,
+            type: "scatter",
+            symbolSize: 12,
+            data: body.items.filter(function (it) { return it.kind === k; }).map(function (it) {
+              return { value: [it.start, it.symbol], item: it };
+            }),
+          };
+        });
+        chart.setOption(opt, true);
+      })
+      .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
+  }
+
   function start() {
     if (typeof echarts === "undefined") return;
     document.querySelectorAll('[data-chart="overview"]').forEach(setupOverview);
     document.querySelectorAll('[data-chart="ticker"]').forEach(setupTicker);
     document.querySelectorAll('[data-chart="dilution"]').forEach(setupDilution);
+    document.querySelectorAll('[data-chart="catalysts"]').forEach(setupCatalysts);
     document.querySelectorAll('[data-chart="strategy-equity"]').forEach(function (el) {
       setupStrategy(el, "equity");
     });

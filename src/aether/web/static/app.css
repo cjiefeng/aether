@@ -120,6 +120,7 @@ thead th { color: var(--muted); font-weight: 500; font-size: var(--fs-sm); white
 tbody th { color: var(--muted); font-weight: 500; }
 tbody tr:last-child > * { border-bottom: 0; }
 table.num td, table.num th { white-space: nowrap; }
+table.num td .reason { white-space: normal; display: inline-block; max-width: 18rem; text-align: left; }
 table.compact { width: auto; }
 tr.group th { color: var(--fg); font-weight: 600; padding-top: var(--s4); }
 tbody + tbody tr.group th { padding-top: var(--s5); }

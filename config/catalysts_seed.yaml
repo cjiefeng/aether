@@ -1,0 +1,80 @@
+# Catalyst seeds (spec §1 item 3, §11 M8). Identifiers, dates, fact ids and source URLs only:
+# every date comes from the linked fact in config/facts.yaml (shown with its status badge).
+# Earnings dates (earnings_calendar) and lock-ups (lockups) become catalysts automatically.
+#
+# Resolution (catalysts/resolve.py, deterministic): a non-quarantined classified event in one of
+# `resolve_categories`, at or above `rules.min_materiality` after trust-tier caps, published in
+# [window_start - lead_days, window_end + grace_days], naming one of `keywords`, on the catalyst's
+# ticker or on no ticker (a theme item). roadmap_hit → hit, roadmap_slip → slipped; for
+# qbi_stage_change the event's direction decides (+1 hit, -1 slipped). No end date = never slips
+# by the clock. The owner can mark any catalyst on the Catalysts page.
+
+rules:
+  min_materiality: 3
+  lead_days: 90
+  grace_days: 90
+  earnings_match_days: 3
+  lockup_lookahead_days: 365
+
+catalysts:
+  # IBM roadmap (context ticker; theme catalysts). Calendar-year windows from the roadmap year.
+  - id: ibm_kookaburra
+    symbol: IBM
+    title: "IBM Kookaburra (roadmap year 2026)"
+    kind: roadmap
+    window_start: "2026-01-01"
+    window_end: "2026-12-31"
+    fact_id: ibm_roadmap_ftqc
+    source_url: https://ibm.com/quantum/blog/large-scale-ftqc
+    keywords: [Kookaburra]
+    resolve_categories: [roadmap_hit, roadmap_slip]
+  - id: ibm_cockatoo
+    symbol: IBM
+    title: "IBM Cockatoo (roadmap year 2027)"
+    kind: roadmap
+    window_start: "2027-01-01"
+    window_end: "2027-12-31"
+    fact_id: ibm_roadmap_ftqc
+    source_url: https://ibm.com/quantum/blog/large-scale-ftqc
+    keywords: [Cockatoo]
+    resolve_categories: [roadmap_hit, roadmap_slip]
+  - id: ibm_starling
+    symbol: IBM
+    title: "IBM Starling, 200 logical qubits (roadmap year 2029)"
+    kind: roadmap
+    window_start: "2029-01-01"
+    window_end: "2029-12-31"
+    fact_id: ibm_roadmap_ftqc
+    source_url: https://ibm.com/quantum/blog/large-scale-ftqc
+    keywords: [Starling]
+    resolve_categories: [roadmap_hit, roadmap_slip]
+
+  # DARPA QBI Stage C decision for the Stage B members on the watchlist. No end date (none stated).
+  - id: qbi_stage_c_ionq
+    symbol: IONQ
+    title: "DARPA QBI Stage C decision (Stage B is yearlong from Nov 2025)"
+    kind: program
+    window_start: "2026-11-06"
+    fact_id: darpa_qbi_stage_b_duration
+    source_url: https://darpa.mil/research/programs/quantum-benchmarking-initiative/stage-b-selection
+    keywords: [Stage C, QBI, Quantum Benchmarking Initiative]
+    resolve_categories: [qbi_stage_change]
+  - id: qbi_stage_c_qnt
+    symbol: QNT
+    title: "DARPA QBI Stage C decision (Stage B is yearlong from Nov 2025)"
+    kind: program
+    window_start: "2026-11-06"
+    fact_id: darpa_qbi_stage_b_duration
+    source_url: https://darpa.mil/research/programs/quantum-benchmarking-initiative/stage-b-selection
+    keywords: [Stage C, QBI, Quantum Benchmarking Initiative]
+    resolve_categories: [qbi_stage_change]
+
+  # QNT IPO lock-up (424B4). Resolved by the date passing.
+  - id: qnt_ipo_lockup
+    symbol: QNT
+    title: "QNT IPO lock-up ends (180 days after the 2026-06-03 prospectus)"
+    kind: lockup
+    window_start: "2026-11-30"
+    window_end: "2026-11-30"
+    fact_id: qnt_lockup_expiry
+    source_url: https://www.sec.gov/Archives/edgar/data/2110105/000162828026041003/quantinuum-424b4.htm

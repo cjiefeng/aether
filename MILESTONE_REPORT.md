@@ -1,5 +1,100 @@
 # Milestone report
 
+## M8: Catalysts + market structure (2026-10-05)
+
+Dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. **$0 LLM**: nothing in M8 calls a model, and no options metric reaches targets or sizing.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| A test event resolves a catalyst | ✅ | `tests/test_catalysts.py::test_test_event_resolves_catalyst_citing_it`: a synthetic ACME `roadmap_hit` event naming the seed keyword → `hit`, `resolved_by_event_id` = the event, cited in the note. The same file checks that quarantined, low-materiality, keyword-missing, other-company and too-early events don't resolve; slips by event and by window; earnings hit by an 8-K 2.02; a rescheduled earnings date → `cancelled`; lock-ups resolve by date; owner marks stick. |
+| Short-interest spike rule fires on a fixture | ✅ | `tests/test_short_interest.py::test_spike_rule_fires_on_rise_once_and_is_idempotent` (+6 pp → one RISK event, T1, origin `finra`, idempotent on re-run) and `test_crossing_the_level_fires_but_staying_above_does_not`. The recorded real FINRA files (2026-08-31, 2026-09-15, filtered to the universe) parse and ingest in `test_recorded_files_*`. |
+| Options metrics match hand-computed values on a recorded chain fixture | ✅ | `tests/test_options_analytics.py::test_skew_matches_hand_computation_on_recorded_chain`: on the real IONQ chain recorded 2026-10-04, the 30-day 25-delta skew is recomputed in the test from named strikes (put 39/40 and call 50/55 on 2026-10-30; put 38/40 and call 50/55 on 2026-11-06) with an independent Black-Scholes delta and interpolation; it matches to 2e-6. The straddle move is checked by hand from the 44-strike call and put. |
+| Implied move uses the first expiry after a synthetic catalyst | ✅ | `test_implied_move_matches_straddle_by_hand_and_uses_first_expiry_after`: catalyst 2026-10-31 → 2026-11-06 (not 10-30 or 11-20); a catalyst on an expiry day takes the next one. `test_implied_move_needs_the_true_first_listed_expiry`: if the true first listed expiry wasn't fetched, the move is null with a reason. |
+| A thin chain is flagged, not reported | ✅ | `test_thin_chain_is_flagged_not_reported`: ATM IV, term, skew and implied moves are all null, with `quality.thin` set. The ticker page shows "Thin chain: not reported." and no numbers (`tests/test_web_catalysts.py::test_ticker_page_panels`). |
+| No options metric reaches `profile_targets` | ✅ | `test_no_options_metric_reaches_profile_targets`: publishing, writing wild options snapshots for every symbol, then publishing again gives byte-identical weights and input hashes. Statically, nothing under `portfolio/` reads options data. |
+| Tests green, no network | ✅ | `make test`: 520 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 116 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0009_catalysts`** (hand-written, STRICT):
+  - `catalysts` (natural `key` per origin: seed / earnings / lock-up; status and resolution CHECKs; fact and event links);
+  - `short_interest` (WITHOUT ROWID) and `short_interest_files`;
+  - `events` and `event_sources` rebuilt for the new `finra` origin.
+  - **Migrations now run with foreign keys off**, followed by `PRAGMA foreign_key_check`. With them on, rebuilding `events` would have cascade-deleted its children. Tested on a populated DB: every child row survives.
+- **Catalysts (`catalysts/`, `config/catalysts_seed.yaml`)**:
+  - Seeds, each linked to a fact: IBM Kookaburra/Cockatoo/Starling (`ibm_roadmap_ftqc`); DARPA QBI Stage C for IONQ and QNT (new fact `darpa_qbi_stage_b_duration`, window from 2026-11-06 with no end); the QNT lock-up on 2026-11-30 (`qnt_lockup_expiry`).
+  - Earnings dates and prospectus lock-ups are added automatically.
+  - Deterministic resolution (see the README); the strict loader rejects unknown fact ids, symbols and keys, and the worker checks the seed file at startup.
+  - The `mark_catalyst` CSRF'd command (hit / slipped / cancelled / reopen, optional event id and note).
+  - Job every 30 minutes and after the EDGAR, earnings and classifier runs; a `job_runs` row only when something changed.
+- **Short interest (`providers/finra.py`, `ingest/short_interest.py`)**:
+  - FINRA bi-weekly files, 12-month backfill; settlement dates step back over weekends.
+  - Percentage of shares outstanding from XBRL.
+  - The `finra_short_interest_spike` rule (≥ 5 pp rise or crossing above 25%, materiality 3) and a matching open flag.
+  - Daily 07:20 SGT. `make record-short-interest` records fixtures.
+- **Options analytics (`options/analytics.py`)**:
+  - 30-day 25-delta skew;
+  - implied moves into catalysts (the chooser now also fetches the first expiry after each catalyst, and every listed expiry is recorded);
+  - volume vs the 20-snapshot median;
+  - IV rank and percentile over Aether's own 252 snapshots.
+- **Dashboard**:
+  - `/catalysts`: timeline chart, upcoming list with fact-status badges and a Mark form, hit/slip record; Catalysts in the nav.
+  - Overview: catalysts and earnings for the next 12 months.
+  - Ticker page: catalysts, the short-interest table and the options panel.
+  - `/feed`: FINRA events.
+- **Review pack**: catalysts for the next 90 days and the options panel per name. The Telegram text gets one line per name (IV30, rank or "building history", the next implied move) plus catalyst dates with an [unconfirmed] label for facts that aren't signed off. Still no holdings.
+
+### Decisions (deviations from the spec / plan)
+1. **Short % is of shares outstanding, not float** (plan decision 1). FINRA publishes no float, and no free T1 source does. The column is `pct_shares_out` and every label says so. QNT shows no percentage, because its XBRL share count isn't a single company-wide figure (dual class), and QTUM is an ETF.
+2. **Spike thresholds** (plan decision 2): ≥ 5 pp rise or crossing above 25%, materiality 3, T1, direction −1. It fires on the crossing, not at every report above the level. Spikes found in backfilled files are dated by settlement date, so they never alert; live files are dated when Aether first sees them.
+3. **New event origin `finra`** (plan decision 3), with the migration change above.
+4. **QBI Stage C has no end date** (plan decision 4), so it never slips on the clock. Only an event or your mark resolves it.
+5. **IBM roadmap catalysts sit on the context ticker `IBM`.** News isn't tagged with IBM, so for context tickers the keyword alone ties an event to the catalyst. For watchlist names the event must also be on that ticker, or on no ticker.
+6. **qbi_stage_change resolves by direction**: +1 → hit (selected), −1 → slipped (not selected).
+7. **Earnings whose date passes with no 8-K stay `upcoming`** and show "no result yet". They aren't marked slipped, because a late 8-K is common.
+8. **Options stay on yfinance.** Tiger option quotes still need a paid permission (M5 finding).
+9. **Implied moves use only catalysts with a known end date within `max_days`.** Year-long roadmap windows and open-ended QBI windows get none.
+
+### Facts
+- **Added `darpa_qbi_stage_b_duration`** (`verified_by_claude`): DARPA's Stage B page calls Stage B "yearlong" and gives no Stage C date. It's checked against darpa.mil and `FACTS.md` is regenerated.
+- No other facts changed.
+
+### Open questions
+- **Stage C timing:** when DARPA will announce Stage C invitations (carried on the new fact).
+- **QNT short % of shares:** needs a class-aware share count (Class A + B from the 10-Q cover page). Today it shows the share count and days to cover only.
+- **Weekend snapshots:** the live check ran on a US Sunday. Most ATM straddles failed the quality gates (stale or one-sided quotes), so most implied moves were null with that reason; QNT's lock-up move (±34.1%) passed. Weekday 06:40 SGT snapshots should fill in more of them.
+- **QTUM options:** its 30-day ATM IV is null ("beyond the last usable expiry (11 days)"): the QTUM chain is thin beyond the front month, as in M5.
+- **FINRA terms:** the files are published for non-commercial use, and Aether keeps only the rows for its own six symbols.
+
+### Live check (isolated compose project `aether-m8` on 127.0.0.1:8090, its own volume and image tag; Anthropic, Telegram, Tiger and Massive blanked; your SEC user agent passed so EDGAR could supply share counts; a throwaway password; torn down afterwards, and your `aether` stack kept running throughout)
+- The worker migrated a fresh DB to `0009_catalysts`. EDGAR, earnings, prices, strategies, options and fx all came back `ok`.
+- **Short interest:** 113 rows across 23 settlement dates (2025-10-15 → 2026-09-15). At 2026-09-15: IONQ 10.6%, QBTS 18.4%, RGTI 18.7%, INFQ 9.3% of shares outstanding; QNT and QTUM had no percentage. One backfilled spike: INFQ at 2026-06-30 (+6.3 pp, 10.0%), dated by settlement, so no alert.
+- **Catalysts:** 11 rows: 6 seeds plus 5 earnings dates (IONQ 11-04, QBTS 11-05, QNT 11-09, RGTI 11-10, INFQ 11-12).
+- **Options:** 30-day skew for IONQ −10.9, QBTS −6.8 and RGTI −8.3 points. QNT implied move into its lock-up: ±34.1% (2027-01-15 expiry). The other implied moves were null with reasons (see open questions).
+- **Browser:**
+  - `/catalysts` timeline and table rendered; a Mark (IBM Starling → cancelled) went through the command queue and the worker applied it (`resolution = owner`).
+  - The QNT ticker page showed the catalysts, short interest and options panel.
+  - `/feed?category=short_interest_spike` showed the FINRA event.
+  - No console or CSP errors.
+- The review pack built on the live data is plain text with no `$`, and every catalyst line names its ticker (fixed during the check: the two QBI lines looked identical).
+
+### Owner checklist
+- [ ] Review `config/catalysts_seed.yaml` (seeds, keywords, the 90-day lead/grace, materiality ≥ 3) and the `short_interest` section of `config/rubric.yaml` (5 pp / 25% / materiality 3).
+- [ ] Review the new fact `darpa_qbi_stage_b_duration` on `/facts` and sign it off if you agree (edit `facts.yaml`).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0009_catalysts` (migrations 0002–0009 if your stack is still on 0001). The 12-month FINRA backfill (~24 files of ~3 MB) runs about 5 minutes after start.
+- [ ] Still open from earlier milestones: `DAILY_LLM_BUDGET_USD`, `MASSIVE_API_KEY`, the Telegram bot setup and the facts not yet signed off.
+
+### How to verify
+```bash
+make test            # 520 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/catalysts and a ticker page
+```
+
 ## M7: Classifier (2026-10-05)
 
 Every news and research item is now classified as SIGNAL, NOISE or RISK. The pipeline (spec §5.2) is: deterministic rules first, then Claude Sonnet 5.5 with **no tools** and strict JSON validation, then trust-tier caps in code. Injection attempts are quarantined. The Feed page and `make eval` are new. EDGAR filings keep their M2 rules.

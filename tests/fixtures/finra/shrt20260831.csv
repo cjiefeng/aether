@@ -1,0 +1,7 @@
+accountingYearMonthNumber|symbolCode|issueName|issuerServicesGroupExchangeCode|marketClassCode|currentShortPositionQuantity|previousShortPositionQuantity|stockSplitFlag|averageDailyVolumeQuantity|daysToCoverQuantity|revisionFlag|changePercent|changePreviousNumber|settlementDate
+20260831|INFQ|Infleqtion, Inc.|A|NYSE|24304462|21879142||9107006|2.67||11.09|2425320|2026-08-31
+20260831|IONQ|IonQ, Inc.|A|NYSE|41053368|42363766||18088211|2.27||-3.09|-1310398|2026-08-31
+20260831|QBTS|D-Wave Quantum Inc. Common Sto|R|NNM|71469896|66952892||15725136|4.54||6.75|4517004|2026-08-31
+20260831|QNT|Quantinuum Inc. Class A Common|R|NNM|2876958|2723095||1278259|2.25||5.65|153863|2026-08-31
+20260831|QTUM|Defiance Quantum ETF|R|NNM|559553|1041778||304194|1.84||-46.29|-482225|2026-08-31
+20260831|RGTI|Rigetti Computing, Inc. Common|R|SC|58908223|58969224||15931291|3.70||-0.10|-61001|2026-08-31

@@ -4,8 +4,9 @@ On the 1st at 10:30 SGT (retried once on the 2nd if it failed): publish targets 
 the plan, then build one pack and queue one Telegram message (dedupe key `review_pack:YYYY-MM`).
 
 M5 sections: the selected profile's published targets with each adjustment chain, the rebalance
-plan, drift, value in USD and SGD, open risk flags, upcoming earnings and lock-ups. Later
-milestones add options (M8), stances (M10) and universe proposals (M12).
+plan, drift, value in USD and SGD, open risk flags, upcoming earnings and lock-ups. M8 adds the
+upcoming catalysts and the options panel per name (research only). Later milestones add stances
+(M10) and universe proposals (M12).
 
 Holdings never leave the machine (§1.3): the Telegram text carries target weights, flags, dates
 and the number of suggested trades only. No share counts, dollar values or account number.
@@ -21,17 +22,20 @@ from sqlalchemy import Engine, select
 
 from aether.alerts.candidates import AlertCandidate
 from aether.alerts.dispatch import enqueue
-from aether.config import RiskFlagParams, StrategiesConfig
+from aether.config import RiskFlagParams, ShortInterestRule, StrategiesConfig
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import (
+    catalysts,
     earnings_calendar,
+    facts,
     fx_rates,
     lockups,
     rebalance_plans,
     review_packs,
 )
 from aether.db.types import utcnow_iso
+from aether.options.view import options_panel
 from aether.portfolio.holdings import load_holdings, load_settings, universe_symbols
 from aether.portfolio.job import canon
 from aether.portfolio.overlay import chain_text
@@ -43,6 +47,36 @@ from aether.runs import JobResult
 MAX_TELEGRAM = 4096
 UPCOMING_DAYS = 45
 LOCKUP_DAYS = 90
+CATALYST_DAYS = 90
+
+
+def upcoming_catalysts(
+    engine: Engine, today: date, days: int = CATALYST_DAYS
+) -> list[dict[str, Any]]:
+    """Upcoming catalysts whose window starts within `days` (or has started and not ended)."""
+    t = today.isoformat()
+    horizon = (today + timedelta(days=days)).isoformat()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(
+                catalysts.c.id,
+                catalysts.c.symbol,
+                catalysts.c.title,
+                catalysts.c.kind,
+                catalysts.c.window_start,
+                catalysts.c.window_end,
+                catalysts.c.fact_id,
+                facts.c.status.label("fact_status"),
+            )
+            .outerjoin(facts, facts.c.id == catalysts.c.fact_id)
+            .where(
+                catalysts.c.status == "upcoming",
+                catalysts.c.window_start <= horizon,
+                (catalysts.c.window_end.is_(None)) | (catalysts.c.window_end >= t),
+            )
+            .order_by(catalysts.c.window_start, catalysts.c.symbol, catalysts.c.id)
+        ).all()
+    return [dict(r._mapping) for r in rows]
 
 
 def latest_fx(engine: Engine) -> tuple[str, float] | None:
@@ -86,7 +120,12 @@ def _upcoming(engine: Engine, symbols: list[str], today: date) -> dict[str, list
     return {"earnings": earnings, "lockups": locks}
 
 
-def build_pack(engine: Engine, flags_params: RiskFlagParams, today: date) -> dict[str, Any]:
+def build_pack(
+    engine: Engine,
+    flags_params: RiskFlagParams,
+    today: date,
+    short_rule: ShortInterestRule | None = None,
+) -> dict[str, Any]:
     settings = load_settings(engine)
     profile = settings.selected_profile
     with engine.connect() as conn:
@@ -114,7 +153,7 @@ def build_pack(engine: Engine, flags_params: RiskFlagParams, today: date) -> dic
         }
     flags = [
         {"symbol": f.symbol, "kind": f.kind, "detail": f.detail, "as_of": f.as_of}
-        for f in open_flags(engine, flags_params, today, pure)
+        for f in open_flags(engine, flags_params, today, pure, short_rule)
     ]
     return {
         "as_of": today.isoformat(),
@@ -134,6 +173,8 @@ def build_pack(engine: Engine, flags_params: RiskFlagParams, today: date) -> dic
         "value": value,
         "flags": flags,
         "upcoming": _upcoming(engine, universe, today),
+        "catalysts": upcoming_catalysts(engine, today),
+        "options": options_panel(engine, universe),
     }
 
 
@@ -172,8 +213,48 @@ def telegram_text(pack: dict[str, Any]) -> str:
         lines += ["", "Upcoming:"]
         lines += [f"- {e['date']} {e['symbol']} earnings" for e in up["earnings"]]
         lines += [f"- {e['date']} {e['symbol']} lock-up ends" for e in up["lockups"]]
+    cats = pack.get("catalysts") or []
+    if cats:
+        lines += ["", "Catalysts (next 90 days):"]
+        for c in cats:
+            when = c["window_start"]
+            if c["window_end"] != c["window_start"]:
+                when += f" to {c['window_end']}" if c["window_end"] else " onwards"
+            label = "" if c["fact_status"] in (None, "signed_off") else " [unconfirmed]"
+            sym = c.get("symbol")
+            who = f"{sym}: " if sym and not c["title"].startswith(sym) else ""
+            lines.append(f"- {when} {who}{c['title']}{label}")
+    opts = pack.get("options") or []
+    if opts:
+        lines += ["", "Options (research only, never trades):"]
+        lines += [options_line(o) for o in opts]
     lines += ["", "Full pack: /review. Not financial advice."]
     return fit(lines)
+
+
+def _pct(v: float | None) -> str:
+    return "n/a" if v is None else f"{v * 100:.0f}%"
+
+
+def options_line(o: dict[str, Any]) -> str:
+    """One plain line per name: IV30, IV rank, the next implied move. Percentages only."""
+    sym = o["symbol"]
+    if o.get("d") is None:
+        return f"- {sym}: no snapshot yet"
+    if o["thin"]:
+        return f"- {sym}: thin chain, not reported"
+    rank = (
+        f"rank {_pct(o['iv_rank'])}"
+        if o.get("iv_rank") is not None
+        else f"rank: building history ({o.get('iv_history_days') or 0} days)"
+    )
+    parts = [f"- {sym}: IV30 {_pct(o['atm_iv_30'])}, {rank}"]
+    move = next((m for m in o.get("implied_moves", []) if m.get("move") is not None), None)
+    if move:
+        parts.append(
+            f"implied move ±{move['move'] * 100:.1f}% into {move['date']} ({move['label']})"
+        )
+    return "; ".join(parts)
 
 
 def fit(lines: list[str], limit: int = MAX_TELEGRAM) -> str:
@@ -208,6 +289,7 @@ def monthly_review(
     flags_params: RiskFlagParams,
     *,
     today: date,
+    short_rule: ShortInterestRule | None = None,
     telegram: bool,
     now: datetime | None = None,
 ) -> JobResult:
@@ -219,7 +301,7 @@ def monthly_review(
         published = publish_targets(engine, config, today=today, trigger="monthly")
         if published.warning and published.rows_written == 0:
             raise RuntimeError(published.warning)
-        pack = build_pack(engine, flags_params, today)
+        pack = build_pack(engine, flags_params, today, short_rule)
         text = telegram_text(pack)
     except Exception as exc:
         with write_tx(engine) as conn:

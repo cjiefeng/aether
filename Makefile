@@ -10,7 +10,7 @@ PIP_AUDIT := pip-audit==2.9.0
 
 .PHONY: help down logs ps dev-image lock test lint fmt typecheck eval migrate backup \
         secrets-scan smoke facts hooks record-cassette hash-password record-options \
-        golden-candidates
+        golden-candidates record-short-interest
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1 | sort | xargs
@@ -83,6 +83,11 @@ hash-password:
 # Record one real option chain for tests (network): make record-options SYMBOL=IONQ
 record-options:
 	$(DEV) $(UV) python scripts/record_options_fixture.py "$(SYMBOL)"
+
+# Record real FINRA short-interest files, filtered to the universe (network):
+# make record-short-interest DATES="2026-08-29 2026-09-15"
+record-short-interest:
+	$(DEV) $(UV) python scripts/record_short_interest_fixture.py $(DATES)
 
 record-cassette:
 	$(DEV) $(UV) python scripts/record_cassette.py "$(NAME)" "$(URL)" --user-agent "$(or $(UA),aether-cassette-recorder)" $(if $(GZIP),--gzip,)

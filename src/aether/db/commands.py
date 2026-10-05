@@ -31,6 +31,8 @@ ALLOWED_KINDS = frozenset(
         "publish_targets",
         # M6: an on-demand research sweep (LLM spend; budget-guarded in the worker).
         "research_sweep",
+        # M8: the owner marks a catalyst hit / slipped / cancelled, or reopens it.
+        "mark_catalyst",
     }
 )
 
