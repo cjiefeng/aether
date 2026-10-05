@@ -31,7 +31,7 @@
 
 <section class="card">
   <h2>Settings</h2>
-  <form class="form-row" hx-post="/commands/portfolio-settings" hx-target="#settings-result" hx-swap="innerHTML">
+  <form class="form-row" hx-disabled-elt="find button[type=submit]" hx-post="/commands/portfolio-settings" hx-target="#settings-result" hx-swap="innerHTML">
     <div><label for="selected_profile">Risk profile</label>
       <select id="selected_profile" name="selected_profile">
         {% for p in profiles %}<option value="{{ p }}"{{ " selected" if p == s.selected_profile }}>{{ p|capitalize }}</option>{% endfor %}
@@ -51,14 +51,14 @@
         <option value="manual"{{ " selected" if not tiger_mode }}>Manual entry</option>
         <option value="tiger"{{ " selected" if tiger_mode }}>Tiger Brokers (read-only sync)</option>
       </select></div>
-    <div><button type="submit">Save settings</button><span id="settings-result" class="result"></span></div>
+    <div><button type="submit">Save settings</button><span id="settings-result" class="result" role="status"></span></div>
   </form>
 </section>
 
 {% if tiger_mode %}
 <section class="card">
   <div class="card-head"><h2>Tiger Brokers</h2>
-    <span><button hx-post="/commands/sync-holdings" hx-target="#sync-result" hx-swap="innerHTML">Sync from Tiger</button><span id="sync-result" class="result"></span></span></div>
+    <span><button hx-disabled-elt="this" hx-post="/commands/sync-holdings" hx-target="#sync-result" hx-swap="innerHTML">Sync from Tiger</button><span id="sync-result" class="result" role="status"></span></span></div>
   {% if h.tiger %}
   <ul class="small">
     <li>Account {{ h.tiger.account_masked or "—" }}; last successful sync {{ h.tiger.last_ok or "never" }}.</li>
@@ -72,7 +72,7 @@
 
 <section class="card">
   <h2>Your holdings</h2>
-  <form hx-post="/commands/update-holdings" hx-target="#holdings-result" hx-swap="innerHTML">
+  <form hx-disabled-elt="find button[type=submit]" hx-post="/commands/update-holdings" hx-target="#holdings-result" hx-swap="innerHTML">
     <table class="num">
       <thead><tr><th>Symbol</th><th>Shares</th><th>Avg cost / share (USD, optional)</th><th>Last close</th><th>Value</th><th>Source</th></tr></thead>
       <tbody>
@@ -99,7 +99,7 @@
         </tr>
       </tbody>
     </table>
-    <p><button type="submit">Save holdings</button><span id="holdings-result" class="result"></span></p>
+    <p><button type="submit">Save holdings</button><span id="holdings-result" class="result" role="status"></span></p>
     <p class="muted small">Only QTUM, the pure-plays and USD cash. Saving queues an update for the worker (CSRF-protected, rate-limited);
       {% if tiger_mode %}in Tiger mode only the cash is saved here.{% else %}an empty or zero row removes that position.{% endif %}
       Holdings stay on this machine and never go into an LLM prompt.</p>
@@ -132,9 +132,9 @@
     {% for e in h.off_cycle %}<li>#{{ e.id }} {{ e.symbol }} · {{ e.category|replace("_", " ") }} (materiality {{ e.materiality }}) · {{ e.published_at[:10] }} · {{ e.title }}</li>{% endfor %}
   </ul>
   {% else %}<p class="muted small">No material events on pure-plays since the last publish.</p>{% endif %}
-  <form class="form-row" hx-post="/commands/publish-targets" hx-target="#publish-result" hx-swap="innerHTML">
+  <form class="form-row" hx-disabled-elt="find button[type=submit]" hx-post="/commands/publish-targets" hx-target="#publish-result" hx-swap="innerHTML">
     {% if h.off_cycle %}<input type="hidden" name="trigger_event_id" value="{{ h.off_cycle[0].id }}">{% endif %}
-    <div><button type="submit">Publish targets now</button><span id="publish-result" class="result"></span></div>
+    <div><button type="submit">Publish targets now</button><span id="publish-result" class="result" role="status"></span></div>
   </form>
   <p class="muted small">Re-runs the overlay on the latest backtest and publishes immediately{% if h.off_cycle %}, citing event #{{ h.off_cycle[0].id }}{% endif %}. Otherwise targets publish on the 1st (10:30 SGT).</p>
 </section>

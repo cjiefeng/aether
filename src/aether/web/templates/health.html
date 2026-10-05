@@ -43,7 +43,7 @@
 <section class="card">
   <h2>Command queue</h2>
   <p>Queues a harmless <code>ping</code> for the worker (CSRF-protected, rate-limited).</p>
-  <button hx-post="/commands/ping" hx-target="#ping-result" hx-swap="innerHTML">Send ping</button>
-  <span id="ping-result"></span>
+  <button hx-disabled-elt="this" hx-post="/commands/ping" hx-target="#ping-result" hx-swap="innerHTML">Send ping</button>
+  <span id="ping-result" class="result" role="status"></span>
 </section>
 {% endblock %}

@@ -139,7 +139,7 @@
 <section class="card">
   <h2>Recompute</h2>
   <p class="muted">Fetch dividends and rerun the backtests now (CSRF-protected, rate-limited). Identical inputs give an identical result.</p>
-  <button hx-post="/commands/recompute-strategies" hx-target="#recompute-result" hx-swap="innerHTML">Recompute</button>
-  <span id="recompute-result"></span>
+  <button hx-disabled-elt="this" hx-post="/commands/recompute-strategies" hx-target="#recompute-result" hx-swap="innerHTML">Recompute</button>
+  <span id="recompute-result" class="result" role="status"></span>
 </section>
 {% endblock %}

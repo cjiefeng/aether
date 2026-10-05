@@ -102,8 +102,12 @@
       group.addEventListener("click", function (ev) {
         var btn = ev.target.closest("button[data-range]");
         if (!btn) return;
-        group.querySelectorAll("button").forEach(function (b) { b.classList.remove("active"); });
+        group.querySelectorAll("button").forEach(function (b) {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
         btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
         renderOverview(el, chart, btn.dataset.range);
       });
     }
