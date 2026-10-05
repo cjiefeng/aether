@@ -135,6 +135,6 @@
   <p class="muted">Queue an immediate fetch (CSRF-protected, rate-limited).</p>
   <button hx-disabled-elt="this" hx-post="/commands/refresh-prices" hx-target="#refresh-result" hx-swap="innerHTML">Refresh prices</button>
   <button hx-disabled-elt="this" hx-post="/commands/refresh-edgar" hx-target="#refresh-result" hx-swap="innerHTML">Refresh SEC filings</button>
-  <span id="refresh-result" class="result" role="status"></span>
+  <span id="refresh-result" class="result" role="status">{% with status = active_command_status(request, "refresh_prices", "refresh_edgar") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span>
 </section>
 {% endblock %}

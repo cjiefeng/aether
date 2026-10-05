@@ -22,6 +22,7 @@ from aether.security.auth import AuthConfig, AuthMiddleware, LoginLimiter
 from aether.security.csrf import CSRFMiddleware, CSRFSigner
 from aether.security.headers import SecurityHeadersMiddleware
 from aether.security.sanitize import register_filters
+from aether.web import command_view
 from aether.web.routes import router
 
 WEB_DIR = Path(__file__).parent
@@ -75,6 +76,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.auth = auth
     app.state.login_limiter = LoginLimiter()
     app.state.templates = make_templates()
+    # Page loads render any in-progress command next to its button (issue #18).
+    app.state.templates.env.globals["active_command_status"] = lambda request, *kinds: (
+        command_view.active_status(request.app.state.ro_engine, *kinds)
+    )
 
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")

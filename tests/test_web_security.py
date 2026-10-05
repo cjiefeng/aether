@@ -92,7 +92,7 @@ def test_command_with_valid_token_is_queued(client: TestClient) -> None:
         },
     )
     assert r.status_code == 202
-    assert "Queued command #1" in r.text
+    assert "Command #1" in r.text and "Ping requested" in r.text
 
 
 def test_command_rate_limit(client: TestClient) -> None:
