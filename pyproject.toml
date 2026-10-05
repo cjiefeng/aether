@@ -20,6 +20,7 @@ dependencies = [
     "yfinance>=1.7",
     "numpy>=2.0",
     "tigeropen>=3.3",
+    "anthropic>=1.0",
 ]
 
 [dependency-groups]

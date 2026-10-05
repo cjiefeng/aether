@@ -103,3 +103,60 @@ def test_m5_alert_rebuild_keeps_rows_and_strict(tmp_path) -> None:  # type: igno
             )
         )
     eng.dispose()
+
+
+def test_m6_rebuilds_keep_rows_strict_and_without_rowid(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """0007 rebuilds event_sources (WITHOUT ROWID), llm_calls and alerts without losing rows."""
+    from aether.db.engine import ensure_db_file, make_rw_engine
+
+    path = tmp_path / "m6.db"
+    ensure_db_file(path)
+    migrate.upgrade(path, "0006_holdings")
+    eng = make_rw_engine(path)
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO events (url_hash, title, url, source_domain, trust_tier, published_at,"
+                " origin, created_at) VALUES (x'01', 'ACME 8-K', 'https://www.sec.gov/acme',"
+                " 'sec.gov', 'T1', '2026-01-01T00:00:00Z', 'edgar', '2026-01-01T00:00:00Z')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO event_sources (event_id, url, domain, trust_tier)"
+                " VALUES (1, 'https://www.sec.gov/acme', 'sec.gov', 'T1')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO llm_calls (purpose, model, cost_micros, created_at)"
+                " VALUES ('x', 'claude-opus-5-5', 1234, '2026-01-01T00:00:00Z')"
+            )
+        )
+    migrate.upgrade(path)
+    with eng.begin() as conn:
+        src = conn.execute(text("SELECT url, syndicated, origin FROM event_sources")).one()
+        assert tuple(src) == ("https://www.sec.gov/acme", 0, None)
+        call = conn.execute(text("SELECT cost_micros, status, batch FROM llm_calls")).one()
+        assert tuple(call) == (1234, "ok", 0)
+        flags = dict(
+            conn.execute(
+                text(
+                    "SELECT name, strict || wr FROM pragma_table_list "
+                    "WHERE name IN ('event_sources','llm_calls','alerts')"
+                )
+            ).all()
+        )
+        assert flags == {"event_sources": "11", "llm_calls": "10", "alerts": "10"}
+        with pytest.raises(IntegrityError):
+            conn.execute(text("UPDATE event_sources SET excerpt = printf('%.601c', 'x')"))
+    with pytest.raises(IntegrityError), eng.begin() as conn:
+        conn.execute(text("UPDATE llm_calls SET status = 'maybe'"))
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO alerts (kind, channel, status, text, created_at, dedupe_key) "
+                "VALUES ('llm_budget','dashboard','dashboard_only','t','x','k3')"
+            )
+        )
+    eng.dispose()

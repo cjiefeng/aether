@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from aether import market, sec_view
+from aether import market, news_view, sec_view
 from aether.alerts import view as alerts_view
 from aether.config import PROFILES, load_rubric
 from aether.db import health
@@ -135,6 +135,34 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             "n_bars": len(series),
             "sec": sec,
             "code_labels": sec_view.CODE_LABELS,
+            "news": news_view.news_rows(engine, symbol=symbol, limit=10)
+            if type_ in ("etf", "pure_play")
+            else [],
+            "origin_labels": news_view.ORIGIN_LABELS,
+        },
+    )
+
+
+@router.get("/news", response_class=HTMLResponse)
+def news_page(request: Request, symbol: str = "", origin: str = "") -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    known = [s for s, t in market.load_tickers(engine) if t in ("etf", "pure_play")]
+    sym = symbol if symbol in known else None
+    org = origin if origin in news_view.NEWS_ORIGINS else None
+    return _render(
+        request,
+        "news.html",
+        {
+            "rows": news_view.news_rows(engine, symbol=sym, origin=org),
+            "symbols": known,
+            "symbol": sym or "",
+            "origin": org or "",
+            "origin_labels": news_view.ORIGIN_LABELS,
+            "spend": news_view.llm_spend(engine, request.app.state.settings.daily_llm_budget_usd),
+            "runs": news_view.research_runs_rows(engine),
+            "backfill": news_view.backfill_summary(engine),
+            "feeds": news_view.feeds(engine),
+            "stale": news_view.rss_stale(engine),
         },
     )
 
@@ -351,6 +379,11 @@ def command_refresh_prices(request: Request) -> Response:
 @router.post("/commands/refresh-edgar")
 def command_refresh_edgar(request: Request) -> Response:
     return _enqueue(request, "refresh_edgar")
+
+
+@router.post("/commands/research-sweep")
+def command_research_sweep(request: Request) -> Response:
+    return _enqueue(request, "research_sweep")
 
 
 @router.post("/commands/test-alert")

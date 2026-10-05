@@ -66,3 +66,5 @@ input.num { width: 9rem; text-align: right; }
 .result { margin-left: .5rem; font-size: 13px; }
 .htmx-request button { opacity: .6; }
 tr.sell td:first-child, tr.buy td:first-child { font-weight: 600; }
+.badge.tier-t1 { color: var(--ok); border-color: var(--ok); }
+.badge.tier-t3 { color: var(--warn-fg); border-color: var(--warn-fg); }

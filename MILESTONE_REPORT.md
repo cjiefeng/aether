@@ -1,5 +1,102 @@
 # Milestone report
 
+## M6: News & research ingest (2026-10-05)
+
+Phase 2 starts. It adds RSS news, Claude web-search research runs (a twice-daily sweep plus a one-time 12-month backfill through the Message Batches API) and the one LLM wrapper with the soft budget guard. Everything lands as **unclassified, untrusted** events; classification is M7.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| 3 syndicated copies → 1 event with independent count 1 | ✅ | `tests/test_news_dedupe.py::test_three_syndicated_copies_are_one_event_with_independent_count_one`: the same headline and body on two sites plus a wire copy → 1 event, 3 `event_sources` rows (2 marked syndicated), independent count 1. `test_independent_outlets_count_separately`: three different outlets → 3, a same-domain copy adds nothing. |
+| Budget breach stops calls | ✅ | `tests/test_llm_client.py::test_budget_breach_stops_calls`: spent + worst case > `DAILY_LLM_BUDGET_USD` → `BudgetExceeded`, **zero HTTP requests**, a `budget_refused` row. `test_budget_counts_worst_case_estimate` (refused even when spend alone fits); `tests/test_research.py::test_sweep_stops_on_budget_and_keeps_partial` (the sweep stops at the next name and keeps what it got). |
+| Excerpts ≤ 600 chars | ✅ | 500 enforced in code (`clip_excerpt`), DB CHECK at 600 on `events` and now `event_sources`. `test_excerpt_capped` (an 8,000-char body), `tests/test_rss.py::test_recorded_feeds_ingest` (every excerpt from five real recorded feeds). Live: longest excerpt 499. |
+| Tests green, no network | ✅ | `make test`: 429 passed. The real `anthropic` SDK runs against an in-process `httpx2.MockTransport`; RSS replays five feeds recorded 2026-10-05. |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 98 files, `check_llm_imports: ok`, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks. The test key is a synthetic non-key string. |
+
+### What was built
+- **Schema `0007_news`** (hand-written, STRICT):
+  - New `feed_state` (conditional-GET state per feed) and `research_runs` (kind, ticker, window, status, model, batch/custom id, results, new events, cost, audit payload).
+  - `event_sources` rebuilt (STRICT, WITHOUT ROWID kept) with title, date, excerpt, title/excerpt simhash, `syndicated` and origin. EDGAR rows survive (tested).
+  - `llm_calls` rebuilt with status (`ok/error/budget_refused`), `batch`, cache-write tokens, request id, research run and error.
+  - The `llm_budget` alert kind; indexes on `events(simhash)` and `(source_domain, published_at)`.
+- **LLM wrapper (`llm/client.py`, `llm/pricing.py`, `config/llm.yaml`)**:
+  - The only `anthropic` importer (`scripts/check_llm_imports.py` in `make lint`).
+  - Calls are refused for an unpriced model, or when tools are set outside `research*` purposes (and research may use only web search).
+  - The budget guard sums today's (SGT) synchronous `llm_calls` plus a worst-case estimate.
+  - The system prompt is cached. `fallbacks: "default"` handles refusals on synchronous calls, and a fallback is priced per iteration model.
+  - One `llm_calls` row per attempt, written after the response. The key is scrubbed from errors; the SDK and HTTP loggers stay at WARNING.
+  - An 80% alert, once per SGT day, comes from the alerts job.
+- **RSS (`providers/rss.py`, `ingest/news_rss.py`, job `news_rss` hourly)**:
+  - stdlib XML with DTDs rejected; RSS 2.0 and Atom.
+  - https only, a 5 MB cap, robots.txt, conditional GET.
+  - IR feeds are pinned to their ticker. Press feeds keep alias, ticker or theme-keyword items only.
+- **Shared writer (`ingest/news_events.py`)**:
+  - canonical URLs; 64-bit simhash on the normalized headline (publisher suffix stripped); a 7-day merge window at ≤3 bits;
+  - syndication detected by wire/mirror domain or the same excerpt;
+  - independent count = distinct registrable domains among non-syndicated sources;
+  - best tier wins, and the earliest report dates the story.
+- **Research (`research/runner.py`)**:
+  - Prompts hold the ticker, the company name and the window only; the system prompt carries the S1 notice.
+  - **Events come only from `web_search_result` blocks.** The excerpt is a verbatim `cited_text`. The date comes from `page_age`, else the retrieval time flagged "found". Results dated outside the window are dropped. The model's text is kept in `research_runs.payload` for audit only.
+  - **Sweep** 08:00/20:00 SGT, plus **Run research sweep now** (CSRF'd `research_sweep` command).
+  - **Backfill**: one batch, submitted once ~2 min after start, polled every 15 min, idempotent. Failed or stale submissions are retried. It's excluded from the daily budget.
+- **Dashboard**:
+  - `/news`: items with tier badges, independent/syndicated counts, ticker/origin filters, LLM spend vs budget, backfill status, feed health, sweep history.
+  - A "Recent news" card on the QTUM and pure-play ticker pages, and a News nav link.
+  - No inline script or style. `DAILY_LLM_BUDGET_USD` is passed to `app` for display only.
+- **Config**:
+  - `sources.yaml`: company domains as T1 (ionq, rigetti, quantinuum, dwavequantum, dwavesys, infleqtion), five feeds, syndicators, theme keywords.
+  - `watchlist.yaml`: one company-name alias per name.
+  - `RESEARCH_MODEL` and `RESEARCH_BACKFILL` go to the worker only.
+
+### Decisions (deviations from the spec / plan)
+1. **Your calls (2026-10-05):**
+   - the official `anthropic` SDK (1.11.0) is added;
+   - research uses `claude-opus-5-5`;
+   - **the backfill runs automatically with no cap**, so it sits outside the daily soft budget and only the Console limit caps it;
+   - RSS keeps watchlist + theme items only.
+2. **Opus sweep cost.** Two sweeps a day × 6 names come to roughly $1.5–2/day, which leaves about $1 of the $3 soft budget for M7 classification. M7 will need a higher budget or a cheaper research model; I'll raise it in the M7 plan.
+3. **Batch spend isn't counted in "today"** for the soft budget, so the backfill can't block that day's sweeps. It's shown separately on `/news`.
+4. **robots.txt unreachable → the feed is still read.** Rigetti's and Quantinuum's IR hosts time out on robots.txt but serve their feeds; an explicit `Disallow` is always honoured. A published feed is an invitation to subscribe; it isn't scraping.
+5. **No feedparser and no Public Suffix List.** The stdlib parser rejects DTDs, as the ECB parser does. Registrable domains use a small multi-part suffix list.
+6. **Direct web search (`allowed_callers: ["direct"]`)**, not dynamic filtering, so the raw result blocks come back to build events from.
+7. **Worst-case budget estimate:** prompt chars ÷ 3 at the cache-write rate, plus 3k + 6k input tokens per allowed search, plus `max_tokens` output, plus every search. It's deliberately pessimistic, so the guard refuses early rather than late.
+8. **Date-only `page_age` values are stored at 12:00 UTC.** Undated results get the retrieval time and a "found" badge.
+
+### Facts
+- No facts changed. No new facts were seeded: news items are evidence, not facts.
+
+### Open questions
+- **Bot-walled feeds:** `investors.ionq.com`, `ir.dwavesys.com` and `hpcwire.com/feed/` answer 403 to non-browser clients. IonQ and D-Wave are covered by EDGAR 8-Ks and research only. If you know other official feeds for them, add them to `sources.yaml`.
+- **The T2 list is short** (three outlets). Research is allow-listed to T1+T2, so the backfill only finds what those domains published. Widening the allow-list is your call.
+- **`page_age` precision** varies (sometimes relative, sometimes just a month). The reaction engine (M9) should treat research-dated items with care.
+- **Research and backfill weren't exercised live**: there was no API key in the test stack. The first deploy with a key will run the backfill; check `/news` → Backfill afterwards.
+
+### Live check (isolated compose project `aether-m6` on 127.0.0.1:8090, its own volume and image tag; Anthropic, Telegram, Tiger and SEC blanked; your stack wasn't touched)
+- Migration `0007_news` applied on a fresh DB. `news_rss` came back `ok` with 31 rows. Rigetti, Quantinuum and Infleqtion kept 10/10 each, Quantum Computing Report 1/10 (a D-Wave item, tagged QBTS) and The Quantum Insider 0/10 (none of its current items named a watchlist company or theme keyword).
+- All items were T1/T2 with no syndicated duplicates in this sample; the longest excerpt was 499 chars.
+- Worker log: "research disabled: ANTHROPIC_API_KEY is not set". No backfill was submitted.
+- Browser, logged in: `/news` rendered spend ($0.00 of $3.00), feed health and items. **Run research sweep now** → command `done` with "ANTHROPIC_API_KEY is not set". No console or CSP errors. `curl /news` without a session → 303.
+- The stack and its volume were removed afterwards.
+
+### Owner checklist
+- [ ] **Before deploying, decide about the backfill.** With `ANTHROPIC_API_KEY` in `.env`, the worker submits the 12-month backfill (~$10–15 with Opus, no cap) about 2 minutes after start. Set `RESEARCH_BACKFILL=false` if you want to hold it.
+- [ ] Make sure the **Console workspace spend limit** is set (S3). It's the only hard cap on the backfill.
+- [ ] Review `config/llm.yaml` (prices, effort `low`, 5 searches per call, the 3-day sweep window, 12 months) and `config/sources.yaml` (T1 company domains, feeds, syndicators, theme keywords).
+- [ ] Consider raising `DAILY_LLM_BUDGET_USD` before M7 (decision 2).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0007_news`; RSS fills `/news` within a minute.
+- [ ] Still open: `MASSIVE_API_KEY`, the Telegram bot setup, and the three facts not yet signed off.
+
+### How to verify
+```bash
+make test            # 429 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/news
+```
+
 ## M5: Password, holdings & rebalance (2026-10-05)
 
 Phase 1b is complete. $0 LLM: every number is computed in code, and nothing calls a model. Built against the amended spec (PR #10: family-fund sleeve mandate, monthly targets, research overlay, options snapshots, review pack).

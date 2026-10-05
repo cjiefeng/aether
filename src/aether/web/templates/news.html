@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}News · Aether{% endblock %}
+{% block content %}
+<h1>News &amp; research</h1>
+{% if stale %}<p class="banner stale">{{ stale }}</p>{% endif %}
+<p class="muted small">Company releases and industry press from RSS, and reports found by Claude web-search research runs.
+  Everything here is <strong>untrusted and unclassified</strong> until the M7 classifier. Syndicated copies (press-release
+  wires, mirrors, the same body text) are merged into one item and don't count as independent sources.
+  Tiers: T1 = SEC or the company's own site, T2 = allow-listed industry press, T3 = anything else.</p>
+
+<div class="grid2">
+<section class="card">
+  <h2>LLM spend</h2>
+  <p>Today (SGT): <strong>${{ "%.2f"|format(spend.today) }}</strong> of the ${{ "%.2f"|format(spend.budget) }} soft budget
+    ({{ spend.pct }}%){% if spend.pct >= 100 %} <span class="bad">calls stopped until tomorrow</span>{% elif spend.pct >= 80 %} <span class="warn">over 80%</span>{% endif %}.
+    {{ spend.calls_today }} call{{ "" if spend.calls_today == 1 else "s" }}{% if spend.refused_today %}, {{ spend.refused_today }} refused by the budget guard{% endif %}.</p>
+  <p class="muted small">Backfill batches (all time): ${{ "%.2f"|format(spend.batch_total) }}, outside the daily soft budget.
+    The hard cap is the monthly spend limit on the Anthropic Console workspace.</p>
+  <button hx-post="/commands/research-sweep" hx-target="#sweep-result" hx-swap="innerHTML">Run research sweep now</button>
+  <span id="sweep-result" class="result"></span>
+</section>
+
+<section class="card">
+  <h2>Backfill</h2>
+  {% if backfill %}
+    <p>{{ backfill.total }} requests (names × months){% if backfill.batch_id %}, batch <code>{{ backfill.batch_id }}</code>{% endif %}:
+      {% for k, v in backfill.by_status.items() %}{{ v }} {{ k }}{% if not loop.last %}, {% endif %}{% endfor %}.
+      {{ backfill.events_new }} new items, ${{ "%.2f"|format(backfill.cost) }}.</p>
+  {% else %}
+    <p class="muted">Not submitted. It runs once, automatically, after the worker starts with an API key.</p>
+  {% endif %}
+  <h3>Feeds</h3>
+  {% if feeds %}
+  <table class="small">
+    <thead><tr><th>Feed</th><th>Last fetch</th><th>Status</th><th>Kept / seen</th></tr></thead>
+    <tbody>
+    {% for f in feeds %}
+      <tr>
+        <td>{{ f.feed_id }}</td>
+        <td class="nowrap">{{ f.last_fetched_at or "never" }}</td>
+        <td>{% if f.last_status in (200, 304) %}<span class="ok">{{ f.last_status }}</span>{% else %}<span class="bad">{{ f.last_status or "error" }}</span>{% endif %}
+          {% if f.last_error %}<span class="muted small">{{ f.last_error }}</span>{% endif %}</td>
+        <td>{{ f.items_kept }} / {{ f.items_seen }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No feed fetched yet.</p>{% endif %}
+</section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Items</h2>
+    <form class="form-row" method="get" action="/news">
+      <label>Ticker <select name="symbol"><option value="">all</option>
+        {% for s in symbols %}<option value="{{ s }}"{% if s == symbol %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+      <label>Via <select name="origin"><option value="">all</option>
+        {% for k, v in origin_labels.items() %}<option value="{{ k }}"{% if k == origin %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+      <button type="submit">Filter</button>
+    </form>
+  </div>
+  {% include "_news_rows.html" %}
+</section>
+
+<section class="card">
+  <h2>Research sweeps</h2>
+  {% if runs %}
+  <table class="small">
+    <thead><tr><th>Started</th><th>Ticker</th><th>Window</th><th>Status</th><th>Results</th><th>New items</th><th>Cost</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr>
+        <td class="nowrap">{{ r.created_at }}</td><td>{{ r.symbol }}</td><td class="nowrap">{{ r.window }}</td>
+        <td>{% if r.status == "done" %}<span class="ok">done</span>{% else %}<span class="bad">{{ r.status|replace("_", " ") }}</span>{% endif %}
+          {% if r.error %}<span class="muted small">{{ r.error }}</span>{% endif %}</td>
+        <td>{{ r.items_found }}</td><td>{{ r.events_new }}</td><td>${{ "%.3f"|format(r.cost) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No research sweeps yet (twice a day at 08:00 and 20:00 SGT when an API key is set).</p>{% endif %}
+</section>
+{% endblock %}

@@ -6,6 +6,7 @@ commentary cannot sneak into config (and from there into prompts).
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
@@ -34,6 +35,11 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     classifier_model: str | None = Field(default=None, validation_alias="CLASSIFIER_MODEL")
     synth_model: str | None = Field(default=None, validation_alias="SYNTH_MODEL")
+    # M6: web-search research runs (the only tool-enabled calls). Owner decision 2026-10-05: Opus.
+    research_model: str = Field(default="claude-opus-5-5", validation_alias="RESEARCH_MODEL")
+    # M6: the one-time 12-month backfill (Message Batches) runs automatically once an API key is
+    # set; this switch exists so an isolated test stack can turn it off.
+    research_backfill: bool = Field(default=True, validation_alias="RESEARCH_BACKFILL")
     daily_llm_budget_usd: Decimal = Field(
         default=Decimal("3.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
@@ -84,6 +90,22 @@ class Settings(BaseSettings):
         # docker compose passes unset vars as "" — treat them as absent.
         return None if v == "" else v
 
+    @field_validator("research_model", "research_backfill", mode="before")
+    @classmethod
+    def _empty_is_default(cls, v: object, info: ValidationInfo) -> object:
+        # docker compose passes unset vars as "": fall back to the field default.
+        if v == "":
+            assert info.field_name is not None
+            return cls.model_fields[info.field_name].default
+        return v
+
+    @field_validator("research_model", mode="after")
+    @classmethod
+    def _model_id(cls, v: str) -> str:
+        if not re.fullmatch(r"claude-[a-z0-9\-]{1,60}", v):
+            raise ValueError("RESEARCH_MODEL must be a Claude model id")
+        return v
+
     @property
     def resolved_backup_dir(self) -> Path:
         return self.backup_dir or self.db_path.parent / "backups"
@@ -104,11 +126,16 @@ class _Strict(BaseModel):
 TickerType = Literal["etf", "pure_play", "benchmark", "context"]
 
 
+Alias = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 .&\-]{1,40}$")]
+
+
 class TickerConfig(_Strict):
     symbol: str = Field(pattern=r"^[A-Z][A-Z0-9.\-]{0,9}$")
     type: TickerType
     cik: str | None = Field(default=None, pattern=r"^\d{10}$")
     active: bool = True
+    # M6: company names used only to match news items to tickers (identifiers, not commentary).
+    aliases: tuple[Alias, ...] = ()
 
 
 class Watchlist(_Strict):
@@ -135,8 +162,35 @@ class SourceDomain(_Strict):
     tier: Literal["T1", "T2"]
 
 
+DOMAIN_RE = r"^[a-z0-9.\-]+\.[a-z]{2,}$"
+
+
+class Feed(_Strict):
+    """One RSS/Atom feed (M6). `symbol` pins a company's own IR feed to its ticker."""
+
+    id: str = Field(pattern=r"^[a-z0-9_]{2,40}$")
+    url: str = Field(pattern=r"^https://[a-z0-9.\-]+\.[a-z]{2,}/\S*$")
+    symbol: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9.\-]{0,9}$")
+
+
+Keyword = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 .\-]{1,40}$")]
+
+
 class Sources(_Strict):
     domains: tuple[SourceDomain, ...]
+    # M6: RSS feeds, wire/mirror domains whose copies never count as independent sources, and the
+    # theme keywords that keep an industry item with no watchlist company in it.
+    feeds: tuple[Feed, ...] = ()
+    syndicators: tuple[Annotated[str, Field(pattern=DOMAIN_RE)], ...] = ()
+    theme_keywords: tuple[Keyword, ...] = ()
+
+    @field_validator("feeds")
+    @classmethod
+    def _feed_ids_unique(cls, v: tuple[Feed, ...]) -> tuple[Feed, ...]:
+        ids = [f.id for f in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate feed ids")
+        return v
 
     def tier_for(self, domain: str) -> TrustTier:
         """Exact or parent-domain match; anything not allow-listed is T3."""
@@ -145,6 +199,14 @@ class Sources(_Strict):
             if d == s.domain or d.endswith("." + s.domain):
                 return s.tier
         return "T3"
+
+    def is_syndicator(self, domain: str) -> bool:
+        d = domain.lower().rstrip(".")
+        return any(d == s or d.endswith("." + s) for s in self.syndicators)
+
+    def allowed_domains(self) -> tuple[str, ...]:
+        """T1 + T2 domains: the research runs' web-search allow-list (spec §4)."""
+        return tuple(s.domain for s in self.domains)
 
 
 RiskCategory = Literal[
@@ -350,6 +412,45 @@ class OptionsConfig(_Strict):
 
 def load_options_config(config_dir: Path) -> OptionsConfig:
     return OptionsConfig.model_validate(_load_yaml(config_dir / "options.yaml"))
+
+
+Usd = Annotated[Decimal, Field(ge=0)]
+
+
+class ModelPrice(_Strict):
+    """USD per million tokens (Anthropic first-party list prices)."""
+
+    input: Usd
+    output: Usd
+    cache_write: Usd  # 5-minute cache write
+    cache_read: Usd
+
+
+class ResearchParams(_Strict):
+    max_tokens: int = Field(ge=256, le=64_000)
+    effort: Literal["low", "medium", "high"]
+    sweep_max_uses: int = Field(ge=1, le=20)
+    sweep_days: int = Field(ge=1, le=14)
+    backfill_max_uses: int = Field(ge=1, le=20)
+    backfill_months: int = Field(ge=1, le=24)
+    # Worst-case input-token allowance per search for the budget estimate (results are input).
+    est_input_tokens_per_search: int = Field(ge=0)
+    est_base_input_tokens: int = Field(ge=0)
+
+
+class LlmConfig(_Strict):
+    """`config/llm.yaml` (M6): prices and research parameters. Numbers and identifiers only."""
+
+    prices: dict[Annotated[str, Field(pattern=r"^claude-[a-z0-9\-]+$")], ModelPrice]
+    web_search_per_1k: Usd
+    batch_discount: Annotated[Decimal, Field(gt=0, le=1)]  # batch tokens cost this fraction
+    budget_alert_fraction: Annotated[Decimal, Field(gt=0, lt=1)]
+    chars_per_token: Annotated[int, Field(ge=1, le=10)]  # input estimate for the budget guard
+    research: ResearchParams
+
+
+def load_llm_config(config_dir: Path) -> LlmConfig:
+    return LlmConfig.model_validate(_load_yaml(config_dir / "llm.yaml"))
 
 
 def get_settings() -> Settings:

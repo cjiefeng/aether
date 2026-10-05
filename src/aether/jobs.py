@@ -24,9 +24,12 @@ from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, T
 from aether.config import (
     Settings,
     load_alerts_config,
+    load_llm_config,
     load_options_config,
     load_rubric,
+    load_sources,
     load_strategies,
+    load_watchlist,
 )
 from aether.db.engine import write_tx
 from aether.db.models import commands, job_runs
@@ -35,8 +38,10 @@ from aether.ingest.dividends import ingest_dividends
 from aether.ingest.earnings_calendar import ingest_earnings_calendar
 from aether.ingest.edgar import ingest_edgar
 from aether.ingest.fx import ingest_fx
+from aether.ingest.news_rss import ingest_news_rss
 from aether.ingest.prices import ingest_prices
 from aether.ingest.qtum_holdings import ingest_qtum_holdings
+from aether.llm.client import LlmClient, LlmDisabled
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
 from aether.options.job import snapshot_options
@@ -54,7 +59,9 @@ from aether.providers.edgar import EdgarClient
 from aether.providers.fx import EcbFx, FallbackFx, YFinanceFx
 from aether.providers.options import YFinanceOptions
 from aether.providers.prices import FailoverPriceProvider, MassiveProvider, YFinanceProvider
+from aether.providers.rss import RssClient
 from aether.providers.tiger import TigerConfig, TigerReadOnly
+from aether.research.runner import backfill_state, poll_backfill, run_sweep, submit_backfill
 from aether.review.pack import monthly_review
 from aether.runs import JobResult, run_job
 
@@ -207,6 +214,7 @@ def make_telegram(settings: Settings) -> tuple[TelegramService | None, str | Non
 def alerts_job(
     engine: Engine, settings: Settings, service: TelegramService | None, reason: str | None
 ) -> JobResult:
+    llm_cfg = load_llm_config(settings.config_dir)
     return run_alerts(
         engine,
         load_alerts_config(settings.config_dir),
@@ -216,6 +224,7 @@ def alerts_job(
         off_cycle_min_materiality=load_strategies(
             settings.config_dir
         ).publish.off_cycle_min_materiality,
+        llm_budget_alert=(settings.daily_llm_budget_usd, llm_cfg.budget_alert_fraction),
     )
 
 
@@ -228,6 +237,44 @@ def options_job(engine: Engine, settings: Settings) -> JobResult:
     return snapshot_options(engine, YFinanceOptions(), load_options_config(settings.config_dir))
 
 
+def news_rss_job(engine: Engine, settings: Settings) -> JobResult:
+    client = RssClient()
+    try:
+        return ingest_news_rss(
+            engine,
+            client,
+            load_sources(settings.config_dir),
+            load_watchlist(settings.config_dir),
+        )
+    finally:
+        client.close()
+
+
+def make_llm(engine: Engine, settings: Settings) -> tuple[LlmClient | None, str | None]:
+    """The LLM wrapper, or (None, reason) when no API key is set (research stays off)."""
+    try:
+        return LlmClient(engine, settings, load_llm_config(settings.config_dir)), None
+    except LlmDisabled as exc:
+        log.info("research disabled: %s", exc)
+        return None, str(exc)
+
+
+def research_sweep_job(engine: Engine, settings: Settings, llm: LlmClient | None) -> JobResult:
+    if llm is None:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set; research is disabled")
+    return run_sweep(
+        engine,
+        llm,
+        load_llm_config(settings.config_dir),
+        load_sources(settings.config_dir),
+        load_watchlist(settings.config_dir),
+        settings.research_model,
+    )
+
+
+NEWS_RSS_MINUTES = 60
+BACKFILL_POLL_MINUTES = 15
+BACKFILL_SUBMIT_DELAY = timedelta(minutes=2)
 CATCH_UP_AFTER = timedelta(hours=24)
 PORTFOLIO_CATCH_UP_DELAY = timedelta(minutes=5)
 
@@ -398,8 +445,65 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                 alerts_lock.release()
         return {"dedupe_key": key, "channel": "telegram" if on else "dashboard"}
 
+    # News & research (M6). RSS needs no key; research runs only with ANTHROPIC_API_KEY set.
+    llm, llm_off = make_llm(engine, settings)
+    research_lock = threading.Lock()
+
+    def run_research_sweep() -> None:
+        if llm is None:
+            return  # disabled: logged once at startup, no job_runs noise
+        with research_lock:
+            run_job(engine, "research_sweep", lambda: research_sweep_job(engine, settings, llm))
+
+    def research_sweep_command(_args: dict[str, Any]) -> dict[str, Any]:
+        if llm is None:
+            return {"ok": False, "error": llm_off}
+        if not research_lock.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        try:
+            result = run_job(
+                engine, "research_sweep", lambda: research_sweep_job(engine, settings, llm)
+            )
+        finally:
+            research_lock.release()
+        return {"ok": result is not None, "rows": result.rows_written if result else 0}
+
+    def run_backfill_submit() -> None:
+        # Owner decision (2026-10-05): the 12-month backfill runs automatically, once, no cap.
+        if llm is None or not settings.research_backfill:
+            return
+        if backfill_state(engine, datetime.now(UTC)) != "none":
+            return
+        with research_lock:
+            run_job(
+                engine,
+                "research_backfill",
+                lambda: submit_backfill(
+                    engine,
+                    llm,
+                    load_llm_config(settings.config_dir),
+                    load_sources(settings.config_dir),
+                    load_watchlist(settings.config_dir),
+                    settings.research_model,
+                ),
+            )
+
+    def run_backfill_poll() -> None:
+        if llm is None or backfill_state(engine, datetime.now(UTC)) != "open":
+            return
+        with research_lock:
+            run_job(
+                engine,
+                "research_backfill_poll",
+                lambda: (
+                    poll_backfill(engine, llm, load_sources(settings.config_dir))
+                    or JobResult(warning="nothing open")
+                ),
+            )
+
     handlers = {
         **COMMAND_HANDLERS,
+        "research_sweep": research_sweep_command,
         "refresh_prices": refresh_prices,
         "refresh_edgar": refresh_edgar,
         "test_alert": test_alert,
@@ -549,6 +653,25 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                 run_job(engine, "telegram_inbound", lambda: JobResult(rows_written=n))
 
         sched.add_job(telegram_inbound, "interval", seconds=INBOUND_POLL_SECONDS, id="telegram_in")
+    # News & research (M6): RSS hourly; research sweeps 08:00 / 20:00 SGT (spec §9); the backfill
+    # is submitted once shortly after start and polled every 15 min while its batch is open.
+    sched.add_job(
+        wrap("news_rss", lambda: news_rss_job(engine, settings)),
+        "interval",
+        minutes=NEWS_RSS_MINUTES,
+        id="news_rss",
+        next_run_time=datetime.now(ZoneInfo(TZ)) + timedelta(minutes=1),
+    )
+    sched.add_job(run_research_sweep, "cron", hour="8,20", minute=0, id="research_sweep")
+    sched.add_job(
+        run_backfill_submit,
+        "date",
+        run_date=datetime.now(ZoneInfo(TZ)) + BACKFILL_SUBMIT_DELAY,
+        id="research_backfill_submit",
+    )
+    sched.add_job(
+        run_backfill_poll, "interval", minutes=BACKFILL_POLL_MINUTES, id="research_backfill_poll"
+    )
     sched.add_job(
         wrap("nightly_maintenance", lambda: nightly_maintenance(engine, settings)),
         "cron",
