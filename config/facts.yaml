@@ -13,7 +13,7 @@ facts:
       - https://gp.advalorem.io/insights/2026-04-28.html
       - https://247wallst.com/investing/2026/09/30/one-year-later-only-one-quantum-stock-call-paid-off-heres-what-changed/
     retrieved_at: "2026-10-04"
-    status: verified_by_claude
+    status: signed_off
     notes: "Matches the seed. Both figures are company press releases furnished on 8-K (Item 2.02), not audited filings; the FY2025 10-K (2026-02-25) is the audited source. The Q2-26 release says the outlook excludes any SkyWater contribution."
 
   - id: ionq_acquire_skywater
@@ -33,7 +33,7 @@ facts:
       - https://www.sec.gov/Archives/edgar/data/2110105/000162828026041003/quantinuum-424b4.htm
       - https://thequantuminsider.com/2026/06/02/quantinuum-expands-ipo-as-valuation-climbs-above-14-billion/
     retrieved_at: "2026-10-04"
-    status: verified_by_claude
+    status: signed_off
     notes: "Corrected from the seed. DISCREPANCY: the seed's Honeywell voting power (about 49.1%) differs from the 424B4 (47.8% / 47.0%). The seed's ~$14.3B market cap 'at top of range' predates pricing and is not stated in the 424B4, so it was dropped from the claim."
 
   - id: qnt_lockup_expiry
@@ -61,7 +61,7 @@ facts:
       - https://darpa.mil/research/programs/quantum-benchmarking-initiative/stage-b-selection
       - https://hpcwire.com/2025/11/07/darpa-selects-11-participants-for-quantum-benchmarking-initiative-stage-b/
     retrieved_at: "2026-10-04"
-    status: verified_by_claude
+    status: signed_off
     notes: "All 11 names match the DARPA page, which dates the list 'as of Nov. 6, 2025'."
 
   - id: ibm_roadmap_ftqc
@@ -69,7 +69,7 @@ facts:
     sources:
       - https://ibm.com/quantum/blog/large-scale-ftqc
     retrieved_at: "2026-10-04"
-    status: verified_by_claude
+    status: signed_off
     notes: "Matches the blog post. It also places a Starling magic-state-injection demonstration in 2028. These are roadmap targets, not delivered milestones."
 
   - id: pqc_deadlines
@@ -79,5 +79,5 @@ facts:
       - https://digital-strategy.ec.europa.eu/en/library/coordinated-implementation-roadmap-transition-post-quantum-cryptography
       - https://insidedeeptech.com/how-many-qubits-to-break-rsa-2048/
     retrieved_at: "2026-10-04"
-    status: verified_by_claude
+    status: signed_off
     notes: "Refined from the seed: the NIST 2030 'deprecated' date applies only to 112-bit security strength (>=128-bit goes straight to 'disallowed after 2035'), and NIST IR 8547 is still a draft on the CSRC page. EU wording checked in the roadmap PDF linked from the Commission page."

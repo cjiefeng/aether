@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Review · Aether{% endblock %}
+{% macro w(x) -%}{% if x is none %}—{% else %}{{ "%.1f"|format(x * 100) }}%{% endif %}{%- endmacro %}
+{% block content %}
+<h1>Monthly review</h1>
+<p class="banner stale"><strong>{{ banner }}</strong> Your decision document for the month; Aether never trades.</p>
+
+{% if not packs %}
+<section class="card"><p class="muted">No review pack yet. The first one is built on the 1st of the month at 10:30 SGT.</p></section>
+{% endif %}
+
+{% for p in packs %}
+<section class="card" id="pack-{{ p.as_of }}">
+  <div class="card-head"><h2>{{ p.month }}</h2>
+    <span class="muted small">Built {{ p.created_at }}{% if p.status == "failed" %} · <span class="bad">failed</span>{% endif %}</span></div>
+  {% if p.status == "failed" %}
+  <p class="bad small">{{ p.error }}</p>
+  {% else %}
+  {% set pk = p.payload %}
+  {% set t = pk.targets %}
+  <p>Profile <strong>{{ pk.profile|capitalize }}</strong>; targets published {{ t.as_of }} from prices through {{ t.prices_as_of }}{% if t.strategy_id %} ({{ t.strategy_id }}){% endif %}.</p>
+  {% if t.note %}<p class="banner stale">{{ t.note }}</p>{% endif %}
+  <div class="grid2">
+    <div>
+      <h3>Targets and adjustments</h3>
+      <table class="num compact">
+        <thead><tr><th>Symbol</th><th>Base</th><th>Target</th></tr></thead>
+        <tbody>
+        {% for c in t.chain %}<tr><td>{{ c.symbol }}</td><td>{{ w(c.base) }}</td><td>{{ w(c.final) }}</td></tr>
+          {% for st in c.steps %}<tr><td></td><td colspan="2" class="small">{{ st.label }}{% if st.event_id %} (event #{{ st.event_id }}){% endif %}: {{ st.url|extlink(st.form ~ " " ~ st.filed_at) }} → {{ w(st.weight) }}</td></tr>{% endfor %}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Plan</h3>
+      {% if pk.plan %}
+      <p class="small">{{ pk.plan.trades|length }} suggested trade(s) ({{ "new cash only" if pk.plan.mode == "new_cash_only" else "sells first" }}).</p>
+      <ol class="small">{% for tr in pk.plan.trades %}<li>{{ tr.action|capitalize }} {{ tr.shares }} {{ tr.symbol }} (≈ ${{ tr.value }})</li>{% endfor %}</ol>
+      {% if pk.value %}<p class="small">Sleeve value ${{ pk.value.usd }}{% if pk.value.sgd %} ≈ S${{ pk.value.sgd }} (USD/SGD {{ pk.value.fx_rate }}, {{ pk.value.fx_date }}; reporting only){% endif %}.</p>{% endif %}
+      <h3>Drift</h3>
+      <table class="num compact"><thead><tr><th>Symbol</th><th>Weight</th><th>Target</th></tr></thead><tbody>
+        {% for d in pk.drift %}<tr><td>{{ d.symbol }}</td><td>{{ "%.1f"|format(d.weight_pct) }}%</td><td>{{ "%.1f"|format(d.target_pct) }}%</td></tr>{% endfor %}
+      </tbody></table>
+      {% else %}<p class="muted small">No holdings saved: no plan.</p>{% endif %}
+    </div>
+  </div>
+  <div class="grid2">
+    <div>
+      <h3>Open risk flags</h3>
+      {% if pk.flags %}<ul class="small">{% for f in pk.flags %}<li>{{ f.symbol }}: {{ f.detail }}</li>{% endfor %}</ul>
+      {% else %}<p class="muted small">None.</p>{% endif %}
+    </div>
+    <div>
+      <h3>Upcoming</h3>
+      <ul class="small">
+        {% for e in pk.upcoming.earnings %}<li>{{ e.date }} {{ e.symbol }} earnings</li>{% endfor %}
+        {% for e in pk.upcoming.lockups %}<li>{{ e.date }} {{ e.symbol }} lock-up ends</li>{% endfor %}
+        {% if not pk.upcoming.earnings and not pk.upcoming.lockups %}<li class="muted">Nothing in the window.</li>{% endif %}
+      </ul>
+    </div>
+  </div>
+  {% if p.telegram_text %}
+  <details><summary class="small">Telegram text (no share counts, dollar values or account number)</summary><pre class="alert-text">{{ p.telegram_text }}</pre></details>
+  {% endif %}
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

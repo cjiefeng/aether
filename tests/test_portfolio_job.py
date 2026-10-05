@@ -59,7 +59,7 @@ def test_run_stores_everything(seeded: Engine) -> None:
     assert res.rows_written > 0
     assert _count(seeded, strategy_runs) == 1
     # 4 families x (2 + 3 + 3) grid points + 3 benchmarks
-    assert _count(seeded, strategy_metrics) == 4 * 8 + 3
+    assert _count(seeded, strategy_metrics) == 4 * 3 + 3  # 4 families x 3 fixed-QTUM profiles
     with seeded.connect() as conn:
         summary = json.loads(conn.execute(select(strategy_runs.c.summary)).scalar_one())
         sums = conn.execute(
@@ -67,7 +67,7 @@ def test_run_stores_everything(seeded: Engine) -> None:
                 strategy_weights.c.strategy_id
             )
         ).all()
-    assert len(sums) == 32 and all(abs(s - 1) < 1e-9 for _, s in sums)
+    assert len(sums) == 12 and all(abs(s - 1) < 1e-9 for _, s in sums)
     assert summary["universe"] == ["QTUM", *SLEEVE]
     assert any(c.startswith("FAKE has 90 sessions of history") for c in summary["caveats"])
     for p in ("safe", "medium", "aggressive"):
@@ -173,7 +173,7 @@ def test_old_curves_are_pruned(seeded: Engine, monkeypatch: pytest.MonkeyPatch) 
         runs = set(conn.execute(select(strategy_curves.c.run_id)).scalars())
         latest = conn.execute(select(func.max(strategy_runs.c.id))).scalar_one()
     assert runs == {latest}
-    assert _count(seeded, strategy_metrics) == 2 * 35  # metrics and weights are kept
+    assert _count(seeded, strategy_metrics) == 2 * 15  # metrics and weights are kept
 
 
 def test_scheduler_registers_portfolio_job(rw_engine: Engine, migrated_db: Path) -> None:
@@ -186,3 +186,24 @@ def test_scheduler_registers_portfolio_job(rw_engine: Engine, migrated_db: Path)
     fields = {f.name: str(f) for f in job_.trigger.fields}
     assert (fields["hour"], fields["minute"]) == ("7", "10")  # 07:10 SGT, after prices
     assert str(job_.trigger.timezone) == "Asia/Singapore"
+
+
+def test_each_profile_uses_its_fixed_qtum_weight(rw_engine: Engine) -> None:
+    """M5 acceptance: each profile's QTUM weight equals its configured fixed value."""
+    from sqlalchemy import select
+
+    seed_panel(rw_engine, panel())
+    run_strategies(rw_engine, CONFIG)
+    with rw_engine.connect() as conn:
+        rows = conn.execute(
+            select(strategy_metrics.c.profile, strategy_metrics.c.qtum_weight).where(
+                strategy_metrics.c.kind == "candidate"
+            )
+        ).all()
+    for profile, q in rows:
+        assert q == CONFIG.profiles[profile].qtum_weight
+    assert {p: CONFIG.profiles[p].qtum_weight for p in CONFIG.profiles} == {
+        "safe": 0.75,
+        "medium": 0.45,
+        "aggressive": 0.15,
+    }

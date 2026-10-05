@@ -13,11 +13,17 @@ from starlette.testclient import TestClient
 from aether.config import Settings
 from aether.db import migrate
 from aether.db.engine import ensure_db_file, make_ro_engine, make_rw_engine
+from aether.security.auth import MIN_SCRYPT_N, hash_password
+from aether.security.csrf import COOKIE_NAME as CSRF_COOKIE
 from aether.web.app import create_app
 
 REPO = Path(__file__).resolve().parent.parent
 CONFIG_DIR = REPO / "config"
 LAN_IP = "192.168.1.10"  # synthetic client address
+# Synthetic test password; hashed once per session at the minimum accepted scrypt cost.
+TEST_PASSWORD = "correct horse test password"
+TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD, n=MIN_SCRYPT_N)
+TEST_SESSION_SECRET = "s" * 48  # synthetic, low-entropy test value
 
 
 @pytest.fixture
@@ -52,6 +58,8 @@ def make_settings(db_path: Path, **overrides: object) -> Settings:
         "config_dir": CONFIG_DIR,
         "csrf_secret": "x" * 32,  # synthetic, low-entropy test value
         "command_rate_limit_per_hour": 10,
+        "dashboard_password_hash": TEST_PASSWORD_HASH,
+        "session_secret": TEST_SESSION_SECRET,
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
@@ -62,8 +70,19 @@ def settings(migrated_db: Path) -> Settings:
     return make_settings(migrated_db)
 
 
-def make_client(settings: Settings, ip: str = LAN_IP) -> TestClient:
-    return TestClient(create_app(settings), client=(ip, 50000))
+def login(c: TestClient, password: str = TEST_PASSWORD) -> int:
+    """Log in through the real form flow (CSRF cookie + header). Returns the status code."""
+    c.get("/login")
+    token = c.cookies.get(CSRF_COOKIE) or ""
+    r = c.post("/login", data={"password": password}, headers={"X-CSRF-Token": token})
+    return r.status_code
+
+
+def make_client(settings: Settings, ip: str = LAN_IP, logged_in: bool = True) -> TestClient:
+    c = TestClient(create_app(settings), client=(ip, 50000))
+    if logged_in:
+        assert login(c) == 204
+    return c
 
 
 @pytest.fixture

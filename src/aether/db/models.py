@@ -5,7 +5,7 @@ STRICT tables accept only INTEGER/REAL/TEXT/BLOB/ANY, so columns use only `Integ
 VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
-events, M3: alerts outbox, M4: dividends + backtests). Keep this file and
+events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance). Keep this file and
 `migrations/versions/*` in sync (a test compares them).
 """
 
@@ -141,6 +141,8 @@ ALERT_KINDS = (
     "job_failing",
     "job_recovered",
     "test",
+    "off_cycle_review",  # M5
+    "review_pack",  # M5
 )
 ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
 
@@ -612,5 +614,171 @@ strategy_curves = Table(
     Column("points", Text, nullable=False),  # JSON [[YYYY-MM-DD, level], ...]
     PrimaryKeyConstraint("run_id", "series_id"),
     _json_ck("points"),
+    sqlite_strict=True,
+)
+
+# --------------------------------------------------------------------------- M5: holdings
+
+HOLDING_SOURCES = ("manual", "tiger")
+CASH = "$CASH"  # reserved holdings row: USD cash in shares_micros
+PORTFOLIO_SETTING_KEYS = (
+    "selected_profile",
+    "whole_shares",
+    "new_cash_only",
+    "holdings_source",
+    "tiger_sync",
+    "positions_imported",
+)
+
+# The owner's sleeve: strategy-universe symbols plus the cash row. Written only by the worker
+# (update_holdings / sync_holdings commands, one-time positions.yaml import).
+holdings = Table(
+    "holdings",
+    metadata,
+    Column("symbol", Text, primary_key=True),
+    Column("shares_micros", Micros, nullable=False),
+    Column("cost_basis_micros", Micros),  # average cost per share, USD
+    Column("source", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    CheckConstraint("shares_micros >= 0", name="shares"),
+    CheckConstraint("cost_basis_micros IS NULL OR cost_basis_micros >= 0", name="cost_basis"),
+    CheckConstraint(
+        f"symbol != '{CASH}' OR (cost_basis_micros IS NULL AND source = 'manual')", name="cash"
+    ),
+    _in_ck("source", HOLDING_SOURCES),
+    sqlite_strict=True,
+)
+
+holdings_history = Table(
+    "holdings_history",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("command_id", Integer, ForeignKey("commands.id")),
+    Column("source", Text, nullable=False),
+    Column("before", Text, nullable=False),
+    Column("after", Text, nullable=False),
+    Column("applied_at", Text, nullable=False),
+    _in_ck("source", ("manual", "tiger", "import")),
+    _json_ck("before"),
+    _json_ck("after"),
+    Index(None, "applied_at"),
+    sqlite_strict=True,
+)
+
+portfolio_settings = Table(
+    "portfolio_settings",
+    metadata,
+    Column("key", Text, primary_key=True),
+    Column("value", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    _in_ck("key", PORTFOLIO_SETTING_KEYS),
+    _json_ck("value"),
+    sqlite_strict=True,
+)
+
+# Published monthly targets per profile (spec §6.6, §6.6.1): base weights (the selected sleeve
+# method) after the research overlay, with each name's adjustment chain. `as_of` is the publish
+# date (SGT); a second publish on the same day replaces the row.
+profile_targets = Table(
+    "profile_targets",
+    metadata,
+    Column("profile", Text, nullable=False),
+    Column("as_of", Text, nullable=False),
+    Column("published_at", Text, nullable=False),
+    Column("prices_as_of", Text, nullable=False),  # last session of the strategy run used
+    Column("strategy_run_id", Integer, ForeignKey("strategy_runs.id", ondelete="SET NULL")),
+    Column("strategy_id", Text),
+    Column("base_weights", Text, nullable=False),
+    Column("published_weights", Text, nullable=False),
+    Column("adjustments", Text, nullable=False),
+    Column("trigger", Text, nullable=False),
+    Column("trigger_event_id", Integer, ForeignKey("events.id")),
+    Column("input_hash", LargeBinary, nullable=False),
+    PrimaryKeyConstraint("profile", "as_of"),
+    _in_ck("profile", PROFILES),
+    _in_ck("trigger", ("monthly", "off_cycle")),
+    _date_ck("as_of"),
+    _date_ck("prices_as_of"),
+    _json_ck("base_weights"),
+    _json_ck("published_weights"),
+    _json_ck("adjustments"),
+    CheckConstraint("length(input_hash) = 32", name="input_hash_len"),
+    sqlite_strict=True,
+)
+
+rebalance_plans = Table(
+    "rebalance_plans",
+    metadata,
+    Column("profile", Text, nullable=False),
+    Column("as_of", Text, nullable=False),
+    Column("input_hash", LargeBinary, nullable=False),
+    Column("plan", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    PrimaryKeyConstraint("profile", "as_of"),
+    _in_ck("profile", PROFILES),
+    _date_ck("as_of"),
+    CheckConstraint("length(input_hash) = 32", name="input_hash_len"),
+    _json_ck("plan"),
+    sqlite_strict=True,
+)
+
+FX_PROVIDERS = ("yfinance", "ecb", "synthetic")
+
+# USD/SGD reference rate: reporting only (spec §1.4, §6.6). Never used in targets or trades.
+fx_rates = Table(
+    "fx_rates",
+    metadata,
+    Column("pair", Text, nullable=False),
+    Column("d", Text, nullable=False),
+    Column("rate", REAL, nullable=False),  # SGD per 1 USD
+    Column("provider", Text, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("pair", "d"),
+    CheckConstraint("pair = 'USDSGD'", name="pair"),
+    CheckConstraint("rate > 0", name="rate"),
+    _in_ck("provider", FX_PROVIDERS),
+    _date_ck("d"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+OPTIONS_PROVIDERS = ("yfinance", "synthetic")
+
+# Daily options summary metrics (spec §6.8). Research only: never sizing or trades.
+options_snapshots = Table(
+    "options_snapshots",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("d", Text, nullable=False),
+    Column("metrics", Text, nullable=False),
+    Column("quality", Text, nullable=False),
+    Column("provider", Text, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    PrimaryKeyConstraint("symbol", "d"),
+    _in_ck("provider", OPTIONS_PROVIDERS),
+    _date_ck("d"),
+    _json_ck("metrics"),
+    _json_ck("quality"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# Monthly review pack (spec §6.9): the owner's decision document. `as_of` is the publish date.
+review_packs = Table(
+    "review_packs",
+    metadata,
+    Column("as_of", Text, primary_key=True),
+    Column("month", Text, nullable=False),  # YYYY-MM
+    Column("payload", Text, nullable=False),
+    Column("telegram_text", Text),
+    Column("status", Text, nullable=False),
+    Column("error", Text),
+    Column("created_at", Text, nullable=False),
+    _in_ck("status", ("done", "failed")),
+    _date_ck("as_of"),
+    CheckConstraint("month GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'", name="month"),
+    CheckConstraint("telegram_text IS NULL OR length(telegram_text) <= 4096", name="telegram_len"),
+    _json_ck("payload"),
+    Index(None, "month"),
     sqlite_strict=True,
 )

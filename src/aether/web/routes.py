@@ -5,17 +5,26 @@ from dataclasses import asdict
 from datetime import date, datetime
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import ValidationError
 
 from aether import market, sec_view
 from aether.alerts import view as alerts_view
 from aether.config import PROFILES, load_rubric
 from aether.db import health
 from aether.db.commands import count_recent_commands, enqueue_command
+from aether.portfolio import holdings_view
 from aether.portfolio import view as strategies_view
+from aether.portfolio.holdings import (
+    HoldingsUpdate,
+    PositionIn,
+    SettingsUpdate,
+    load_settings,
+    universe_symbols,
+)
 from aether.providers.prices import US_EASTERN
 from aether.risk.flags import open_flags
-from aether.security import csrf
+from aether.security import auth, csrf
 
 router = APIRouter()
 
@@ -86,6 +95,7 @@ def overview(request: Request) -> HTMLResponse:
             "risk_events": sec_view.recent_events(engine, days=30),
             "sec_fresh": sec_view.sec_freshness(engine),
             "alerts": alerts_view.recent_alerts(engine, limit=5),
+            "drift": holdings_view.drift_card(engine),
         },
     )
 
@@ -170,6 +180,78 @@ def strategies_page(request: Request) -> HTMLResponse:
     )
 
 
+@router.get("/holdings", response_class=HTMLResponse)
+def holdings_page(request: Request) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    return _render(
+        request,
+        "holdings.html",
+        {
+            "h": holdings_view.holdings_page(engine, _today()),
+            "profiles": PROFILES,
+            "banner": strategies_view.BANNER,
+            "family_labels": strategies_view.FAMILY_LABELS,
+            "disclaimer": f"{DISCLAIMER} {strategies_view.BANNER}",
+        },
+    )
+
+
+@router.get("/review", response_class=HTMLResponse)
+def review_page(request: Request) -> HTMLResponse:
+    return _render(
+        request,
+        "review.html",
+        {
+            "packs": holdings_view.review_packs_view(request.app.state.ro_engine),
+            "disclaimer": f"{DISCLAIMER} {strategies_view.BANNER}",
+            "banner": strategies_view.BANNER,
+        },
+    )
+
+
+# --------------------------------------------------------------------------- login (S2, M5)
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/") -> Response:
+    target = auth.safe_next(next)
+    if request.app.state.auth.session_valid(request.cookies.get(auth.SESSION_COOKIE)):
+        return RedirectResponse(target, status_code=303)
+    return _render(request, "login.html", {"next": target})
+
+
+@router.post("/login")
+async def login_submit(request: Request) -> Response:
+    state = request.app.state
+    ip = _client_ip(request)
+    limiter: auth.LoginLimiter = state.login_limiter
+    if limiter.blocked(ip):
+        auth.log.warning("login blocked (rate limit) from %s", ip)
+        return HTMLResponse("Too many failed attempts. Try again in 15 minutes.", status_code=429)
+    form = await request.form()
+    password = form.get("password")
+    target = auth.safe_next(str(form.get("next") or "/"))
+    if isinstance(password, str) and password and state.auth.password.verify(password):
+        limiter.reset(ip)
+        response = Response(status_code=204, headers={"HX-Redirect": target})
+        auth.set_session_cookie(response, state.auth.new_session())
+        return response
+    n = limiter.record_failure(ip)
+    auth.log.warning("failed login from %s (%d in window)", ip, n)  # never the password
+    return HTMLResponse("Wrong password.", status_code=401)
+
+
+@router.post("/logout")
+def logout(request: Request) -> Response:
+    response = Response(status_code=204, headers={"HX-Redirect": "/login"})
+    auth.clear_session_cookie(response)
+    return response
+
+
 @router.get("/health", response_class=HTMLResponse)
 def health_page(request: Request) -> HTMLResponse:
     state = request.app.state
@@ -232,14 +314,28 @@ def api_strategy_curves(request: Request, profile: str = "safe") -> JSONResponse
 # --------------------------------------------------------------------------- commands
 
 
-def _enqueue(request: Request, kind: str) -> Response:
+def _enqueue(request: Request, kind: str, args: dict[str, object] | None = None) -> Response:
     state = request.app.state
     limit = state.settings.command_rate_limit_per_hour
     if count_recent_commands(state.ro_engine) >= limit:
         return HTMLResponse(f"Rate limited: max {limit} commands/hour.", status_code=429)
-    client_ip = request.client.host if request.client else "unknown"
-    command_id = enqueue_command(state.command_engine, kind, {}, requested_by=client_ip)
+    command_id = enqueue_command(state.command_engine, kind, args or {}, _client_ip(request))
     return HTMLResponse(f"Queued command #{command_id}.", status_code=202)
+
+
+def _invalid(exc: ValidationError | ValueError) -> HTMLResponse:
+    if isinstance(exc, ValidationError):
+        first = exc.errors()[0]
+        where = ".".join(str(x) for x in first.get("loc", ()) if x != "positions")
+        msg = f"Invalid input{f' ({where})' if where else ''}: {first.get('msg', 'invalid')}"
+    else:
+        msg = f"Invalid input: {exc}"
+    return HTMLResponse(msg[:300], status_code=400)
+
+
+def _blank(v: object) -> str | None:
+    text = str(v).strip().replace(",", "") if v is not None else ""
+    return text or None
 
 
 @router.post("/commands/ping")
@@ -265,3 +361,64 @@ def command_test_alert(request: Request) -> Response:
 @router.post("/commands/recompute-strategies")
 def command_recompute_strategies(request: Request) -> Response:
     return _enqueue(request, "recompute_strategies")
+
+
+@router.post("/commands/update-holdings")
+async def command_update_holdings(request: Request) -> Response:
+    """Holdings form → validated `update_holdings` command. The worker applies it (the
+    dashboard never writes holdings). In tiger mode only the cash field is sent."""
+    engine = request.app.state.ro_engine
+    form = await request.form()
+    tiger_mode = load_settings(engine).holdings_source == "tiger"
+    try:
+        positions = []
+        if not tiger_mode:
+            for sym in universe_symbols(engine):
+                shares = _blank(form.get(f"shares_{sym}"))
+                cost = _blank(form.get(f"cost_{sym}"))
+                if shares is None or float(shares) == 0:
+                    continue
+                positions.append(
+                    PositionIn.model_validate({"symbol": sym, "shares": shares, "cost_basis": cost})
+                )
+        update = HoldingsUpdate.model_validate(
+            {"positions": positions, "cash": _blank(form.get("cash")) or "0"}
+        )
+    except (ValidationError, ValueError) as exc:
+        return _invalid(exc)
+    return _enqueue(request, "update_holdings", update.to_args())
+
+
+@router.post("/commands/portfolio-settings")
+async def command_portfolio_settings(request: Request) -> Response:
+    form = await request.form()
+    values: dict[str, object] = {}
+    for key in ("selected_profile", "holdings_source"):
+        if (v := _blank(form.get(key))) is not None:
+            values[key] = v
+    for key in ("whole_shares", "new_cash_only"):
+        if (v := _blank(form.get(key))) is not None:
+            values[key] = v in ("1", "true", "on")
+    try:
+        update = SettingsUpdate.model_validate(values)
+    except ValidationError as exc:
+        return _invalid(exc)
+    return _enqueue(request, "update_portfolio_settings", update.to_args())
+
+
+@router.post("/commands/sync-holdings")
+def command_sync_holdings(request: Request) -> Response:
+    return _enqueue(request, "sync_holdings")
+
+
+@router.post("/commands/publish-targets")
+async def command_publish_targets(request: Request) -> Response:
+    """Publish targets now (off-cycle): the owner's decision, optionally citing an event."""
+    form = await request.form()
+    raw = _blank(form.get("trigger_event_id"))
+    args: dict[str, object] = {}
+    if raw is not None:
+        if not raw.isdigit() or len(raw) > 12:
+            return HTMLResponse("Invalid input: trigger_event_id", status_code=400)
+        args["trigger_event_id"] = int(raw)
+    return _enqueue(request, "publish_targets", args)

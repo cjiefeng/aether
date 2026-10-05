@@ -81,6 +81,22 @@
   {% include "_flags.html" %}
 </section>
 
+{% if drift %}
+<section class="card">
+  <div class="card-head"><h2>Position drift vs the {{ drift.profile }} profile</h2><a href="/holdings">Holdings</a></div>
+  <table class="num compact">
+    <thead><tr><th>Symbol</th><th>Weight</th><th>Target</th><th>Ratio</th></tr></thead>
+    <tbody>
+    {% for r in drift.rows %}
+      <tr><td>{{ r.symbol }}</td><td>{{ "%.1f"|format(r.weight_pct) }}%</td><td>{{ "%.1f"|format(r.target_pct) }}%</td>
+        <td>{% if r.ratio is none %}—{% else %}{{ "%.2f"|format(r.ratio) }}×{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">From the plan for targets as of {{ drift.as_of }}.</p>
+</section>
+{% endif %}
+
 <section class="card">
   <div class="card-head"><h2>Recent alerts</h2><a href="/alerts">All alerts</a></div>
   {% include "_alerts.html" %}

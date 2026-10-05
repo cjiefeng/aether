@@ -44,7 +44,7 @@ from aether.portfolio.total_return import align, simple_returns, total_return_le
 from aether.runs import JobResult
 
 # Bump when the computation changes, so identical prices still produce a fresh run.
-ALGO_VERSION = "m4.1"
+ALGO_VERSION = "m5.1"  # m5: fixed QTUM weight per profile
 CORE = "QTUM"
 BENCHMARKS = ("QQQ", "SOXX")
 FLOAT_DP = 10
@@ -115,7 +115,9 @@ def canon(obj: Any) -> str:
 def input_hash(inputs: Inputs, config: StrategiesConfig) -> bytes:
     payload = {
         "algo": ALGO_VERSION,
-        "config": config.model_dump(mode="json"),
+        # Only what the backtest reads, so M5's rebalance/publish/overlay settings don't force a
+        # new run.
+        "config": config.model_dump(mode="json", include={"backtest", "profiles"}),
         "sleeve": list(inputs.sleeve),
         "closes": {s: [[d, repr(c)] for d, c in rows] for s, rows in inputs.closes.items()},
         "dividends": inputs.dividends,
@@ -192,7 +194,7 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
         pp = config.profiles[profile]
         cands: list[Candidate] = []
         for family in FAMILIES:
-            for q in pp.qtum_grid:
+            for q in (pp.qtum_weight,):  # one fixed QTUM weight per profile (§6.5)
                 sid = strategy_id(profile, family, q)
                 res = run_backtest(
                     family,
@@ -233,7 +235,7 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
                 if pp.max_dd_limit_pp is None
                 else q_dd + pp.max_dd_limit_pp / 100.0,
             },
-            "min_qtum": pp.min_qtum,
+            "qtum_weight": pp.qtum_weight,
             "max_per_name": pp.max_per_name,
         }
 

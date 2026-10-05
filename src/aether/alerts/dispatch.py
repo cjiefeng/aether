@@ -156,10 +156,12 @@ def run_alerts(
     *,
     now: datetime | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    off_cycle_min_materiality: int | None = None,
 ) -> JobResult:
     now = now or datetime.now(UTC)
     telegram = service is not None and service.blocked is None
-    new = enqueue(engine, collect(engine, cfg, params, now), telegram=telegram, now=now)
+    candidates = collect(engine, cfg, params, now, off_cycle_min_materiality)
+    new = enqueue(engine, candidates, telegram=telegram, now=now)
     if service is None:
         log.info("alerts: %d new (dashboard only: %s)", new, disabled_reason)
         return JobResult(rows_written=new, provider="dashboard", warning=disabled_reason)

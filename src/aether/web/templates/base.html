@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false}'>
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false, "responseHandling": [{"code": "204", "swap": false}, {"code": "[23]..", "swap": true}, {"code": "[45]..", "swap": true, "error": true}, {"code": "...", "swap": false}]}'>
   <title>{% block title %}Aether{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
@@ -12,7 +12,10 @@
 <body hx-headers='{{ {"X-CSRF-Token": csrf_token}|tojson }}'>
   <header class="top">
     <a class="brand" href="/">Aether</a>
-    <nav><a href="/">Overview</a> <a href="/strategies">Strategies</a> <a href="/alerts">Alerts</a> <a href="/facts">Facts</a> <a href="/health">Health</a></nav>
+    {% block nav %}
+    <nav><a href="/">Overview</a> <a href="/strategies">Strategies</a> <a href="/holdings">Holdings</a> <a href="/review">Review</a> <a href="/alerts">Alerts</a> <a href="/facts">Facts</a> <a href="/health">Health</a></nav>
+    <button type="button" class="link" hx-post="/logout" hx-swap="none">Log out</button>
+    {% endblock %}
   </header>
   <main>
     {% block content %}{% endblock %}

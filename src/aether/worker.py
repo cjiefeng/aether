@@ -14,6 +14,7 @@ from aether.db.engine import ensure_db_file, make_rw_engine, write_tx
 from aether.db.models import tickers
 from aether.facts import load_facts, sync_facts
 from aether.jobs import build_scheduler
+from aether.portfolio.holdings import import_positions_yaml
 
 log = logging.getLogger("aether.worker")
 
@@ -37,6 +38,9 @@ def startup(settings: Settings) -> Engine:
     migrate.upgrade(settings.db_path)
     engine = make_rw_engine(settings.db_path)
     sync_config(engine, settings)
+    note = import_positions_yaml(engine, settings.config_dir)  # deprecated file, imported once
+    if note:
+        log.info(note)
     return engine
 
 

@@ -7,7 +7,10 @@ import logging
 import uvicorn
 
 from aether.config import get_settings
+from aether.security.auth import AuthConfigError
 from aether.web.app import create_app
+
+log = logging.getLogger("aether.web")
 
 
 def main() -> None:
@@ -16,8 +19,14 @@ def main() -> None:
         level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )
     host, port = settings.bind_host_port
+    try:
+        app = create_app(settings)
+    except AuthConfigError as exc:
+        # S2 fail closed: no valid password hash / session secret, no dashboard.
+        log.error("refusing to start: %s (run `make hash-password`)", exc)
+        raise SystemExit(1) from None
     uvicorn.run(
-        create_app(settings),
+        app,
         host=host,
         port=port,
         # Never let uvicorn rewrite the client address from X-Forwarded-For.

@@ -200,3 +200,92 @@ def extract_atm(text: str) -> AtmProgram | None:
             continue
         return AtmProgram(amount=amount, excerpt=excerpt(text, m.start(), m.end()))
     return None
+
+
+# --------------------------------------------------------------------------- listing (M5 overlay)
+
+# 8-K Item 3.01 covers both deficiency notices and voluntary exchange transfers. Only a clear
+# deficiency with no transfer language counts as a "deficiency"; conservative by design.
+_ITEM_301 = re.compile(r"Item\s*3\.01", re.IGNORECASE)
+# The item's standard caption mentions both a failure to satisfy a rule and a transfer; skip it.
+_CAPTION_301 = re.compile(
+    r"Item\s*3\.01\.?\s*Notice\s+of\s+Delisting\s+or\s+Failure\s+to\s+Satisfy\s+a\s+Continued"
+    r"\s+Listing\s+Rule\s+or\s+Standard;?\s*Transfer\s+of\s+Listing\.?",
+    re.IGNORECASE,
+)
+_TRANSFER = re.compile(
+    r"transfer(?:ring)?\s+(?:of\s+)?(?:the\s+|its\s+)?(?:stock\s+exchange\s+)?listing"
+    r"|transfer\s+(?:its|the)\s+(?:common\s+stock|class\s+a|listing|securities)"
+    r"|voluntar\w+\s+(?:to\s+)?(?:transfer|delist)",
+    re.IGNORECASE,
+)
+_DEFICIENCY = re.compile(
+    r"not\s+in\s+compliance|no\s+longer\s+(?:in\s+compliance|compl\w+)|regain\s+compliance"
+    r"|failure\s+to\s+(?:satisfy|comply|meet)|deficiency|minimum\s+bid\s+price"
+    r"|delisting\s+determination|staff\s+determination|determined\s+to\s+(?:delist|commence)"
+    r"|non-?compliance|suspend\w*\s+trading",
+    re.IGNORECASE,
+)
+ITEM_WINDOW = 4000
+
+
+@dataclass(frozen=True)
+class ListingNotice:
+    kind: str  # deficiency | transfer | ambiguous | unclear
+    excerpt: str
+
+
+def extract_listing_notice(text: str) -> ListingNotice:
+    cap = _CAPTION_301.search(text)
+    m = cap or _ITEM_301.search(text)
+    start = m.end() if m else 0
+    window = text[start : start + ITEM_WINDOW]
+    nxt = re.search(r"Item\s*\d\.\d\d", window)  # stop at the next item
+    if nxt:
+        window = window[: nxt.start()]
+    transfer, deficiency = _TRANSFER.search(window), _DEFICIENCY.search(window)
+    if deficiency and not transfer:
+        kind, hit = "deficiency", deficiency
+    elif transfer and not deficiency:
+        kind, hit = "transfer", transfer
+    elif transfer and deficiency:
+        kind, hit = "ambiguous", deficiency
+    else:
+        return ListingNotice("unclear", excerpt(text, start, start + 300))
+    return ListingNotice(kind, excerpt(text, start + hit.start(), start + hit.end()))
+
+
+# Form 25 / 25-NSE / 15-12B / 15-12G: which class of securities is removed or deregistered.
+_CLASS_XML = re.compile(
+    r"<descriptionClassSecurity>(.*?)</descriptionClassSecurity>", re.IGNORECASE | re.DOTALL
+)
+# Form 25 (HTML): the title(s) precede "(Description of class of securities)".
+_CLASS_25 = re.compile(r"\)\s*_*\s*([^()]{3,400}?)\s*\(Description of class of securities\)", re.I)
+# Form 15: "Title of each class of securities covered by this Form: ...".
+_CLASS_15 = re.compile(r"Title of (?:each )?class of securities[^:]*:?\s*(.{0,300})", re.I)
+_COMMON = re.compile(r"common\s+stock|ordinary\s+shares?|common\s+shares?", re.IGNORECASE)
+# Phrases that mention common stock only as what another security converts into or contains.
+_DERIVED = re.compile(
+    r"(?:exercisable|convertible|exchangeable)\s+(?:for|into)[^,;]*|consisting\s+of[^,;]*",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class DelistedClass:
+    title: str
+    covers_common: bool
+
+
+def extract_delisted_class(body: str) -> DelistedClass | None:
+    m = _CLASS_XML.search(body)
+    if m:
+        title = " ".join(m.group(1).split())
+    else:
+        text = html_to_text(body)
+        t = _CLASS_25.search(text) or _CLASS_15.search(text)
+        if not t:
+            return None
+        title = " ".join(t.group(1).split()).strip(" _")
+    covers = bool(_COMMON.search(_DERIVED.sub(" ", title)))
+    return DelistedClass(title[:300], covers)

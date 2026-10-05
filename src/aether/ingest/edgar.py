@@ -41,7 +41,14 @@ from aether.db.types import utcnow_iso
 from aether.edgar import xbrl
 from aether.edgar.form4 import Form4Error, InsiderTxn, parse_form4
 from aether.edgar.submissions import FilingMeta, iter_filings, older_pages
-from aether.edgar.text import extract_atm, extract_going_concern, extract_lockup, html_to_text
+from aether.edgar.text import (
+    extract_atm,
+    extract_delisted_class,
+    extract_going_concern,
+    extract_listing_notice,
+    extract_lockup,
+    html_to_text,
+)
 from aether.providers.edgar import EdgarClient
 from aether.providers.prices import ProviderError
 from aether.runs import JobResult
@@ -56,7 +63,16 @@ LOCKUP_FORMS = frozenset({"424B4", "424B1"})
 ATM_FORMS = frozenset({"424B5", "424B2"})
 PERIODIC_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
 SHELF_FORMS = frozenset({"S-3", "S-3ASR", "F-3", "F-3ASR"})
-DOC_FORMS = FORM4_FORMS | LOCKUP_FORMS | ATM_FORMS | PERIODIC_FORMS
+# M5 overlay: removal/deregistration notices (which security class?) and 8-K Item 3.01 bodies
+# (deficiency or voluntary transfer?).
+DELISTING_FORMS = frozenset({"25", "25-NSE", "15-12B", "15-12G"})
+EIGHT_K_FORMS = frozenset({"8-K", "8-K/A"})
+DOC_FORMS = FORM4_FORMS | LOCKUP_FORMS | ATM_FORMS | PERIODIC_FORMS | DELISTING_FORMS
+
+
+def wants_document(f: FilingMeta) -> bool:
+    return f.form in DOC_FORMS or (f.form in EIGHT_K_FORMS and "3.01" in f.items)
+
 
 SEC_DOMAIN = "sec.gov"
 
@@ -89,8 +105,21 @@ def parse_document(symbol: str, f: FilingMeta, body: str) -> ParsedDoc:
             txns=doc.txns,
         )
 
+    if f.form in DELISTING_FORMS:
+        cls = extract_delisted_class(body)
+        return ParsedDoc(
+            summary={
+                "security": None if cls is None else cls.title,
+                "covers_common": None if cls is None else cls.covers_common,
+            }
+        )
+
     text = html_to_text(body)
     out = ParsedDoc(summary={"chars": len(text)})
+    if f.form in EIGHT_K_FORMS and "3.01" in f.items:
+        notice = extract_listing_notice(text)
+        out.summary["listing_notice"] = notice.kind
+        out.summary["listing_excerpt"] = notice.excerpt
     if f.form in LOCKUP_FORMS:
         lk = extract_lockup(text)
         out.summary["lockup"] = (
@@ -374,7 +403,7 @@ def ingest_edgar(
             (sym, f)
             for sym, fs in metas.items()
             for f in fs
-            if f.form in DOC_FORMS and f.primary_doc and f.accession not in done
+            if wants_document(f) and f.primary_doc and f.accession not in done
         ),
         key=lambda x: x[1].filed_at,
         reverse=True,
@@ -386,7 +415,9 @@ def ingest_edgar(
     for sym, f in todo:
         assert f.primary_doc is not None
         try:
-            body = client.document(f.cik, f.accession, f.primary_doc, raw=f.form in FORM4_FORMS)
+            body = client.document(
+                f.cik, f.accession, f.primary_doc, raw=f.form in FORM4_FORMS | DELISTING_FORMS
+            )
         except ProviderError as exc:
             log.warning("edgar document %s %s failed: %s", sym, f.accession, exc)
             errors.append(f"{sym} {f.accession}: {exc}")

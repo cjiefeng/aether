@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "yfinance>=1.7",
     "numpy>=2.0",
+    "tigeropen>=3.3",
 ]
 
 [dependency-groups]
@@ -61,7 +62,7 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # Untyped third-party libraries are wrapped behind typed interfaces (spec §2).
-module = ["apscheduler.*", "yfinance.*", "pandas.*"]
+module = ["apscheduler.*", "yfinance.*", "pandas.*", "tigeropen.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

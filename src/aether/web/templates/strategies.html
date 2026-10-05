@@ -58,7 +58,7 @@
 <section class="card" id="profile-{{ p.name }}">
   <div class="card-head">
     <h2>{{ p.name|capitalize }}</h2>
-    <span class="muted small">QTUM ≥ {{ (p.selection.min_qtum * 100)|round|int }}%,
+    <span class="muted small">QTUM fixed at {{ ((p.selection.qtum_weight if p.selection.qtum_weight is defined else p.selection.min_qtum) * 100)|round|int }}%,
       ≤ {{ (p.selection.max_per_name * 100)|round|int }}% per pure-play;
       ranked by {{ "lowest CVaR95" if p.selection.rank_metric == "cvar95_low" else "highest Sortino" }}</span>
   </div>

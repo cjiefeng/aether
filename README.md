@@ -3,14 +3,14 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M4** (backtest lab + model strategies). Phase 1 (M0–M3: prices, SEC filings and deterministic RISK rules, Telegram alerts) is done, and Phase 1b has started: dividends, total-return backtests and one model strategy per risk profile on the Strategies page. There's no LLM usage yet.
+Status: **M5** (password, holdings & rebalance). Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. There's no LLM usage yet.
 
 ## ⚠️ LAN only: never expose it to the internet
 
-The dashboard has **no login**. It's meant only for the owner's local network.
+The dashboard has **one site-wide password** (no user accounts) and is meant only for the owner's local network. It runs over **plain HTTP**, so the password and session cookie can be sniffed by anyone on the same network; TLS is out of scope.
 
 - **Do not** port-forward `8080` on your router, and don't put it behind a public tunnel (ngrok, Cloudflare Tunnel, Tailscale Funnel, etc.).
-- There's no IP allow-list in the app. Whether the dashboard is reachable depends entirely on your network boundary and host firewall: anyone who can reach port 8080 can view it.
+- There's no IP allow-list in the app. Whether the dashboard is reachable depends on your network boundary and host firewall; the password is the only gate behind them.
 - Any action that triggers work (the `commands` queue) needs a CSRF token and is rate-limited to 10 per hour.
 
 ## Requirements
@@ -24,6 +24,7 @@ cp .env.example .env
 chmod 600 .env          # deploy.sh refuses to start if .env is readable by others
 # edit .env: SEC_USER_AGENT="Your Name you@example.com" (required for EDGAR) and
 #            MASSIVE_API_KEY (price fallback, free tier)
+make hash-password      # prompts for the dashboard password; paste both printed lines into .env
 make hooks              # enable the gitleaks pre-commit hook (runs in Docker)
 ./deploy.sh             # pull latest main, build, start, wait until healthy
 ```
@@ -101,16 +102,46 @@ Delivery:
 |---|---|
 | Dividends | Cash dividends per share (split-adjusted) for QTUM, the pure-plays, QQQ and SOXX over 2 years: **yfinance**, falling back to **Massive** `/stocks/v1/dividends` only on an error (an empty result is normal). Table `dividends`. |
 | Total return | `TR_t = TR_{t-1} · (close_t + dividend_t) / close_{t-1}`, computed in code from `prices_daily` (split-adjusted) + `dividends`, so provider conventions never mix. `prices_daily` itself stays split-adjusted. |
-| Candidates | For each profile: 4 families (`core_equal`, `core_inv_vol`, `core_min_var`, `core_momentum`) × the profile's QTUM core grid. Each holds QTUM + a pure-play sleeve with a per-name cap; sleeve weight the caps can't place goes to QTUM (there is no cash sleeve). |
+| Candidates | For each profile: 4 families (`core_equal`, `core_inv_vol`, `core_min_var`, `core_momentum`) at the profile's **fixed QTUM weight** (safe 75%, medium 45%, aggressive 15%; M5). The backtest picks only the sleeve method. Per-name caps 10% / 20% / 35%; sleeve weight the caps can't place goes to QTUM (there is no cash sleeve). |
 | Backtest | Walk-forward on QTUM's sessions. Weights for session *t* use data up to *t−1* only; 120-session estimation window; a name joins after 60 daily returns; monthly rebalance; 10 bps per unit of turnover. Metrics cover only the out-of-sample sessions. |
-| Selection | Drop candidates that break the profile's limits (relative to QTUM's own out-of-sample volatility and max drawdown), rank by the profile metric (safe: lowest CVaR95; medium/aggressive: highest Sortino), tie-break on max drawdown, then ID. If nothing qualifies, the page says **"No qualifying strategy"** with the reason. |
+| Selection | Drop candidates that break the profile's limits, if any are set (relative to QTUM's own out-of-sample volatility and max drawdown; from M5 they're `null`, shown but not enforced, because the mandate accepts a 100% drawdown), rank by the profile metric (safe: lowest CVaR95; medium/aggressive: highest Sortino), tie-break on max drawdown, then ID. If nothing qualifies, the page says **"No qualifying strategy"** with the reason. |
 | Storage | `strategy_runs` (one per distinct `as_of` + input hash), `strategy_metrics`, `strategy_weights` (current targets, read by M5), `strategy_curves` (equity curves, latest 30 runs only). |
 
 - **When:** daily 07:10 SGT (dividends, then backtests), a startup catch-up 5 minutes after boot if the last ok run is over 24 h old, and **Recompute** on `/strategies` (CSRF, rate-limited).
 - **Deterministic:** the input hash covers closes, dividends, `config/strategies.yaml` and an algorithm version. Same hash → no new run; stored JSON is canonical, so identical inputs give byte-identical rows.
-- **Parameters** live in `config/strategies.yaml` (numbers only, unknown keys rejected): estimation window, cost, momentum lookback, and per profile the minimum QTUM weight, per-name cap, volatility/drawdown limits, ranking metric and QTUM grid.
+- **Parameters** live in `config/strategies.yaml` (numbers only, unknown keys rejected): estimation window, cost, momentum lookback, and per profile the fixed QTUM weight, per-name cap, volatility/drawdown limits and ranking metric.
 - **Metric definitions** (risk-free rate 0, 252 sessions/year): CAGR, total return, volatility, downside deviation, max drawdown + duration, historical daily VaR95/CVaR95, Sharpe, Sortino, Calmar, beta and Jensen's alpha vs QQQ and QTUM, tracking error and information ratio, up/down capture vs QQQ, worst month, % positive months, average turnover. Exact formulas are in `portfolio/metrics.py`.
 - **Known limits:** only about 2 years of prices (QNT and INFQ have much less, and the page says how much), a small concentrated universe, and daily closes only.
+
+## Password, holdings & rebalance (M5)
+
+**Login (S2).** One password, stored only as an scrypt hash (`AETHER_DASHBOARD_PASSWORD_HASH`, format `scrypt:n:r:p:salt:hash`). `make hash-password` prompts for it and prints the hash plus a random `AETHER_SESSION_SECRET`; both go in `.env` and only to the `app` service. The app **refuses to start** without both. A login sets an HMAC-signed, HttpOnly, SameSite=Strict cookie for 30 days; changing the password logs every browser out. After 5 failed logins in 15 minutes from one IP, further attempts get 429 (counted in memory, so an app restart resets them). Failed logins are logged with the IP, never the password. Every route needs a session except `/login`, `/healthz` and static files.
+
+**Holdings.** `/holdings` holds the sleeve: QTUM, the pure-plays and USD cash (nothing else), with optional average cost per share. Saving queues an `update_holdings` command (CSRF, rate-limited); the worker applies it and writes `holdings_history`. The dashboard never writes holdings. Holdings never leave the machine and never go into an LLM prompt. A deprecated `config/positions.yaml` is imported once at worker startup if present (the file is docker-ignored, so in Docker this only happens if you mount it).
+
+**Monthly targets (§6.6).** The selected profile's targets are **published on the 1st at 10:30 SGT** (retried on the 2nd if it failed), or when you press **Publish targets now**. Between publishes they don't move. The very first publish happens as soon as a backtest exists.
+
+**Research overlay, layer 1 (§6.6.1).** At each publish, filing hard rules set a pure-play's weight to 0:
+- going concern in its latest 10-K/10-Q;
+- an 8-K Item 3.01 listing-compliance notice (active for 180 days);
+- acquisition or delisting: Form 25 / 25-NSE, Form 15-12B / 15-12G, or 8-K Item 5.01.
+
+Freed weight goes to the other pure-plays pro rata, up to their caps; the rest goes to QTUM. Each target shows its chain, e.g. `base 6.3% → going concern (event #812) → 0.0%`, linked to the filing. To clear a reviewed filing (say, a Form 25 for an exchange transfer), add its accession to `overlay.cleared_accessions` in `config/strategies.yaml`.
+
+**Off-cycle review.** An event with materiality ≥4 on a pure-play sends one Telegram alert suggesting a review. Targets change only if you press **Publish targets now**, which cites the event.
+
+**Rebalance plan.** Recomputed daily (07:10 SGT) and after any update, against the published targets. A holding trades only if its drift is ≥3 pp or ≥25% of its target and the trade is ≥$100. Sells come first, whole shares by default. "New cash only" mode never sells. Names that qualify but can't be funded say "needs cash". The plan is deterministic (input hash stored).
+
+**Review pack (§6.9).** Built on the 1st with the publish: targets with their chains, the plan, drift, value in USD and SGD, open risk flags, upcoming earnings and lock-ups. It's on `/review`, and a plain-text Telegram version goes out once per month. That version carries target weights, flags, dates and the number of trades only: no share counts, dollar values or account number.
+
+**USD/SGD (reporting only).** Daily 06:50 SGT from yfinance `SGD=X`, falling back to the ECB reference rates (EUR cross). Used only to show values in SGD.
+
+**Options snapshot (§6.8, research only).** Daily 06:40 SGT from yfinance for QTUM and the pure-plays: ATM IV at 30/60/90 days (variance-interpolated between listed expiries, never extrapolated), and put/call volume and open-interest ratios. Contracts must pass quality gates (`config/options.yaml`); a thin chain is stored as null with a reason. Options never feed sizing or trades. Analytics and the ticker-page panel come in M8. Tiger option chains aren't used: Tiger sells API option quotes as a separate paid permission.
+
+**Tiger Brokers (optional, read-only, S8).** Set `TIGER_ID`, `TIGER_PRIVATE_KEY` (RSA key body; PEM headers and `\n` escapes are fine) and `TIGER_ACCOUNT`. They go to the worker only. Then switch "Holdings source" to Tiger. A daily 07:05 SGT job and **Sync from Tiger** replace the share counts of QTUM and the pure-plays with your account's positions. Other positions are ignored (only counted), and cash stays manual. A failed sync keeps the last snapshot with a "stale since" banner.
+- **The key can trade.** Tiger offers no read-only API key, so Aether walls it off in code: only `providers/tiger.py` may import `tigeropen`, it exposes positions only, and `scripts/check_broker_readonly.py` (in `make lint`) fails on any order method or stray import. Use a dedicated key and revoke it if unused.
+- The SDK sends a `device_id` (a MAC address) with requests; inside Docker that's the container's virtual MAC. Dynamic-domain discovery is off, so it talks only to `openapi.tigerfintech.com`.
+- Positions and the account number never reach logs, alerts or prompts; the page shows the account masked (last 4 digits).
 
 ## Dashboard
 
@@ -120,12 +151,16 @@ Delivery:
   - A ticker table (last close, 1d/30d change, distance from the 52-week high, as-of date, provider).
   - The watchlist's weight in QTUM.
   - Open risk flags, recent alerts and RISK filings from the last 30 days.
+  - Position drift vs the selected profile, when holdings are saved (M5).
 - `/t/<SYMBOL>`: price and volume chart plus a summary. For pure-plays it also shows:
   - open risk flags, lock-ups (with the prospectus excerpt) and earnings dates
   - classified SEC events, a shares-outstanding chart (XBRL) and the capital-structure table
   - Form 4 insider transactions (10b5-1 badge) and the filings list with each rule hit.
   All SEC links go to EDGAR.
 - `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
+- `/holdings`: holdings and cash (editable, or read-only rows in Tiger mode), settings (profile, whole/fractional shares, new-cash-only, holdings source), published targets with each overlay chain, off-cycle events and **Publish targets now**, and the rebalance plan with USD and SGD values (M5).
+- `/review`: monthly review packs, latest first (M5).
+- `/login`: the password form (M5).
 - `/alerts`: delivery status (Telegram or dashboard only, and why), the last 100 alerts, and **Send test alert**.
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
 - `/health`: DB, schema and last run per job.
@@ -155,7 +190,8 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `./deploy.sh` | Pull latest `main`, rebuild and (re)start the stack (`worker` = single writer + scheduler, `app` = read-only dashboard) |
 | `make down` / `logs` / `ps` | Stop / tail / inspect the stack |
 | `make test` | pytest in the dev container. Network is blocked (`pytest-socket`); tests use a temp-file SQLite DB with prod pragmas and migrations |
-| `make lint` | ruff, ruff format check, `mypy --strict`, the `\|safe`/`Markup` ban, and `pip-audit` on the hashed lockfile |
+| `make lint` | ruff, ruff format check, `mypy --strict`, the `\|safe`/`Markup` ban, the read-only broker check, and `pip-audit` on the hashed lockfile |
+| `make hash-password` | Prompt for the dashboard password; print `AETHER_DASHBOARD_PASSWORD_HASH` and a fresh `AETHER_SESSION_SECRET` |
 | `make fmt` | ruff format + autofix |
 | `make migrate` | `alembic upgrade head` (the worker also does this at startup) |
 | `make backup` | Online SQLite backup to `/data/backups/aether-YYYYMMDD.db` (14 days kept, mode 0600) |
@@ -165,6 +201,7 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `make eval` | Classifier evals (from M7) |
 | `make smoke` | Live check against the running stack (never part of acceptance) |
 | `make record-cassette NAME=… URL=… [UA=…] [GZIP=1]` | Record one live HTTP response as a test fixture (manual; SEC needs `UA`, large documents use `GZIP=1`) |
+| `make record-options SYMBOL=…` | Record one real yfinance option chain as a test fixture (manual, network) |
 
 ## Layout
 
