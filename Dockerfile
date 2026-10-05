@@ -32,10 +32,12 @@ RUN useradd --uid 10001 --system --no-create-home --shell /usr/sbin/nologin aeth
     && chmod 0700 /data
 COPY --from=build /opt/venv /opt/venv
 COPY config /app/config
+COPY evals/results /app/evals/results
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     AETHER_CONFIG_DIR=/app/config \
+    AETHER_EVAL_RESULTS_DIR=/app/evals/results \
     AETHER_DB_PATH=/data/aether.db
 WORKDIR /app
 USER aether

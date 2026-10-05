@@ -75,7 +75,7 @@ def _complete(client, **kw):  # type: ignore[no-untyped-def]
 
 def test_budget_breach_stops_calls(rw_engine: Engine, migrated_db: Path) -> None:
     """Spec M6 acceptance: a budget breach stops calls (no HTTP request is sent)."""
-    _spend(rw_engine, "2.99")  # today, SGT
+    _spend(rw_engine, "4.99")  # today, SGT
     api = FakeApi(messages=[message([{"type": "text", "text": "hi"}])])
     client = make_client(rw_engine, llm_settings(migrated_db), api, clock=_clock)
     with pytest.raises(BudgetExceeded):
@@ -107,7 +107,7 @@ def test_budget_counts_worst_case_estimate(rw_engine: Engine, migrated_db: Path)
         messages=[{"role": "user", "content": "ACME?"}],
         max_tokens=500,
     )
-    _spend(rw_engine, str(Decimal("3.00") - est + Decimal("0.000001")))
+    _spend(rw_engine, str(Decimal("5.00") - est + Decimal("0.000001")))
     api = FakeApi(messages=[message([])])
     client = make_client(rw_engine, llm_settings(migrated_db), api, clock=_clock)
     with pytest.raises(BudgetExceeded):

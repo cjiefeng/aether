@@ -7,6 +7,7 @@ import os
 
 from sqlalchemy import Engine
 
+from aether.classify.eval import sync_eval_results
 from aether.config import Settings, get_settings, load_watchlist
 from aether.db import migrate
 from aether.db.dialect import upsert
@@ -29,7 +30,8 @@ def sync_config(engine: Engine, settings: Settings) -> None:
     with write_tx(engine) as conn:
         upsert(conn, tickers, rows, key_cols=["symbol"])
         sync_facts(conn, facts)
-    log.info("synced %d tickers and %d facts", len(rows), len(facts))
+    evals = sync_eval_results(engine, settings.eval_results_dir)
+    log.info("synced %d tickers, %d facts and %d new eval results", len(rows), len(facts), evals)
 
 
 def startup(settings: Settings) -> Engine:

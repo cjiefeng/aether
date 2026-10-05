@@ -46,7 +46,7 @@ def _seed(engine: Engine) -> None:
             insert(llm_calls).values(
                 purpose="research_sweep",
                 model="claude-opus-5-5",
-                cost_micros=Decimal("2.5"),
+                cost_micros=Decimal("4.15"),
                 created_at=to_iso(max(NOW, sgt_day_start(NOW))),
             )
         )
@@ -65,8 +65,8 @@ def test_news_page_renders_escaped(rw_engine: Engine, client: TestClient) -> Non
     assert "&lt;b&gt;excerpt" in r.text
     assert 'href="https://trade-press.test/1" rel="noopener noreferrer nofollow"' in r.text
     assert "T2" in r.text and "T3" in r.text
-    assert "$2.50" in r.text and "83%" in r.text and "over 80%" in r.text
-    assert "unclassified" in r.text
+    assert "$4.15" in r.text and "83%" in r.text and "over 80%" in r.text
+    assert "pending" in r.text  # not classified yet
     _no_inline(r.text)
 
 

@@ -26,8 +26,8 @@ services:
       MASSIVE_API_KEY: ${MASSIVE_API_KEY:-}
       # Root FS is read-only; library caches (yfinance) go to the /tmp tmpfs.
       XDG_CACHE_HOME: /tmp/cache
-      DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-3.00}
-      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-}
+      DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-5.00}
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-claude-sonnet-5-5}
       SYNTH_MODEL: ${SYNTH_MODEL:-}
       # M6: research runs (web search). The 12-month backfill runs once, automatically, when an
       # API key is set (owner decision 2026-10-05); RESEARCH_BACKFILL=false turns it off.
@@ -62,7 +62,7 @@ services:
       AETHER_DASHBOARD_PASSWORD_HASH: ${AETHER_DASHBOARD_PASSWORD_HASH:-}
       AETHER_SESSION_SECRET: ${AETHER_SESSION_SECRET:-}
       # Display only (News page spend card); the worker enforces it.
-      DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-3.00}
+      DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-5.00}
     ports:
       - "8080:8082"
     # rw at the filesystem level so the WAL reader can map -shm; the SQLite connection itself is mode=ro.

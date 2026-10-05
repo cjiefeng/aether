@@ -183,3 +183,36 @@ def llm_config() -> LlmConfig:
 def make_client(engine: Any, settings: Settings, api: FakeApi, **kw: Any) -> LlmClient:
     http = anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(api.handler))
     return LlmClient(engine, settings, llm_config(), http_client=http, **kw)
+
+
+CLASSIFIER_MODEL = "claude-sonnet-5-5"
+
+
+def classify_payload(**overrides: Any) -> dict[str, Any]:
+    """A valid classifier answer for the synthetic ACME item in tests (override any field)."""
+    p: dict[str, Any] = {
+        "class": "SIGNAL",
+        "category": "contract_with_value",
+        "materiality": 4,
+        "direction": 1,
+        "directions": [{"symbol": "ACME", "direction": 1}],
+        "confidence": 0.8,
+        "rationale": "Synthetic contract with a disclosed value.",
+        "evidence_quote": "synthetic contract",
+        "injection_suspected": False,
+    }
+    p.update(overrides)
+    return p
+
+
+def classify_message(
+    payload: dict[str, Any] | str, *, stop_reason: str = "end_turn", msg_id: str = "msg_cls_0001"
+) -> dict[str, Any]:
+    text = payload if isinstance(payload, str) else json.dumps(payload)
+    m = message(
+        [{"type": "thinking", "thinking": "", "signature": "c2ln"}, {"type": "text", "text": text}],
+        model=CLASSIFIER_MODEL,
+        msg_id=msg_id,
+    )
+    m["stop_reason"] = stop_reason
+    return m

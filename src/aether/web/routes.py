@@ -8,9 +8,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from aether import market, news_view, sec_view
+from aether import feed_view, market, news_view, sec_view
 from aether.alerts import view as alerts_view
-from aether.config import PROFILES, load_rubric
+from aether.classify.prompt import prompt_version
+from aether.config import CATEGORY_CLASS, PROFILES, load_rubric
 from aether.db import health
 from aether.db.commands import count_recent_commands, enqueue_command
 from aether.portfolio import holdings_view
@@ -163,6 +164,48 @@ def news_page(request: Request, symbol: str = "", origin: str = "") -> HTMLRespo
             "backfill": news_view.backfill_summary(engine),
             "feeds": news_view.feeds(engine),
             "stale": news_view.rss_stale(engine),
+        },
+    )
+
+
+@router.get("/feed", response_class=HTMLResponse)
+def feed_page(
+    request: Request,
+    cls: str = "",
+    category: str = "",
+    symbol: str = "",
+    min_materiality: str = "1",
+    tier: str = "",
+    noise: str = "",
+) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    known = [s for s, t in market.load_tickers(engine) if t in ("etf", "pure_play")]
+    f = feed_view.FeedFilters.parse(
+        klass=cls,
+        category=category,
+        symbol=symbol,
+        min_materiality=min_materiality,
+        tier=tier,
+        noise=noise,
+        symbols=known,
+    )
+    version = prompt_version(load_rubric(request.app.state.settings.config_dir).classifier)
+    return _render(
+        request,
+        "feed.html",
+        {
+            "rows": feed_view.feed_rows(engine, f),
+            "f": f,
+            "counts": feed_view.feed_counts(engine),
+            "failed": feed_view.failed_rows(engine),
+            "symbols": known,
+            "classes": feed_view.CLASSES,
+            "categories": sorted(CATEGORY_CLASS),
+            "tiers": feed_view.TIERS,
+            "origin_labels": feed_view.ORIGIN_LABELS,
+            "prompt_version": version,
+            "classifier_model": request.app.state.settings.classifier_model,
+            "eval": feed_view.latest_eval(engine, version),
         },
     )
 

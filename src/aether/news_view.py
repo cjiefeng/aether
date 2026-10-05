@@ -45,6 +45,8 @@ class NewsRow:
     symbols: tuple[str, ...]
     classified: bool
     date_retrieved: bool
+    cls: str | None = None  # M7
+    materiality: int | None = None
 
 
 def news_rows(
@@ -63,6 +65,8 @@ def news_rows(
             events.c.excerpt,
             events.c.raw,
             event_classifications.c.event_id.label("classified"),
+            event_classifications.c["class"].label("cls"),
+            event_classifications.c.materiality,
         )
         .outerjoin(event_classifications, event_classifications.c.event_id == events.c.id)
         .where(events.c.origin.in_(NEWS_ORIGINS), events.c.quarantined == 0)
@@ -115,6 +119,8 @@ def news_rows(
             symbols=tuple(syms.get(r.id, ())),
             classified=r.classified is not None,
             date_retrieved='"date_source": "retrieved"' in (r.raw or ""),
+            cls=r.cls,
+            materiality=r.materiality,
         )
         for r in rows
     ]

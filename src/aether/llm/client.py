@@ -12,8 +12,9 @@ Every call:
 - is logged as one `llm_calls` row (tokens, searches, cost; never prompt text), written in a short
   transaction **after** the response.
 
-Message Batches (the backfill) bypass the daily soft budget by owner decision (2026-10-05) and are
-excluded from today's spend; each result is still logged with `batch = 1` at the batch price.
+Message Batches (the research backfill, M6, and the classifier backlog, M7) bypass the daily soft
+budget by owner decision (2026-10-05) and are excluded from today's spend; each result is still
+logged with `batch = 1` at the batch price.
 
 Redaction: the SDK and HTTP loggers are held at WARNING, and API errors are re-raised as
 `LlmError` with the key scrubbed and no chained exception.
@@ -43,6 +44,9 @@ log = logging.getLogger(__name__)
 WEB_SEARCH_TOOL = "web_search_20260209"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 REQUEST_TIMEOUT_S = 300.0
+# Models that accept the server-side refusal fallback (`fallbacks: "default"`); others get no
+# fallback parameter. The Batches API rejects it for every model.
+FALLBACK_MODELS = frozenset({"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"})
 
 for _name in ("anthropic", "anthropic._base_client", "httpx", "httpx2", "httpcore"):
     logging.getLogger(_name).setLevel(logging.WARNING)
@@ -184,9 +188,11 @@ class LlmClient:
         max_tokens: int,
         tools: Sequence[Mapping[str, Any]] | None = None,
         effort: str | None = None,
+        output_format: Mapping[str, Any] | None = None,
         research_run_id: int | None = None,
     ) -> dict[str, Any]:
-        """One Messages API call. Returns the response as a JSON dict."""
+        """One Messages API call. Returns the response as a JSON dict. `output_format` is a
+        structured-output format (`{"type": "json_schema", "schema": ...}`)."""
         _check_tools(purpose, tools)
         price_for(self._cfg, model)  # UnknownModel before anything else
         estimate = estimate_usd(
@@ -214,13 +220,19 @@ class LlmClient:
             "max_tokens": max_tokens,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": list(messages),
-            "betas": [FALLBACK_BETA],
-            "fallbacks": "default",
         }
+        if model in FALLBACK_MODELS:
+            params["betas"] = [FALLBACK_BETA]
+            params["fallbacks"] = "default"
         if tools:
             params["tools"] = list(tools)
+        output_config: dict[str, Any] = {}
         if effort:
-            params["output_config"] = {"effort": effort}
+            output_config["effort"] = effort
+        if output_format:
+            output_config["format"] = dict(output_format)
+        if output_config:
+            params["output_config"] = output_config
         try:
             msg = self._client.beta.messages.create(**params)
         except anthropic.APIError as exc:
@@ -247,11 +259,16 @@ class LlmClient:
 
     # ------------------------------------------------------------------ Message Batches
 
-    def submit_batch(self, requests: Sequence[tuple[str, Mapping[str, Any]]]) -> str:
-        """Submit `(custom_id, params)` requests. No budget guard (owner decision; see module doc).
-        Tools in params are checked like synchronous research calls."""
+    def submit_batch(
+        self,
+        requests: Sequence[tuple[str, Mapping[str, Any]]],
+        purpose: str = "research_backfill",
+    ) -> str:
+        """Submit `(custom_id, params)` requests. No budget guard (owner decisions 2026-10-05: the
+        research backfill and the classifier backlog; see module doc). Tools in params are checked
+        against `purpose` like synchronous calls."""
         for _cid, p in requests:
-            _check_tools("research_backfill", p.get("tools"))
+            _check_tools(purpose, p.get("tools"))
             price_for(self._cfg, str(p.get("model")))
         try:
             batch = self._client.messages.batches.create(
@@ -284,7 +301,12 @@ class LlmClient:
             raise LlmError(self._scrub(f"{type(exc).__name__}: {exc}")[:300]) from None
 
     def record_batch_result(
-        self, *, purpose: str, model: str, message: Mapping[str, Any], research_run_id: int
+        self,
+        *,
+        purpose: str,
+        model: str,
+        message: Mapping[str, Any],
+        research_run_id: int | None = None,
     ) -> Decimal:
         cost = cost_usd(self._cfg, model, usage_from_dict(message.get("usage")), batch=True)
         self._log(

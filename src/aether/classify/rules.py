@@ -2,14 +2,18 @@
 
 EDGAR filings are T1, so trust-tier caps (M7) never lower these materialities. Parameters live in
 `config/rubric.yaml`; titles and rationales are built from filing metadata only (no prose).
+
+M7 adds `classify_news`: source-domain and headline-pattern rules for news (analyst ratings,
+listicles). A company's own (T1) release always goes to the LLM classifier instead.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from aether.config import Rubric
+from aether.config import ClassifierRubric, Rubric
 from aether.edgar.form4 import InsiderTxn
 from aether.edgar.submissions import FilingMeta
 
@@ -132,3 +136,49 @@ def classify_filing(
     if others:
         best = replace(best, rationale=best.rationale + f" Also matched: {', '.join(others)}.")
     return best
+
+
+# --------------------------------------------------------------------------- news (M7)
+
+
+def _noise_hit(
+    rule_id: str, category: str, materiality: int, confidence: float, why: str
+) -> RuleHit:
+    return RuleHit(
+        rule_id=rule_id,
+        cls="NOISE",
+        category=category,
+        materiality=materiality,
+        direction=0,
+        confidence=confidence,
+        title="",
+        rationale=why,
+    )
+
+
+def classify_news(title: str, domain: str, tier: str, rubric: ClassifierRubric) -> RuleHit | None:
+    """A headline/domain rule hit for a news item, or None (left for the LLM)."""
+    if tier == "T1":
+        return None
+    d = domain.lower().rstrip(".")
+    for nd in rubric.noise_domains:
+        if d == nd or d.endswith("." + nd):
+            return _noise_hit(
+                "news_noise_domain",
+                "listicle_or_momentum",
+                1,
+                1.0,
+                f"Source domain {nd} is configured as a noise domain; rule news_noise_domain.",
+            )
+    for rule in rubric.headline_rules:
+        for pattern in rule.patterns:
+            if re.search(pattern, title):
+                return _noise_hit(
+                    rule.rule_id,
+                    rule.category,
+                    rule.materiality,
+                    rule.confidence,
+                    f"Headline matches a {rule.category.replace('_', ' ')} pattern; "
+                    f"rule {rule.rule_id}.",
+                )
+    return None

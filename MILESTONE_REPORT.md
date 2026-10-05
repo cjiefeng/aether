@@ -1,5 +1,110 @@
 # Milestone report
 
+## M7: Classifier (2026-10-05)
+
+Every news and research item is now classified as SIGNAL, NOISE or RISK. The pipeline (spec §5.2) is: deterministic rules first, then Claude Sonnet 5.5 with **no tools** and strict JSON validation, then trust-tier caps in code. Injection attempts are quarantined. The Feed page and `make eval` are new. EDGAR filings keep their M2 rules.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| T3-only event can't exceed materiality 2 (unit test) | ✅ | `tests/test_caps.py::test_t3_only_event_cannot_exceed_two`: raw 5 → stored 2. Also tested: a single T2 → 3; a second independent T2 or a T1 source merged in later lifts the stored value back to raw; a syndicated copy doesn't. |
+| 100% of adversarial cases flagged | ✅ (baseline) | Live baseline `make eval` (`evals/results/classify-v1-dd7bef0c.json`): **5/5 flagged, all 5 by the model itself** (the regex backstop caught 2 of them as well). Class unchanged in 5/5; materiality nudged +1 in 2/5 (see open questions). Offline: `tests/test_eval.py`, `tests/test_classify_pipeline.py::test_model_flag_quarantines_and_excludes_from_alerts` and `test_regex_backstop_quarantines_when_the_model_misses_it`. |
+| ≥85% class agreement | ⚠️ provisional 95.1% | Same run: 61 real items, 58 agree (precision/recall: SIGNAL 88%/94%, NOISE 98%/96%). **Provisional**, because the labels are my proposals; the acceptance run is after you review them (`labeled_by: owner`). |
+| ≥95% RISK recall | ❌ not measurable yet | The golden set has **0 RISK rows**. None of the 116 real RSS items ingested (live, recorded and older feed pages) was RISK news for the watchlist. Dilution, insider and compliance risk come through EDGAR and the deterministic rules. Every RISK category is listed as under-sampled (`evals/README.md`); the research backfill on first deploy should supply real ones. |
+| Golden set from real ingested items, owner labels | ⚠️ awaiting your review | `evals/classifier_golden.jsonl`: 61 rows, each the title, excerpt and URL exactly as Aether's RSS ingest stored them. 16 SIGNAL and 45 NOISE, 42 T1 and 19 T2. All `labeled_by: claude_proposed`. |
+| Tests green, no network | ✅ | `make test`: 477 passed. The classifier talks to the real SDK over an in-process fake transport. |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 106 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0008_classify`** (hand-written, STRICT):
+  - `event_tickers.direction` (per-ticker direction; rebuilt keeping WITHOUT ROWID);
+  - `classify_state` (retry / batched / failed / done, attempts, batch and custom ids);
+  - `eval_runs` (one row per eval result).
+- **Rubric (`config/rubric.yaml` → `classifier:`)**:
+  - the spec §5.1 categories with class, a typical materiality range and a definition, and 1–5 materiality anchors;
+  - headline rules (analyst rating, listicle), an empty `noise_domains` list and the injection backstop regexes.
+  - Strict pydantic: unknown keys are rejected; the category/class pairs must equal the spec mapping, which is also the DB CHECK; regexes must compile.
+- **Classifier (`classify/`)**:
+  - `prompt.py`: system prompt = rubric + S1 notice. User message = tickers, aliases, source, tier, date and the wrapped title and excerpt; nothing else. A fixed JSON schema. `prompt_version` hashes the template, the schema and the rubric section, so any edit is a new version.
+  - `llm.py`: schema validation plus the checks above (category in class, verbatim evidence quote, exact ticker coverage, refusal and truncation). Invalid answers are rejected, never repaired.
+  - `caps.py`: the S1 caps, re-applied whenever a source merges (`news_events._recount`).
+  - `rules.py`: `classify_news` for non-T1 headlines.
+  - `pipeline.py`:
+    - rules → sync calls under the soft budget (max 60 per run; stops on a budget refusal; 3 API errors in a row fail the job);
+    - more than 25 waiting → one Message Batch, with a poller to ingest the results;
+    - one short write per result: classification, directions, caps, quarantine.
+- **LLM wrapper**: `output_format` (structured outputs). `fallbacks: "default"` is sent only to models that accept it. `submit_batch` checks tools per purpose.
+- **Jobs**: `classify` runs every 10 minutes and right after RSS, a research sweep or a backfill poll. `classify_batch_poll` runs while a batch is open. Neither writes a `job_runs` row when idle.
+- **Eval (`classify/eval.py`, `make eval`)**:
+  - runs the production pipeline on the golden set plus 5 synthetic adversarial cases, against a throwaway DB;
+  - reports per-class precision/recall, the confusion matrix, category agreement, materiality MAE, under-sampled categories and acceptance;
+  - writes `evals/results/<version>.json` (committed), which the worker loads into `eval_runs`.
+  - `scripts/golden_candidates.py` / `make golden-candidates DB=…` exports real events from a DB copy, read-only.
+- **Dashboard**:
+  - `/feed` (filters, NOISE hidden by default, quarantine warning, "capped from N", directions, sources with tiers, failed list, counts, latest eval for this prompt);
+  - class badges on `/news` and on the ticker news card;
+  - a Feed nav link.
+- **Config**:
+  - `CLASSIFIER_MODEL` defaults to `claude-sonnet-5-5`;
+  - `DAILY_LLM_BUDGET_USD` defaults to $5 (Settings, compose, `.env.example`);
+  - a `classify:` section in `llm.yaml`.
+
+### Decisions (deviations from the spec / plan)
+1. **Your calls (2026-10-05):**
+   - classifier Sonnet 5.5 (not the cheap tier);
+   - soft budget $5;
+   - the backlog goes through Message Batches outside the daily budget;
+   - one live baseline eval.
+2. **The golden set is news-only.** EDGAR items are classified by deterministic rules (unit-tested since M2), so they aren't part of the LLM eval. That's why RISK recall is unmeasurable for now rather than padded with rule hits.
+3. **`listicle_or_momentum` also covers "no new company fact" items**: conference participation, earnings-date notices, blogs, appointments that aren't departures. The spec has no "other" category, and these are a large share of IR feeds. It's written into the category definition, so it's part of the prompt version. Change it if you prefer a different home for them.
+4. **Headline rules skip T1 sources.** A company's own release always goes to the model, even if its headline says "upgrades".
+5. **Injection flag = model OR regex backstop.** The acceptance counts both. The report also gives the model-only rate (5/5 in the baseline).
+6. **Adversarial "unchanged" compares class and post-cap materiality** with the clean run of the same item. Quarantined items are excluded downstream regardless.
+7. **Rule hits store the headline as the evidence quote**, with direction 0 and confidence 0.9 (headline rules) or 1.0 (noise domains).
+8. **Golden ids aren't DB ids.** Each row keeps the `event_id` from the scratch ingest DB it was exported from, plus the canonical URL. Your live DB had no events yet: it's still on schema 0001, see the owner checklist.
+9. **Older feed pages (`?paged=N`) were used once** to find enough real items, through Aether's own RSS client (robots.txt respected). The scheduled ingest is unchanged.
+
+### Facts
+- No facts changed or added.
+
+### Open questions
+- **Adversarial materiality drift:** in 2 of 5 cases the model flagged the injection but still raised materiality by 1 (class unchanged). The quarantine makes this harmless downstream. If you want it fixed in the prompt, that's a new prompt version and another eval run (about $0.20).
+- **Disagreements in the baseline** (useful for your review):
+  - g026 WISeSat business combination: I said NOISE, the model said SIGNAL m_and_a.
+  - g036 QC Design 10× logical-error claim: I said NOISE synthetic_benchmark, the model said SIGNAL logical_qubit_milestone.
+  - g044 Infleqtion/Japan Moonshot "Shunkai" operational: I said SIGNAL roadmap_hit, the model said NOISE partnership_no_value.
+  - Three more agree on class but differ on category.
+- **RISK coverage:** as above. After the backfill, run `make golden-candidates` against a copy of the live DB and add real RISK items.
+- **`noise_domains` is empty.** Listing outlets as noise would be your opinion call, so I left it out.
+
+### Live check (isolated compose project `aether-m7` on 127.0.0.1:8090, its own volume and image tag; Anthropic, Telegram, Tiger, SEC and Massive blanked; a throwaway password; torn down afterwards)
+- The worker migrated a fresh DB to `0008_classify` and loaded 1 eval result into `eval_runs`. `news_rss` came back `ok` with 32 items.
+- `classify` came back `ok`, warning "ANTHROPIC_API_KEY is not set; 32 items wait for the classifier", which is the intended behaviour without a key.
+- Browser, logged in:
+  - `/feed` rendered the counts (waiting 32) and the eval line (provisional, 95% agreement, RISK n/a, 5/5 adversarial, below the bar because of RISK);
+  - `/news` showed "pending" badges;
+  - no console or CSP errors.
+- **Your `aether` stack:** its app and worker containers were stopped at 12:57:53Z (a `docker stop`/kill, not an exit on their own), while the isolated stack was coming up. I didn't send that stop: the isolated project shares no containers, volumes or network with yours. After you said it was fine, I restarted the same containers (`docker start`; no rebuild or deploy), and both report healthy. It's still running the M0 image (schema `0001_baseline`), so deploying will apply migrations 0002–0008 in one go.
+
+### Owner checklist
+- [ ] **Review the golden set:** `evals/classifier_golden.jsonl`. Fix any `label` and set `"labeled_by": "owner"` on each row. Then run `make eval` (about $0.20).
+- [ ] **Set `DAILY_LLM_BUDGET_USD=5`** in `.env`. Your `.env` still says its own value; the new default applies only when the variable is empty.
+- [ ] Review the `classifier:` section of `config/rubric.yaml` (materiality ranges, the broadened `listicle_or_momentum`, headline rules, injection patterns) and the `classify:` section of `config/llm.yaml`.
+- [ ] Optional: list noise-only domains in `noise_domains`.
+- [ ] After merging, run `./deploy.sh`. With `ANTHROPIC_API_KEY` set, the M6 research backfill submits, and its results will be classified through one Message Batch (with Sonnet 5.5, roughly $1–3 for ~1,000 items).
+- [ ] Still open from earlier milestones: `MASSIVE_API_KEY`, the Telegram bot setup and the facts not yet signed off.
+
+### How to verify
+```bash
+make test            # 477 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+make eval            # live (costs ~$0.20): golden set + adversarial, writes evals/results/
+./deploy.sh          # after merge; then open http://<lan-ip>:8080/feed
+```
+
 ## M6: News & research ingest (2026-10-05)
 
 Phase 2 starts. It adds RSS news, Claude web-search research runs (a twice-daily sweep plus a one-time 12-month backfill through the Message Batches API) and the one LLM wrapper with the soft budget guard. Everything lands as **unclassified, untrusted** events; classification is M7.
