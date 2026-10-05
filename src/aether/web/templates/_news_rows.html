@@ -1,0 +1,20 @@
+{% if rows %}
+<table>
+  <thead><tr><th>Date</th><th>Item</th><th>Tier</th><th>Sources</th><th>Tickers</th><th>Via</th></tr></thead>
+  <tbody>
+  {% for n in rows %}
+    <tr>
+      <td class="nowrap">{{ n.published_at[:10] }}{% if n.date_retrieved %} <span class="badge" title="No publication date in the source; this is when Aether found it.">found</span>{% endif %}</td>
+      <td>{{ n.url|extlink(n.title) }} <span class="muted small">{{ n.domain }}</span>
+        {% if n.excerpt %}<p class="excerpt">{{ n.excerpt }}</p>{% endif %}</td>
+      <td><span class="badge tier-{{ n.tier|lower }}">{{ n.tier }}</span></td>
+      <td class="nowrap">{{ n.independent }} independent{% if n.syndicated %} <span class="muted small">+{{ n.syndicated }} syndicated</span>{% endif %}</td>
+      <td>{{ n.symbols|join(", ") }}</td>
+      <td>{{ origin_labels.get(n.origin, n.origin) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No news items yet.</p>
+{% endif %}

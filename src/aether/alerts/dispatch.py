@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import Engine, select, update
 
@@ -157,10 +158,11 @@ def run_alerts(
     now: datetime | None = None,
     sleep: Callable[[float], None] = time.sleep,
     off_cycle_min_materiality: int | None = None,
+    llm_budget_alert: tuple[Decimal, Decimal] | None = None,
 ) -> JobResult:
     now = now or datetime.now(UTC)
     telegram = service is not None and service.blocked is None
-    candidates = collect(engine, cfg, params, now, off_cycle_min_materiality)
+    candidates = collect(engine, cfg, params, now, off_cycle_min_materiality, llm_budget_alert)
     new = enqueue(engine, candidates, telegram=telegram, now=now)
     if service is None:
         log.info("alerts: %d new (dashboard only: %s)", new, disabled_reason)

@@ -13,6 +13,8 @@ alert fire at most once however often this runs.
 - `off_cycle:{event_id}` (M5): a non-quarantined event at or above the publish threshold on a
   pure-play suggests an off-cycle review. Targets never change automatically; the owner decides
   with "Publish targets now".
+- `llm_budget:{SGT date}` (M6): today's synchronous LLM spend reached the alert fraction (80%) of
+  the daily soft budget. At 100% the LLM wrapper refuses calls.
 
 Message text is plain text built from DB fields; Telegram gets no parse_mode, so nothing in a
 filing title is interpreted.
@@ -23,8 +25,10 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, Engine, select
 
@@ -38,10 +42,11 @@ from aether.db.models import (
     facts,
     filings,
     job_runs,
+    llm_calls,
     lockups,
     tickers,
 )
-from aether.db.types import to_iso
+from aether.db.types import micros_sum, micros_to_decimal, to_iso
 from aether.providers.prices import US_EASTERN
 from aether.risk.flags import cluster_in_window, load_sales
 
@@ -395,12 +400,51 @@ def job_health(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[Alert
     return out
 
 
+SGT = ZoneInfo("Asia/Singapore")
+
+
+def llm_budget(
+    conn: Connection, budget: Decimal, fraction: Decimal, now: datetime
+) -> list[AlertCandidate]:
+    """One alert per SGT day once synchronous spend reaches `fraction` of the soft budget (batch
+    calls are excluded, as in the LLM wrapper's guard)."""
+    if budget <= 0:
+        return []
+    local = now.astimezone(SGT)
+    since = datetime.combine(local.date(), time(0), tzinfo=SGT)
+    spent = micros_to_decimal(
+        int(
+            conn.execute(
+                select(micros_sum(llm_calls.c.cost_micros)).where(
+                    llm_calls.c.created_at >= to_iso(since), llm_calls.c.batch == 0
+                )
+            ).scalar_one()
+        )
+    )
+    if spent < budget * fraction:
+        return []
+    pct = int(spent / budget * 100)
+    text = (
+        f"LLM spend today (SGT) is ${spent:.2f}, {pct}% of the ${budget:.2f} soft budget. "
+        "Calls stop at 100% until tomorrow. The Console workspace limit is the hard cap."
+    )
+    return [
+        AlertCandidate(
+            "llm_budget",
+            f"llm_budget:{local.date().isoformat()}",
+            text,
+            {"spent": str(spent), "budget": str(budget)},
+        )
+    ]
+
+
 def collect(
     engine: Engine,
     cfg: AlertsConfig,
     params: RiskFlagParams,
     now: datetime,
     off_cycle_min_materiality: int | None = None,
+    llm_budget_alert: tuple[Decimal, Decimal] | None = None,
 ) -> list[AlertCandidate]:
     with engine.connect() as conn:
         out = [
@@ -413,6 +457,7 @@ def collect(
             *lockup_reminders(conn, cfg, now),
             *earnings_reminders(conn, cfg, now),
             *job_health(conn, cfg, now),
+            *(llm_budget(conn, *llm_budget_alert, now) if llm_budget_alert else []),
         ]
     out += insider_clusters(engine, params, now)
     return [c if len(c.text) <= MAX_TEXT else _truncate(c) for c in out]

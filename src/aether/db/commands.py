@@ -29,6 +29,8 @@ ALLOWED_KINDS = frozenset(
         "update_portfolio_settings",
         "sync_holdings",
         "publish_targets",
+        # M6: an on-demand research sweep (LLM spend; budget-guarded in the worker).
+        "research_sweep",
     }
 )
 

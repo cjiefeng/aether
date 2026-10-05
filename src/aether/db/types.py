@@ -11,8 +11,9 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 
-from sqlalchemy import Integer
+from sqlalchemy import Integer, func, type_coerce
 from sqlalchemy.engine import Dialect
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.types import TypeDecorator
 
 MICROS = Decimal(1_000_000)
@@ -63,3 +64,9 @@ def i64_to_u64(value: int) -> int:
     if not -(1 << 63) <= value <= _I64_MAX:
         raise ValueError("value out of signed 64-bit range")
     return value + _U64 if value < 0 else value
+
+
+def micros_sum(col: ColumnElement[Any]) -> ColumnElement[int]:
+    """SUM over a `Micros` column as raw INTEGER micros (0 when empty). Without the coercion the
+    result would be processed as `Decimal` dollars, like the column."""
+    return func.coalesce(func.sum(type_coerce(col, Integer)), 0)

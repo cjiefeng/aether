@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M5** (password, holdings & rebalance). Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. There's no LLM usage yet.
+Status: **M6** (news & research ingest), the first Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 adds RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. News items are stored **unclassified** until M7.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -143,6 +143,39 @@ Freed weight goes to the other pure-plays pro rata, up to their caps; the rest g
 - The SDK sends a `device_id` (a MAC address) with requests; inside Docker that's the container's virtual MAC. Dynamic-domain discovery is off, so it talks only to `openapi.tigerfintech.com`.
 - Positions and the account number never reach logs, alerts or prompts; the page shows the account masked (last 4 digits).
 
+## News & research (M6)
+
+**RSS (no LLM, hourly).** Feeds are listed in `config/sources.yaml`:
+- **T1 (company IR):** Rigetti, Quantinuum and Infleqtion. Every item is kept and pinned to its ticker.
+- **T2 (industry press):** The Quantum Insider and Quantum Computing Report. An item is kept only if it names a watchlist company (`aliases` in `watchlist.yaml`, or an uppercase ticker) or a theme keyword. Everything else is dropped.
+
+How feeds are fetched:
+- https only, with conditional GET (ETag / Last-Modified), a 5 MB cap and DTD-rejecting XML parsing.
+- robots.txt is checked; an explicit `Disallow` skips the feed.
+- **Not covered:** IonQ's and D-Wave's IR feeds and HPCwire's feed answer 403 to non-browser clients. IonQ and D-Wave releases still arrive through EDGAR 8-Ks and research runs.
+
+**Dedupe.** URLs are canonicalized (tracking params, `www.`, fragments and trailing slashes removed). A headline within 3 bits of simhash of a news item from the past 7 days is treated as the same story and becomes another source of that event.
+- A copy on a press-release wire or mirror (`syndicators`), or one with the same body text, is **syndicated**.
+- `independent_source_count` counts distinct registrable domains among the non-syndicated sources, so a release copied to three sites counts once.
+- Excerpts are capped at 500 chars, with a DB check at 600.
+
+**LLM wrapper (`llm/client.py`).** The only module that may import `anthropic` (`scripts/check_llm_imports.py` in `make lint` enforces this).
+- **Model must be priced:** every call needs a price in `config/llm.yaml`, or it's refused.
+- **Soft budget:** a call runs only if today's spend (SGT day) plus the call's worst case fits `DAILY_LLM_BUDGET_USD` (default $3). Otherwise it's refused and logged as `budget_refused`, and no request is sent. One Telegram/dashboard alert goes out per day at 80%.
+- **The hard cap is your Console workspace spend limit.**
+- **Tools:** only `research*` purposes may carry tools, and then only web search. Classification and synthesis never get tools.
+- **Logging:** every call is a row in `llm_calls` (tokens, searches, cost; never prompt text). The API key is scrubbed from errors and the HTTP loggers stay at WARNING.
+
+**Research runs (`research/`, `RESEARCH_MODEL`, default `claude-opus-5-5`).** Claude with the web-search tool, limited to the T1+T2 domains in `sources.yaml`, looks for reports about one name in a date window.
+- **Identifiers only:** the prompt carries the ticker, company name and dates, nothing else.
+- **No fabricated items:** events come only from the search engine's result blocks (URL and title), with the excerpt taken from a verbatim citation. The model's own text is kept for audit only and never becomes an item.
+- **Dates:** from the result's `page_age`. Items without a date are marked "found" and dated when Aether found them.
+- **Sweep:** 08:00 and 20:00 SGT for QTUM and the five pure-plays, last 3 days, ≤5 searches each. Roughly $1.5–2/day with Opus, so most of the $3 soft budget. There's also **Run research sweep now** on `/news`.
+- **Backfill:** **runs once, automatically**, a couple of minutes after the worker first starts with `ANTHROPIC_API_KEY` set. It's one Message Batch: 6 names × 12 monthly windows, ≤5 searches each.
+  - Estimated **$10–15 one-time** with Opus (tokens at the 50% batch price, searches at $10/1,000).
+  - It sits outside the daily soft budget by your decision; only the Console limit caps it.
+  - `RESEARCH_BACKFILL=false` turns it off.
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -160,6 +193,7 @@ Freed weight goes to the other pure-plays pro rata, up to their caps; the rest g
 - `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
 - `/holdings`: holdings and cash (editable, or read-only rows in Tiger mode), settings (profile, whole/fractional shares, new-cash-only, holdings source), published targets with each overlay chain, off-cycle events and **Publish targets now**, and the rebalance plan with USD and SGD values (M5).
 - `/review`: monthly review packs, latest first (M5).
+- `/news`: news and research items (unclassified), each with its tier and its independent and syndicated source counts. Filter by ticker and origin. Also LLM spend vs the soft budget, backfill status, feed health, research sweeps and **Run research sweep now** (M6). Ticker pages for QTUM and the pure-plays show their 10 latest items.
 - `/login`: the password form (M5).
 - `/alerts`: delivery status (Telegram or dashboard only, and why), the last 100 alerts, and **Send test alert**.
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
@@ -209,9 +243,13 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 src/aether/
   config.py       env settings + typed YAML loaders (identifiers only; unknown keys rejected)
   providers/      typed provider interfaces: yfinance, Massive, failover; dividends; SEC EDGAR client
-  ingest/         prices, dividends, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar
+  ingest/         prices, dividends, QTUM holdings, EDGAR (filings/Form 4/XBRL), earnings calendar,
+                  RSS news + the shared news/research event writer (dedupe, syndication)
   portfolio/      total return, metrics, strategy families, walk-forward backtest, selection, job, views
   edgar/          pure parsers: submissions, Form 4 XML, filing text extractors, XBRL
+  llm/            the one Anthropic client: budget guard, tool gate, pricing, llm_calls (M6)
+  research/       web-search research runs: sweep + Message Batches backfill (M6)
+  news_view.py    read-side queries for /news
   classify/       rules.py: deterministic filing rules (the LLM classifier arrives in M7)
   risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern)
   alerts/         candidates → outbox → Telegram; telegram_guard.py (S7 is_owner), dashboard views
@@ -225,7 +263,8 @@ src/aether/
   jobs.py         APScheduler wiring (Asia/Singapore, max_instances=1)
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
-config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml
+config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml,
+                  options.yaml, llm.yaml
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```
 

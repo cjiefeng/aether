@@ -1,8 +1,50 @@
 # Source trust tiers (spec S1). Anything not listed is T3.
-# T1 = SEC EDGAR + each company's own IR domain (IR domains are added in M6, with the IR RSS feeds, once verified).
-# T2 = allow-listed industry/financial press (RSS feed URLs added and verified in M6).
+# T1 = SEC EDGAR + each company's own domain (IR site and newsroom). T2 = allow-listed industry press.
+# The T1 + T2 domains are also the research runs' web-search allow-list (spec §4).
+# Company domains checked 2026-10-05 (site title / IR feed content): ionq.com, rigetti.com,
+# quantinuum.com, dwavequantum.com, dwavesys.com (D-Wave's IR host ir.dwavesys.com), infleqtion.com.
 domains:
   - {domain: sec.gov, tier: T1}
+  - {domain: ionq.com, tier: T1}
+  - {domain: rigetti.com, tier: T1}
+  - {domain: quantinuum.com, tier: T1}
+  - {domain: dwavequantum.com, tier: T1}
+  - {domain: dwavesys.com, tier: T1}
+  - {domain: infleqtion.com, tier: T1}
   - {domain: thequantuminsider.com, tier: T2}
   - {domain: hpcwire.com, tier: T2}
   - {domain: quantumcomputingreport.com, tier: T2}
+
+# RSS/Atom feeds (M6), each probed 2026-10-05 (HTTP 200, RSS 2.0). Not listed because they answer
+# 403 to non-browser clients: hpcwire.com/feed/, investors.ionq.com, ir.dwavesys.com. IonQ and D-Wave
+# releases still arrive via EDGAR (8-K) and research runs.
+feeds:
+  - {id: rigetti_ir, url: "https://investors.rigetti.com/rss/news-releases.xml", symbol: RGTI}
+  - {id: quantinuum_ir, url: "https://ir.quantinuum.com/rss/news-releases.xml", symbol: QNT}
+  - {id: infleqtion_news, url: "https://infleqtion.com/feed", symbol: INFQ}
+  - {id: thequantuminsider, url: "https://thequantuminsider.com/feed/"}
+  - {id: quantumcomputingreport, url: "https://quantumcomputingreport.com/feed/"}
+
+# Press-release wires and mirrors: a copy hosted here never counts as an independent source.
+syndicators:
+  - globenewswire.com
+  - businesswire.com
+  - prnewswire.com
+  - accessnewswire.com
+  - newsfilecorp.com
+  - finance.yahoo.com
+  - marketscreener.com
+  - stocktitan.net
+
+# Keep an industry item with no watchlist company in it only if it mentions one of these.
+theme_keywords:
+  - Quantum Benchmarking Initiative
+  - DARPA
+  - QBI
+  - post-quantum
+  - PQC
+  - NIST
+  - logical qubit
+  - logical qubits
+  - fault-tolerant
+  - RSA-2048

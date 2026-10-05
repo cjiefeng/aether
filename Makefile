@@ -56,6 +56,7 @@ lint:
 	  $(UV) mypy; \
 	  $(UV) python scripts/check_no_safe.py src; \
 	  $(UV) python scripts/check_broker_readonly.py src; \
+	  $(UV) python scripts/check_llm_imports.py src; \
 	  uv export --frozen --no-emit-project --format requirements-txt -o /tmp/req.txt >/dev/null; \
 	  uvx $(PIP_AUDIT) --strict --require-hashes --disable-pip -r /tmp/req.txt'
 

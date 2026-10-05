@@ -5,8 +5,8 @@ STRICT tables accept only INTEGER/REAL/TEXT/BLOB/ANY, so columns use only `Integ
 VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
-events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance). Keep this file and
-`migrations/versions/*` in sync (a test compares them).
+events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance, M6: news +
+research). Keep this file and `migrations/versions/*` in sync (a test compares them).
 """
 
 from __future__ import annotations
@@ -129,6 +129,21 @@ llm_calls = Table(
     Column("web_searches", Integer, nullable=False, server_default="0"),
     Column("cost_micros", Micros, nullable=False, server_default="0"),
     Column("created_at", Text, nullable=False),
+    # M6: one row per call attempt (prompts are never stored). `budget_refused` rows cost 0 and
+    # record that the soft budget guard stopped a call before any request was sent.
+    Column("status", Text, nullable=False, server_default="ok"),
+    Column("batch", Integer, nullable=False, server_default="0"),
+    Column("cache_write_tokens", Integer, nullable=False, server_default="0"),
+    Column("request_id", Text),
+    Column("research_run_id", Integer, ForeignKey("research_runs.id")),
+    Column("error", Text),
+    CheckConstraint("status IN ('ok','error','budget_refused')", name="status"),
+    CheckConstraint("batch IN (0, 1)", name="batch_bool"),
+    CheckConstraint(
+        "input_tokens >= 0 AND output_tokens >= 0 AND cache_read_tokens >= 0 "
+        "AND cache_write_tokens >= 0 AND web_searches >= 0 AND cost_micros >= 0",
+        name="non_negative",
+    ),
     Index(None, "created_at"),
     sqlite_strict=True,
 )
@@ -143,6 +158,7 @@ ALERT_KINDS = (
     "test",
     "off_cycle_review",  # M5
     "review_pack",  # M5
+    "llm_budget",  # M6
 )
 ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
 
@@ -449,6 +465,8 @@ events = Table(
     _json_ck("raw"),
     Index(None, "published_at"),
     Index(None, "accession"),
+    Index(None, "simhash"),  # M6
+    Index(None, "source_domain", "published_at"),  # M6
     sqlite_strict=True,
 )
 
@@ -459,8 +477,23 @@ event_sources = Table(
     Column("url", Text, nullable=False),
     Column("domain", Text, nullable=False),
     Column("trust_tier", Text, nullable=False),
+    # M6: per-source detail for news/research merges. `syndicated` copies (wire/mirror domains or
+    # the same body text) don't count towards events.independent_source_count.
+    Column("title", Text),
+    Column("published_at", Text),
+    Column("excerpt", Text),
+    Column("simhash", Integer),  # title simhash, signed 64-bit
+    Column("excerpt_simhash", Integer),
+    Column("syndicated", Integer, nullable=False, server_default="0"),
+    Column("origin", Text),
+    Column("added_at", Text),
     PrimaryKeyConstraint("event_id", "url"),
     _in_ck("trust_tier", TRUST_TIERS),
+    _excerpt_ck(),
+    _bool_ck("syndicated"),
+    CheckConstraint(
+        "origin IS NULL OR origin IN ('rss','edgar','web_search','manual')", name="origin"
+    ),
     sqlite_strict=True,
     sqlite_with_rowid=False,
 )
@@ -780,5 +813,58 @@ review_packs = Table(
     CheckConstraint("telegram_text IS NULL OR length(telegram_text) <= 4096", name="telegram_len"),
     _json_ck("payload"),
     Index(None, "month"),
+    sqlite_strict=True,
+)
+
+# --------------------------------------------------------------------------- M6: news & research
+
+# Conditional-GET state per RSS feed (config/sources.yaml `feeds`).
+feed_state = Table(
+    "feed_state",
+    metadata,
+    Column("feed_id", Text, primary_key=True),
+    Column("url", Text, nullable=False),
+    Column("etag", Text),
+    Column("last_modified", Text),
+    Column("last_fetched_at", Text),
+    Column("last_status", Integer),  # HTTP status, or NULL if the request never completed
+    Column("last_error", Text),
+    Column("items_seen", Integer, nullable=False, server_default="0"),
+    Column("items_kept", Integer, nullable=False, server_default="0"),
+    sqlite_strict=True,
+)
+
+RESEARCH_KINDS = ("sweep", "backfill")
+RESEARCH_STATUSES = ("running", "submitted", "done", "failed", "budget_refused")
+
+# Claude web-search research runs (the only tool-enabled LLM calls, spec S1). One row per
+# (ticker, window). Backfill rows share a Message Batch (`batch_id`); `custom_id` keys results.
+research_runs = Table(
+    "research_runs",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("window_start", Text, nullable=False),
+    Column("window_end", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("batch_id", Text),
+    Column("custom_id", Text, unique=True),
+    Column("items_found", Integer, nullable=False, server_default="0"),
+    Column("events_new", Integer, nullable=False, server_default="0"),
+    Column("cost_micros", Micros, nullable=False, server_default="0"),
+    Column("payload", Text, nullable=False, server_default="{}"),  # audit only; never an event
+    Column("error", Text),
+    Column("created_at", Text, nullable=False),
+    Column("finished_at", Text),
+    _in_ck("kind", RESEARCH_KINDS),
+    _in_ck("status", RESEARCH_STATUSES),
+    _date_ck("window_start"),
+    _date_ck("window_end"),
+    CheckConstraint("window_start <= window_end", name="window"),
+    _json_ck("payload"),
+    Index(None, "kind", "status"),
+    Index(None, "batch_id"),
     sqlite_strict=True,
 )

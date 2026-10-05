@@ -1,0 +1,25 @@
+# LLM prices and research parameters (M6). Numbers and identifiers only (the model forbids unknown
+# keys). Prices: USD per million tokens, Anthropic first-party list prices checked 2026-10-05
+# (claude-api reference, cached 2026-09-25); web search $10 per 1,000 searches (web-search tool docs).
+# A model missing here is refused by the LLM wrapper: its cost couldn't be computed.
+prices:
+  claude-opus-5-5:   {input: "4.00", output: "20.00", cache_write: "5.00",  cache_read: "0.20"}
+  claude-opus-5:     {input: "5.00", output: "25.00", cache_write: "6.25",  cache_read: "0.50"}
+  claude-opus-4-8:   {input: "5.00", output: "25.00", cache_write: "6.25",  cache_read: "0.50"}
+  claude-sonnet-5-5: {input: "2.00", output: "10.00", cache_write: "2.50",  cache_read: "0.20"}
+  claude-sonnet-5:   {input: "2.00", output: "10.00", cache_write: "2.50",  cache_read: "0.20"}
+  claude-haiku-4-5:  {input: "1.00", output: "5.00",  cache_write: "1.25",  cache_read: "0.10"}
+web_search_per_1k: "10.00"
+batch_discount: "0.5"          # Message Batches: tokens at 50%; searches at the normal price
+budget_alert_fraction: "0.8"   # one llm_budget alert per day at 80% of DAILY_LLM_BUDGET_USD
+chars_per_token: 3             # conservative input estimate for the budget guard
+
+research:
+  max_tokens: 4000
+  effort: low                  # Opus 5.5 thinking can't be disabled; effort is the control
+  sweep_max_uses: 5
+  sweep_days: 3                # each sweep looks back this many days
+  backfill_max_uses: 5
+  backfill_months: 12
+  est_input_tokens_per_search: 6000
+  est_base_input_tokens: 3000

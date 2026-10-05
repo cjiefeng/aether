@@ -32,6 +32,14 @@
   <p class="muted small">Daily close, split-adjusted.</p>
 </section>
 
+{% if s.type in ("etf", "pure_play") %}
+<section class="card">
+  <h2>Recent news</h2>
+  {% with rows = news %}{% include "_news_rows.html" %}{% endwith %}
+  <p class="muted small">Unclassified until M7. <a href="/news?symbol={{ s.symbol }}">All news for {{ s.symbol }}</a></p>
+</section>
+{% endif %}
+
 {% if sec %}
 {% if sec.fresh.edgar_stale %}
 <p class="banner stale">{% if sec.fresh.edgar_last_ok %}SEC filings stale since {{ sec.fresh.edgar_last_ok }}.{% else %}No successful EDGAR run yet.{% endif %}</p>
