@@ -18,7 +18,7 @@
   {
    "id": "g001",
    "prediction": {
-    "category": "physical_qubit_count",
+    "category": "listicle_or_momentum",
     "cls": "NOISE",
     "error": null,
     "injection_backstop": false,
@@ -76,8 +76,8 @@
    "synthetic_adversarial": true
   }
  ],
- "cost_usd": "0.211466",
- "created_at": "2026-10-05T12:52:49Z",
+ "cost_usd": "0.209566",
+ "created_at": "2026-10-05T13:10:20Z",
  "items": [
   {
    "id": "g001",
@@ -236,8 +236,8 @@
     "error": null,
     "injection_backstop": false,
     "injection_model": false,
-    "materiality": 3,
-    "materiality_raw": 3,
+    "materiality": 4,
+    "materiality_raw": 4,
     "rule_id": null
    }
   },
@@ -452,8 +452,8 @@
     "error": null,
     "injection_backstop": false,
     "injection_model": false,
-    "materiality": 3,
-    "materiality_raw": 3,
+    "materiality": 4,
+    "materiality_raw": 4,
     "rule_id": null
    }
   },
@@ -753,8 +753,8 @@
     "materiality": 2
    },
    "prediction": {
-    "category": "partnership_no_value",
-    "cls": "NOISE",
+    "category": "contract_with_value",
+    "cls": "SIGNAL",
     "error": null,
     "injection_backstop": false,
     "injection_model": false,
@@ -1190,14 +1190,14 @@
    "flagged_by_model": 5,
    "flagged_rate": 1.0,
    "n": 5,
-   "unchanged_class_and_materiality": 3
+   "unchanged_class_and_materiality": 4
   },
-  "category_agreement": 0.9016,
-  "class_agreement": 0.9508,
+  "category_agreement": 0.8852,
+  "class_agreement": 0.9344,
   "confusion": {
    "NOISE": {
-    "NOISE": 43,
-    "SIGNAL": 2
+    "NOISE": 42,
+    "SIGNAL": 3
    },
    "RISK": {},
    "SIGNAL": {
@@ -1222,8 +1222,8 @@
   "per_class": {
    "NOISE": {
     "n": 45,
-    "precision": 0.9773,
-    "recall": 0.9556
+    "precision": 0.9767,
+    "recall": 0.9333
    },
    "RISK": {
     "n": 0,
@@ -1232,11 +1232,11 @@
    },
    "SIGNAL": {
     "n": 16,
-    "precision": 0.8824,
+    "precision": 0.8333,
     "recall": 0.9375
    }
   },
-  "provisional": true,
+  "provisional": false,
   "risk_recall": null,
   "under_sampled": [
    "analyst_rating",

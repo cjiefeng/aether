@@ -9,10 +9,10 @@ Every news and research item is now classified as SIGNAL, NOISE or RISK. The pip
 | Criterion | Result | Evidence |
 |---|---|---|
 | T3-only event can't exceed materiality 2 (unit test) | ✅ | `tests/test_caps.py::test_t3_only_event_cannot_exceed_two`: raw 5 → stored 2. Also tested: a single T2 → 3; a second independent T2 or a T1 source merged in later lifts the stored value back to raw; a syndicated copy doesn't. |
-| 100% of adversarial cases flagged | ✅ (baseline) | Live baseline `make eval` (`evals/results/classify-v1-dd7bef0c.json`): **5/5 flagged, all 5 by the model itself** (the regex backstop caught 2 of them as well). Class unchanged in 5/5; materiality nudged +1 in 2/5 (see open questions). Offline: `tests/test_eval.py`, `tests/test_classify_pipeline.py::test_model_flag_quarantines_and_excludes_from_alerts` and `test_regex_backstop_quarantines_when_the_model_misses_it`. |
-| ≥85% class agreement | ⚠️ provisional 95.1% | Same run: 61 real items, 58 agree (precision/recall: SIGNAL 88%/94%, NOISE 98%/96%). **Provisional**, because the labels are my proposals; the acceptance run is after you review them (`labeled_by: owner`). |
+| 100% of adversarial cases flagged | ✅ | Acceptance run on the owner-labelled set (`evals/results/classify-v1-dd7bef0c.json`, 2026-10-05 13:10Z): **5/5 flagged, all 5 by the model itself** (the regex backstop caught 2 of them as well). Class unchanged in 5/5; materiality nudged +1 in 1/5 (2/5 in the earlier baseline; see open questions). Offline: `tests/test_eval.py`, `tests/test_classify_pipeline.py::test_model_flag_quarantines_and_excludes_from_alerts` and `test_regex_backstop_quarantines_when_the_model_misses_it`. |
+| ≥85% class agreement | ✅ 93.4% | Same run, **owner-labelled** (you reviewed all 61 rows and kept every label): 57/61 agree (precision/recall: SIGNAL 83%/94%, NOISE 98%/93%), category agreement 88.5%, materiality MAE 0.21. The earlier baseline on the same labels and prompt scored 95.1%; one item (g038) flipped between runs, so expect a point or two of run-to-run variation. |
 | ≥95% RISK recall | ❌ not measurable yet | The golden set has **0 RISK rows**. None of the 116 real RSS items ingested (live, recorded and older feed pages) was RISK news for the watchlist. Dilution, insider and compliance risk come through EDGAR and the deterministic rules. Every RISK category is listed as under-sampled (`evals/README.md`); the research backfill on first deploy should supply real ones. |
-| Golden set from real ingested items, owner labels | ⚠️ awaiting your review | `evals/classifier_golden.jsonl`: 61 rows, each the title, excerpt and URL exactly as Aether's RSS ingest stored them. 16 SIGNAL and 45 NOISE, 42 T1 and 19 T2. All `labeled_by: claude_proposed`. |
+| Golden set from real ingested items, owner labels | ✅ | `evals/classifier_golden.jsonl`: 61 rows, each the title, excerpt and URL exactly as Aether's RSS ingest stored them. 16 SIGNAL and 45 NOISE, 42 T1 and 19 T2. Labels proposed by Claude Code; all 61 reviewed by you (`labeled_by: owner`, no changes). |
 | Tests green, no network | ✅ | `make test`: 477 passed. The classifier talks to the real SDK over an in-process fake transport. |
 | ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 106 files, no known vulnerabilities |
 | `make secrets-scan` clean | ✅ | gitleaks: no leaks |
@@ -70,12 +70,14 @@ Every news and research item is now classified as SIGNAL, NOISE or RISK. The pip
 - No facts changed or added.
 
 ### Open questions
-- **Adversarial materiality drift:** in 2 of 5 cases the model flagged the injection but still raised materiality by 1 (class unchanged). The quarantine makes this harmless downstream. If you want it fixed in the prompt, that's a new prompt version and another eval run (about $0.20).
-- **Disagreements in the baseline** (useful for your review):
-  - g026 WISeSat business combination: I said NOISE, the model said SIGNAL m_and_a.
-  - g036 QC Design 10× logical-error claim: I said NOISE synthetic_benchmark, the model said SIGNAL logical_qubit_milestone.
-  - g044 Infleqtion/Japan Moonshot "Shunkai" operational: I said SIGNAL roadmap_hit, the model said NOISE partnership_no_value.
-  - Three more agree on class but differ on category.
+- **Adversarial materiality drift:** the model flagged every injection but still raised materiality by 1 in some cases (2/5 in the baseline, 1/5 in the acceptance run; class always unchanged). The quarantine makes this harmless downstream. If you want it fixed in the prompt, that's a new prompt version and another eval run (about $0.20).
+- **Class disagreements in the acceptance run** (label → model):
+  - g026 WISeSat business combination: NOISE → SIGNAL m_and_a.
+  - g036 QC Design 10× logical-error claim: NOISE synthetic_benchmark → SIGNAL logical_qubit_milestone.
+  - g038 IonQ/FIU Superion 256 deployment: NOISE partnership_no_value → SIGNAL contract_with_value (agreed in the baseline run).
+  - g044 Infleqtion/Japan Moonshot "Shunkai" operational: SIGNAL roadmap_hit → NOISE partnership_no_value.
+  - Three more agree on class but differ on category (g001, g004, g043).
+- **Eval results are keyed by prompt version,** so the acceptance run replaced the baseline file `classify-v1-dd7bef0c.json` (the baseline is still in git history). The worker loads each run into `eval_runs` by version and timestamp.
 - **RISK coverage:** as above. After the backfill, run `make golden-candidates` against a copy of the live DB and add real RISK items.
 - **`noise_domains` is empty.** Listing outlets as noise would be your opinion call, so I left it out.
 
@@ -83,13 +85,13 @@ Every news and research item is now classified as SIGNAL, NOISE or RISK. The pip
 - The worker migrated a fresh DB to `0008_classify` and loaded 1 eval result into `eval_runs`. `news_rss` came back `ok` with 32 items.
 - `classify` came back `ok`, warning "ANTHROPIC_API_KEY is not set; 32 items wait for the classifier", which is the intended behaviour without a key.
 - Browser, logged in:
-  - `/feed` rendered the counts (waiting 32) and the eval line (provisional, 95% agreement, RISK n/a, 5/5 adversarial, below the bar because of RISK);
+  - `/feed` rendered the counts (waiting 32) and the eval line (then provisional, 95% agreement, RISK n/a, 5/5 adversarial, below the bar because of RISK);
   - `/news` showed "pending" badges;
   - no console or CSP errors.
 - **Your `aether` stack:** its app and worker containers were stopped at 12:57:53Z (a `docker stop`/kill, not an exit on their own), while the isolated stack was coming up. I didn't send that stop: the isolated project shares no containers, volumes or network with yours. After you said it was fine, I restarted the same containers (`docker start`; no rebuild or deploy), and both report healthy. It's still running the M0 image (schema `0001_baseline`), so deploying will apply migrations 0002–0008 in one go.
 
 ### Owner checklist
-- [ ] **Review the golden set:** `evals/classifier_golden.jsonl`. Fix any `label` and set `"labeled_by": "owner"` on each row. Then run `make eval` (about $0.20).
+- [x] **Review the golden set:** done (all 61 rows `labeled_by: owner`), and the acceptance `make eval` has run ($0.21).
 - [ ] **Set `DAILY_LLM_BUDGET_USD=5`** in `.env`. Your `.env` still says its own value; the new default applies only when the variable is empty.
 - [ ] Review the `classifier:` section of `config/rubric.yaml` (materiality ranges, the broadened `listicle_or_momentum`, headline rules, injection patterns) and the `classify:` section of `config/llm.yaml`.
 - [ ] Optional: list noise-only domains in `noise_domains`.

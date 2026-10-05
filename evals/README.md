@@ -30,7 +30,9 @@ make golden-candidates DB=<copy of data/aether.db>   # writes evals/golden_candi
 
 ## Owner review
 
-For each row: check `label`, fix it if needed, and set `"labeled_by": "owner"`. Then:
+All 61 rows were owner-reviewed on 2026-10-05 (no label changes). Acceptance run: 93.4% class
+agreement, 5/5 adversarial flagged, RISK recall not measurable. For new rows: check `label`, fix it
+if needed, set `"labeled_by": "owner"`, then:
 
 ```bash
 make eval    # live: calls the Anthropic API with the key in .env (about $0.20 for 66 calls)
