@@ -15,8 +15,8 @@
   {% if delivery.channel == "telegram" and delivery.note %}<p class="bad">{{ delivery.note }}</p>{% endif %}
   <p class="muted small">RISK events (materiality ≥ threshold in <code>config/alerts.yaml</code>), insider-selling clusters,
     lock-up and earnings reminders (T−7, T−1) and jobs failing for more than 24h. Each alert fires once (dedupe key).</p>
-  <button hx-post="/commands/test-alert" hx-target="#test-result" hx-swap="innerHTML">Send test alert</button>
-  <span id="test-result"></span>
+  <button hx-disabled-elt="this" hx-post="/commands/test-alert" hx-target="#test-result" hx-swap="innerHTML">Send test alert</button>
+  <span id="test-result" class="result" role="status"></span>
 </section>
 
 <section class="card">

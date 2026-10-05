@@ -25,7 +25,7 @@
     <h2>QTUM vs pure-play basket vs SOXX vs QQQ</h2>
     <div class="range-group" data-for="overview-chart" role="group" aria-label="Range">
       {% for r in ranges %}
-      <button type="button" class="range{{ ' active' if r == default_range }}" data-range="{{ r }}">{{ r|upper }}</button>
+      <button type="button" class="range{{ ' active' if r == default_range }}" aria-pressed="{{ 'true' if r == default_range else 'false' }}" data-range="{{ r }}">{{ r|upper }}</button>
       {% endfor %}
     </div>
   </div>
@@ -128,8 +128,8 @@
 <section class="card">
   <h2>Refresh</h2>
   <p class="muted">Queue an immediate fetch (CSRF-protected, rate-limited).</p>
-  <button hx-post="/commands/refresh-prices" hx-target="#refresh-result" hx-swap="innerHTML">Refresh prices</button>
-  <button hx-post="/commands/refresh-edgar" hx-target="#refresh-result" hx-swap="innerHTML">Refresh SEC filings</button>
-  <span id="refresh-result"></span>
+  <button hx-disabled-elt="this" hx-post="/commands/refresh-prices" hx-target="#refresh-result" hx-swap="innerHTML">Refresh prices</button>
+  <button hx-disabled-elt="this" hx-post="/commands/refresh-edgar" hx-target="#refresh-result" hx-swap="innerHTML">Refresh SEC filings</button>
+  <span id="refresh-result" class="result" role="status"></span>
 </section>
 {% endblock %}

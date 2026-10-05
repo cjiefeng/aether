@@ -17,8 +17,8 @@
     {{ spend.calls_today }} call{{ "" if spend.calls_today == 1 else "s" }}{% if spend.refused_today %}, {{ spend.refused_today }} refused by the budget guard{% endif %}.</p>
   <p class="muted small">Backfill batches (all time): ${{ "%.2f"|format(spend.batch_total) }}, outside the daily soft budget.
     The hard cap is the monthly spend limit on the Anthropic Console workspace.</p>
-  <button hx-post="/commands/research-sweep" hx-target="#sweep-result" hx-swap="innerHTML">Run research sweep now</button>
-  <span id="sweep-result" class="result"></span>
+  <button hx-disabled-elt="this" hx-post="/commands/research-sweep" hx-target="#sweep-result" hx-swap="innerHTML">Run research sweep now</button>
+  <span id="sweep-result" class="result" role="status"></span>
 </section>
 
 <section class="card">

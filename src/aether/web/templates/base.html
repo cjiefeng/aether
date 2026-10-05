@@ -10,14 +10,21 @@
   {% block scripts %}{% endblock %}
 </head>
 <body hx-headers='{{ {"X-CSRF-Token": csrf_token}|tojson }}'>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="top">
     <a class="brand" href="/">Aether</a>
     {% block nav %}
-    <nav><a href="/">Overview</a> <a href="/strategies">Strategies</a> <a href="/holdings">Holdings</a> <a href="/review">Review</a> <a href="/feed">Feed</a> <a href="/news">News</a> <a href="/alerts">Alerts</a> <a href="/facts">Facts</a> <a href="/health">Health</a></nav>
-    <button type="button" class="link" hx-post="/logout" hx-swap="none">Log out</button>
+    {% set path = request.url.path %}
+    <nav aria-label="Main">
+      {% for href, label in [("/", "Overview"), ("/strategies", "Strategies"), ("/holdings", "Holdings"), ("/review", "Review"),
+                             ("/feed", "Feed"), ("/news", "News"), ("/alerts", "Alerts"), ("/facts", "Facts"), ("/health", "Health")] %}
+      <a href="{{ href }}"{% if path == href or (href == "/" and path.startswith("/t/")) %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    <button type="button" class="link" hx-disabled-elt="this" hx-post="/logout" hx-swap="none">Log out</button>
     {% endblock %}
   </header>
-  <main>
+  <main id="main" tabindex="-1">
     {% block content %}{% endblock %}
   </main>
   <footer class="disclaimer">{{ disclaimer }}</footer>
