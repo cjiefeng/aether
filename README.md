@@ -194,7 +194,7 @@ The pipeline (job `classify`, every 10 minutes and right after each RSS or resea
 
 **Alerts.** Classified news RISK at or above `risk_event_min_materiality` alerts like an EDGAR RISK event, and materiality ≥4 on a pure-play suggests an off-cycle review (M5). Quarantined items never alert.
 
-**Evals (`make eval`, spec §5.3).** `evals/classifier_golden.jsonl` holds **real ingested items only**. Claude Code proposed the labels and you review them (`labeled_by: owner`). The harness also builds 5 adversarial cases: a real excerpt with an injected instruction appended, which must be flagged without changing class or materiality. The report gives per-class precision/recall, a confusion matrix and the acceptance bar (≥85% class agreement, ≥95% RISK recall, 100% of adversarial cases flagged).
+**Evals (`make eval`, spec §5.3).** `evals/classifier_golden.jsonl` holds **real ingested items only**. Claude Code proposed the labels and you reviewed them (`labeled_by: owner`); the M7 run scored 93.4% class agreement and flagged 5/5 adversarial cases, with RISK recall not yet measurable (no RISK rows). The harness also builds 5 adversarial cases: a real excerpt with an injected instruction appended, which must be flagged without changing class or materiality. The report gives per-class precision/recall, a confusion matrix and the acceptance bar (≥85% class agreement, ≥95% RISK recall, 100% of adversarial cases flagged).
 - The eval is live: it calls the API with the key in `.env`, against a throwaway DB (about $0.20 per run).
 - Each result is committed as `evals/results/<prompt_version>.json` and shown on the Feed.
 - Any rubric or prompt edit is a new `prompt_version`, so rerun the eval.
