@@ -18,7 +18,7 @@
   <p class="muted small">Backfill batches (all time): ${{ "%.2f"|format(spend.batch_total) }}, outside the daily soft budget.
     The hard cap is the monthly spend limit on the Anthropic Console workspace.</p>
   <button hx-disabled-elt="this" hx-post="/commands/research-sweep" hx-target="#sweep-result" hx-swap="innerHTML">Run research sweep now</button>
-  <span id="sweep-result" class="result" role="status"></span>
+  <span id="sweep-result" class="result" role="status">{% with status = active_command_status(request, "research_sweep") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span>
 </section>
 
 <section class="card">

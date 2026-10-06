@@ -205,6 +205,27 @@ input.num { width: 9rem; text-align: right; font-variant-numeric: tabular-nums; 
   button:active { transform: none; }
 }
 
+/* ---------------------------------------------------------------- command status (issue #18) */
+/* Inline status next to a command button. State is carried by text plus an icon, never colour alone. */
+.cmd { display: inline-flex; align-items: baseline; gap: var(--s2); font-size: var(--fs-sm); color: var(--muted); }
+.cmd-done { color: var(--ok); }
+.cmd-warning, .cmd-stale { color: var(--warn-fg); }
+.cmd-failed, .cmd-error { color: var(--bad); }
+.cmd-detail { color: var(--muted); overflow-wrap: anywhere; }
+.cmd-icon { flex: none; display: inline-block; width: 12px; height: 12px; line-height: 12px; text-align: center;
+            font-weight: 700; font-size: 11px; transform: translateY(1px); }
+.cmd-queued .cmd-icon, .cmd-running .cmd-icon { border: 2px solid var(--line); border-radius: 50%; }
+.cmd-running .cmd-icon { border-top-color: var(--vision); animation: cmd-spin 800ms linear infinite; }
+.cmd-done .cmd-icon::before { content: "\2713"; }
+.cmd-warning .cmd-icon::before, .cmd-stale .cmd-icon::before { content: "!"; }
+.cmd-failed .cmd-icon::before, .cmd-error .cmd-icon::before { content: "\2715"; }
+.cmd { animation: cmd-in 180ms var(--ease-out); }
+@keyframes cmd-spin { to { transform: translateY(1px) rotate(360deg); } }
+@keyframes cmd-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cmd-running .cmd-icon { animation: none; border-top-color: var(--line); border-style: dotted; }
+}
+
 /* ---- M9 scores: reaction agreement badges, caveat banner */
 .badge.agree { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
 .badge.disagree { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
