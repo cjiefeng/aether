@@ -28,15 +28,144 @@
 
 <section class="card">
   <h2>Price and volume</h2>
-  <div class="chart tall" data-chart="ticker" data-src="/api/prices/{{ s.symbol }}"></div>
-  <p class="muted small">Daily close, split-adjusted.</p>
+  <div class="chart tall" data-chart="ticker" data-src="/api/prices/{{ s.symbol }}"{% if s.type in ("etf", "pure_play") %} data-markers="/api/reactions/{{ s.symbol }}"{% endif %}></div>
+  <p class="muted small">Daily close, split-adjusted.{% if s.type in ("etf", "pure_play") %} Markers: classified events at their
+    anchor session t0, coloured by class (SIGNAL / RISK / NOISE); hover for the abnormal-return z-score over [t0, t0+5].{% endif %}</p>
 </section>
+
+{% if s.type in ("etf", "pure_play") %}
+<section class="card" id="scorecard">
+  <h2>Scorecard</h2>
+  {% if score_fresh.scorecards.stale and score_fresh.scorecards.last_ok %}<p class="banner stale">Scorecards stale since {{ score_fresh.scorecards.last_ok }}.</p>{% endif %}
+  {% if score %}
+  <p>Total <strong>{{ "%+.1f"|format(score.total) if score.total is not none else "—" }}</strong>
+    <span class="muted">of −100…+100 · coverage {{ score.coverage|pct(false) }} of the weight · as of {{ score.as_of }}</span></p>
+  <table class="compact">
+    <thead><tr><th>Component</th><th class="num">Weight</th><th class="num">Score</th><th>Inputs</th></tr></thead>
+    <tbody>
+    {% for c in score.components %}
+      <tr>
+        <td>{{ c.label }}</td>
+        <td class="num">{{ "%.1f"|format(c.weight) }}</td>
+        <td class="num">{% if c.score is not none %}{{ "%+.2f"|format(c.score) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="small">
+          {% if c.score is none and c.reason %}<span class="muted">{{ c.reason }}</span>{% endif %}
+          {% for k, v in c.subscores.items() %}{% if v is not none %}{{ k|replace("_", " ") }} {{ "%+.2f"|format(v) }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}
+          {% if c.key == "risk_load" and c.metrics.open_flags %}<br><span class="muted">open flags: {{ c.metrics.open_flags|join(", ")|replace("_", " ") }}</span>{% endif %}
+          {% if c.key == "noise_ratio" and c.metrics.hype %} <span class="badge risk">hype: noisy coverage, rising price</span>{% endif %}
+          {% if c.key == "short_interest" and c.metrics.settlement_date %}<br><span class="muted">{{ "%.1f"|format(c.metrics.pct_shares_out) ~ "% of shares out" if c.metrics.pct_shares_out is not none else "no % of shares out" }}, {{ "%.1f"|format(c.metrics.days_to_cover) if c.metrics.days_to_cover is not none else "—" }} days to cover ({{ c.metrics.settlement_date }})</span>{% endif %}
+          {% if c.key == "price_context" %}<br><span class="muted">30d vol {{ c.metrics.get("vol_30d")|pct(false) }}, 90d vol {{ c.metrics.get("vol_90d")|pct(false) }}, IV30 {{ c.metrics.get("iv_30")|pct(false) }} (shown, not scored)</span>{% endif %}
+          {% if c.key == "market_reaction" %}<br><span class="muted">n = {{ c.metrics.n }}; context only (weight 0)</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">Each component is the mean of its sub-scores, each mapped from a raw metric to −1…+1 by the anchors in
+    <code>config/weights.yaml</code>. Components without data are left out of the total and named here. Deterministic; no LLM.</p>
+  {% else %}
+  <p class="muted">No scorecard yet.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if s.type == "pure_play" %}
+<section class="card" id="fundamentals">
+  <h2>Valuation and dilution (SEC XBRL)</h2>
+  {% set f = score.fundamentals if score else none %}
+  {% if f %}
+  <table class="num compact">
+    <thead><tr><th>Fully diluted shares</th><th>FD YoY</th><th>Market cap (FD)</th><th>EV</th><th>TTM revenue</th><th>Revenue growth</th><th>EV / Sales</th></tr></thead>
+    <tbody><tr>
+      <td>{{ f.fd_shares.total|intc if f.fd_shares else "—" }}</td>
+      <td>{% if f.fd_yoy.value is not none %}{{ f.fd_yoy.value|pct }}{% else %}<span class="muted small">{{ f.fd_yoy.reason }}</span>{% endif %}</td>
+      <td>{{ f.market_cap_fd|usd }}</td>
+      <td>{{ f.ev|usd }}</td>
+      <td>{{ f.revenue_ttm.value|usd if f.revenue_ttm else "—" }}</td>
+      <td>{{ f.revenue_growth|pct }}</td>
+      <td>{{ "%.1f×"|format(f.ev_sales) if f.ev_sales is not none else "—" }}</td>
+    </tr></tbody>
+  </table>
+  <table class="num compact">
+    <thead><tr><th>Cash + marketable securities</th><th>Debt</th><th>Convertibles</th><th>TTM operating cash flow</th><th>Quarterly burn</th><th>Cash runway</th></tr></thead>
+    <tbody><tr>
+      <td>{{ f.liquidity|usd }}</td>
+      <td>{{ f.debt|usd }}</td>
+      <td>{{ f.convertibles|usd }}</td>
+      <td>{{ f.ocf_ttm.value|usd if f.ocf_ttm else "—" }}</td>
+      <td>{% if f.not_burning %}not burning{% else %}{{ f.quarterly_burn|usd }}{% endif %}</td>
+      <td>{% if f.not_burning %}—{% elif f.runway_months is not none %}{{ "%.1f"|format(f.runway_months) }} months{% else %}—{% endif %}</td>
+    </tr></tbody>
+  </table>
+  {% if f.fd_shares %}
+  <h3>Fully diluted share count</h3>
+  <table class="num compact">
+    <thead><tr><th>Component</th><th>Shares</th><th>Period end</th><th>XBRL source</th></tr></thead>
+    <tbody>
+      <tr><td>Common shares outstanding</td><td>{{ f.fd_shares.common.value|intc }}</td><td>{{ f.fd_shares.common.period_end }}</td>
+        <td class="small">{{ f.fd_shares.common.form or "" }} {{ f.fd_shares.common.accession or "" }}</td></tr>
+      {% for k, c in f.fd_shares.components.items() %}
+      <tr><td>{{ fd_labels.get(k, k) }}</td><td>{{ c.value|intc }}</td><td>{{ c.period_end }}</td>
+        <td class="small">{{ c.form or "" }} {{ c.accession or "" }}</td></tr>
+      {% endfor %}
+      {% for k in f.fd_shares.not_tagged %}
+      <tr><td>{{ fd_labels.get(k, k) }}</td><td colspan="3" class="muted small">not tagged in XBRL (not estimated)</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if f.reasons %}<p class="muted small">{% for k, v in f.reasons.items() %}{{ k|replace("_", " ") }}: {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  <p class="muted small">Point in time from SEC XBRL companyfacts (facts filed by {{ f.as_of }}); price {{ f.price_date or "—" }}.
+    EV = fully diluted shares × last close + debt + convertibles − cash and marketable debt securities (current and non-current; strategic long-term investments excluded). TTM = latest fiscal year +
+    year-to-date − the prior year's same period. Runway = liquidity ÷ (−TTM operating cash flow ÷ 4) × 3 months.
+    Revenue mix (commercial vs government) isn't tagged in non-dimensional XBRL, so it isn't shown.</p>
+  {% else %}
+  <p class="muted">No fundamentals yet.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if s.type in ("etf", "pure_play") %}
+<section class="card" id="reactions">
+  <div class="card-head"><h2>Market reactions to events</h2><a href="/calibration">Calibration</a></div>
+  {% if score_fresh.reactions.stale and score_fresh.reactions.last_ok %}<p class="banner stale">Reactions stale since {{ score_fresh.reactions.last_ok }}.</p>{% endif %}
+  {% if reactions %}
+  <table class="compact">
+    <thead><tr><th>t0</th><th>Event</th><th>Class</th><th class="num">CAR 0–1</th><th class="num">CAR 0–5</th><th class="num">z₅</th><th class="num">Volume ×</th><th>Market</th></tr></thead>
+    <tbody>
+    {% for r in reactions %}
+      <tr>
+        <td class="nowrap">{{ r.t0 }}</td>
+        <td class="small">{{ r.url|extlink(r.title) }}{% if r.approx_time %} <span class="badge">approximate time</span>{% endif %}</td>
+        <td><span class="badge {{ r['class']|lower }}">{{ r.category|replace("_", " ") }} · {{ r.materiality }}</span></td>
+        <td class="num">{{ r.car_1|pct }}</td>
+        <td class="num">{{ r.car_5|pct }}</td>
+        <td class="num">{{ "%+.1f"|format(r.z_5) if r.z_5 is not none else "—" }}</td>
+        <td class="num">{{ "%.1f"|format(r.abn_volume) if r.abn_volume is not none else "—" }}</td>
+        <td>{% if r.agreement == "agreed" %}<span class="badge agree">market agreed</span>
+          {% elif r.agreement == "disagreed" %}<span class="badge disagree">market disagreed</span>
+          {% elif r.status == "confounded" %}<span class="muted small">confounded</span>
+          {% elif r.status == "pending" %}<span class="muted small">pending</span>
+          {% elif r.status == "no_data" %}<span class="muted small">{{ r.note or "no data" }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">Abnormal return vs {{ "QQQ" if s.type == "etf" else "QTUM" }} (market model, β from 120 sessions before t0;
+    β = 1 when there are fewer than 60). "Agreed": for SIGNAL/RISK, CAR over [t0, t0+5] moved in the classifier's direction;
+    for NOISE, |z₅| &lt; 2. Daily data can't capture intraday timing, and small caps move on flows unrelated to news:
+    a sanity check on the rubric, not proof.</p>
+  {% else %}
+  <p class="muted">No reactions yet.</p>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if s.type in ("etf", "pure_play") %}
 <section class="card">
   <h2>Recent news</h2>
   {% with rows = news %}{% include "_news_rows.html" %}{% endwith %}
-  <p class="muted small">Unclassified until M7. <a href="/news?symbol={{ s.symbol }}">All news for {{ s.symbol }}</a></p>
+  <p class="muted small"><a href="/news?symbol={{ s.symbol }}">All news for {{ s.symbol }}</a></p>
 </section>
 {% endif %}
 
@@ -150,8 +279,8 @@
 <section class="card">
   <h2>Shares outstanding</h2>
   <div class="chart" data-chart="dilution" data-src="/api/dilution/{{ s.symbol }}"></div>
-  <p class="muted small">From SEC XBRL companyfacts (as reported). Fully diluted counts (warrants,
-    convertibles, earn-outs) arrive with the M9 scorecard.</p>
+  <p class="muted small">From SEC XBRL companyfacts (as reported). The fully diluted count is in
+    <a href="#fundamentals">Valuation and dilution</a>; earn-outs aren't tagged in XBRL.</p>
 </section>
 
 <section class="card">

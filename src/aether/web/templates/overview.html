@@ -38,10 +38,10 @@
 <section class="card">
   <h2>Tickers</h2>
   <table class="num">
-    <thead><tr><th>Symbol</th><th>Last close</th><th>1d</th><th>30d</th><th>From 52w high</th><th>As of</th><th>Provider</th></tr></thead>
+    <thead><tr><th>Symbol</th><th>Last close</th><th>1d</th><th>30d</th><th>From 52w high</th><th>As of</th><th>Provider</th><th>Score</th></tr></thead>
     {% for label, rows in groups %}
     <tbody>
-      <tr class="group"><th colspan="7">{{ label }}</th></tr>
+      <tr class="group"><th colspan="8">{{ label }}</th></tr>
       {% for s in rows %}
       <tr>
         <td><a href="/t/{{ s.symbol }}">{{ s.symbol }}</a></td>
@@ -51,11 +51,43 @@
         <td>{{ s.drawdown_52w|pct }}</td>
         <td class="{{ 'bad' if s.stale }}">{{ s.last_d or "no data" }}</td>
         <td>{{ s.provider or "—" }}</td>
+        <td>{% set sc = scores.get(s.symbol) %}{% if sc and sc.total is not none %}<a href="/t/{{ s.symbol }}#scorecard">{{ "%+.0f"|format(sc.total) }}</a>{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
     {% endfor %}
   </table>
+  <p class="muted small">Score: the deterministic scorecard total, −100 to +100, over the components with data
+    (spec §6.1; weights in <code>config/weights.yaml</code>). Not a stance.</p>
+</section>
+
+<section class="card" id="theme">
+  <h2>What drove QTUM <span class="muted small">quantum-sleeve view</span></h2>
+  {% if score_fresh.theme.stale and score_fresh.theme.last_ok %}<p class="banner stale">Theme decomposition stale since {{ score_fresh.theme.last_ok }}.</p>{% endif %}
+  {% if theme %}
+  <p>Over the last {{ theme.n }} sessions to {{ theme.as_of }}, the quantum basket's partial R² is
+    <strong>{{ theme.partial_r2|pct(false) }}</strong> (model R² {{ theme.r2|pct(false) }}).
+    {% set a90 = theme.attribution["90"] %}
+    Over the last {{ a90.sessions }} sessions the quantum basket contributed <strong>{{ a90.quantum|pct }}</strong>
+    to QTUM's {{ a90.actual|pct }} (summed daily returns).</p>
+  <table class="num compact">
+    <thead><tr><th></th><th>Beta (± s.e.)</th>{% for w in ("30", "90") %}<th>Contribution, {{ theme.attribution[w].sessions }} sessions</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for key, label in [("semis", "Semis (SOXX)"), ("tech", "Broad tech (QQQ)"), ("quantum", "Quantum basket")] %}
+      <tr><td>{{ label }}</td><td>{{ "%.2f"|format(theme.betas[key].value) }} ± {{ "%.2f"|format(theme.betas[key].se) }}</td>
+        {% for w in ("30", "90") %}<td>{{ theme.attribution[w][key]|pct }}</td>{% endfor %}</tr>
+    {% endfor %}
+      <tr><td>Alpha + residual</td><td>—</td>{% for w in ("30", "90") %}<td>{{ (theme.attribution[w].alpha + theme.attribution[w].residual)|pct }}</td>{% endfor %}</tr>
+      <tr><th>QTUM (sum of daily returns)</th><td></td>{% for w in ("30", "90") %}<th>{{ theme.attribution[w].actual|pct }}</th>{% endfor %}</tr>
+    </tbody>
+  </table>
+  <p class="muted small">Rolling OLS of QTUM's daily total returns on SOXX, QQQ and an equal-weighted basket of
+    {{ theme.members|join(", ") or "no pure-play yet" }} (a name joins after 60 sessions). Contributions are beta × the
+    factor's summed daily returns, so they add up to QTUM's summed return. Cross-check: the pure-plays are
+    {{ theme.weight|pct(false) if theme.weight is not none else "—" }} of QTUM's latest holdings.</p>
+  {% else %}
+  <p class="muted">Not computed yet (needs 60 overlapping sessions of QTUM, SOXX, QQQ and the basket).</p>
+  {% endif %}
 </section>
 
 <section class="card">

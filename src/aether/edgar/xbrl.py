@@ -25,12 +25,35 @@ MONEY_CONCEPTS = (
     "us-gaap:ConvertibleDebtNoncurrent",
     "us-gaap:ConvertibleSeniorNotesNoncurrent",
     "us-gaap:WarrantsAndRightsOutstanding",
+    # Liquidity beyond cash (M9: EV and cash runway): current and non-current marketable debt
+    # securities, under the concepts the watchlist's filers use.
+    "us-gaap:ShortTermInvestments",
+    "us-gaap:MarketableSecuritiesCurrent",
+    "us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+    "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+    "us-gaap:AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+    "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterestNoncurrent",
+    "us-gaap:MarketableSecuritiesNoncurrent",
+    "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+)
+# Flow concepts whose 6- and 9-month year-to-date values are kept too: 10-Qs report Q2/Q3 cash
+# flows only as YTD, so trailing-twelve-month figures need them (M9).
+YTD_CONCEPTS = (
+    "us-gaap:Revenues",
+    "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+    "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+    "us-gaap:NetCashProvidedByUsedInOperatingActivities",
 )
 SHARE_CONCEPTS = (
     "dei:EntityCommonStockSharesOutstanding",
     "us-gaap:CommonStockSharesOutstanding",
     "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding",
     "us-gaap:ClassOfWarrantOrRightOutstanding",
+    # Dilutive instruments for the fully diluted share count (M9).
+    "us-gaap:ShareBasedCompensationArrangementByShareBasedPaymentAwardOptionsOutstandingNumber",
+    "us-gaap:ShareBasedCompensationArrangementByShareBasedPaymentAward"
+    "EquityInstrumentsOtherThanOptionsNonvestedNumber",
+    "us-gaap:DebtInstrumentConvertibleNumberOfEquityInstruments",
 )
 PER_SHARE_CONCEPTS = ("us-gaap:ClassOfWarrantOrRightExercisePriceOfWarrantsOrRights1",)
 CONVERTIBLE_CONCEPTS = (  # priority order; the first present for a period end wins
@@ -42,9 +65,16 @@ CONVERTIBLE_CONCEPTS = (  # priority order; the first present for a period end w
 FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A", "S-1", "S-1/A", "S-4", "S-4/A", "8-K"}
 
 
-def _keep_duration(days: int) -> bool:
-    """Instants, quarters and fiscal years; drop 6- and 9-month year-to-date durations."""
-    return days == 0 or 80 <= days <= 100 or 350 <= days <= 380
+# Bump when the stored concepts or durations change: every symbol's companyfacts is refetched once.
+PARSER_VERSION = "m9.2"
+
+
+def _keep_duration(days: int, ytd: bool = False) -> bool:
+    """Instants, quarters and fiscal years; 6- and 9-month year-to-date durations only for
+    `YTD_CONCEPTS`."""
+    if days == 0 or 80 <= days <= 100 or 350 <= days <= 380:
+        return True
+    return ytd and (170 <= days <= 195 or 260 <= days <= 285)
 
 
 @dataclass(frozen=True)
@@ -81,7 +111,7 @@ def iter_facts(companyfacts: Mapping[str, Any], concept: str, unit: str) -> Iter
         except (KeyError, ValueError, InvalidOperation):
             continue
         days = (end - start).days + 1 if start else 0
-        if not _keep_duration(days):
+        if not _keep_duration(days, concept in YTD_CONCEPTS):
             continue
         fy = f.get("fy")
         yield XbrlFact(

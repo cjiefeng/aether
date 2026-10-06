@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Calibration · Aether{% endblock %}
+{% block content %}
+<h1>Calibration</h1>
+<p class="muted">How the market actually moved after each classified event (spec §6.3). SIGNAL and RISK moves should
+  persist; NOISE moves should be small or fade. Flags are suggestions only: nothing is changed automatically, and any
+  rubric change goes through <code>make eval</code>.</p>
+
+{% if fresh.calibration.stale and fresh.calibration.last_ok %}<p class="banner stale">Calibration report stale since {{ fresh.calibration.last_ok }}.</p>{% endif %}
+{% if fresh.reactions.stale and fresh.reactions.last_ok %}<p class="banner stale">Reactions stale since {{ fresh.reactions.last_ok }}.</p>{% endif %}
+
+<p class="banner note">Daily data can't capture intraday timing, and small caps move on flows unrelated to news. Treat this
+  as a sanity check on the rubric, not as proof.</p>
+
+{% if c %}
+{% set r = c.latest %}
+<section class="card">
+  <h2>Report as of {{ r.as_of }}</h2>
+  <p>{{ r.counts.usable }} usable reactions (complete, not confounded, exact time) ·
+    {{ r.counts.pending }} pending · {{ r.counts.confounded }} confounded · {{ r.counts.no_data }} without data ·
+    {{ r.counts.approx_time_excluded }} excluded for approximate timestamps.</p>
+  <table class="num compact">
+    <thead><tr><th>Class</th><th>n</th><th>Mean |z₁|</th><th>Mean |z₅|</th><th>|z₅| &gt; 2</th><th>Median reversal</th><th>Abnormal volume</th><th>Direction hit rate</th></tr></thead>
+    <tbody>
+    {% for cls in ("SIGNAL", "RISK", "NOISE") %}{% set x = r.classes[cls] %}
+      <tr>
+        <td><span class="badge {{ cls|lower }}">{{ cls }}</span></td>
+        <td>{{ x.n }}</td>
+        <td>{{ "%.2f"|format(x.mean_abs_z1) if x.mean_abs_z1 is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(x.mean_abs_z5) if x.mean_abs_z5 is not none else "—" }}</td>
+        <td>{{ x.pct_abs_z5_gt2|pct(false) }}</td>
+        <td>{{ "%.2f"|format(x.median_reversal) if x.median_reversal is not none else "—" }}</td>
+        <td>{{ "%.1f×"|format(x.mean_abn_volume) if x.mean_abn_volume is not none else "—" }}</td>
+        <td>{% if cls != "NOISE" %}{{ x.direction_hit_rate|pct(false) }} <span class="muted small">(n {{ x.direction_n }})</span>{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>By category</h2>
+  <table class="num compact">
+    <thead><tr><th>Class</th><th>Category</th><th>n</th><th>Mean |z₁|</th><th>Mean |z₅|</th><th>|z₅| &gt; 2</th><th>Median reversal</th><th>Direction hit rate</th></tr></thead>
+    <tbody>
+    {% for x in r.categories %}
+      <tr>
+        <td><span class="badge {{ x['class']|lower }}">{{ x['class'] }}</span></td>
+        <td>{{ x.category|replace("_", " ") }}</td>
+        <td>{{ x.n }}</td>
+        {% if x.too_few %}
+        <td colspan="5" class="muted small">fewer than {{ r.params.min_n }} usable events: not reported</td>
+        {% else %}
+        <td>{{ "%.2f"|format(x.mean_abs_z1) if x.mean_abs_z1 is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(x.mean_abs_z5) if x.mean_abs_z5 is not none else "—" }}</td>
+        <td>{{ x.pct_abs_z5_gt2|pct(false) }}</td>
+        <td>{{ "%.2f"|format(x.median_reversal) if x.median_reversal is not none else "—" }}</td>
+        <td>{{ x.direction_hit_rate|pct(false) if "direction_hit_rate" in x else "—" }}</td>
+        {% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No usable reactions yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">Pooled across tickers. A category is reported once it has {{ r.params.min_n }} complete,
+    non-confounded events with exact timestamps; expect sparse results for months.</p>
+</section>
+
+<section class="card">
+  <h2>Flags (suggested actions, never applied)</h2>
+  {% if r.flags %}
+  <ul>
+  {% for f in r.flags %}
+    <li><span class="badge {{ f['class']|lower }}">{{ f.category|replace("_", " ") }}</span> {{ f.suggestion }}
+      <span class="muted small">(mean |z₅| {{ "%.2f"|format(f.mean_abs_z5) if f.mean_abs_z5 is not none else "—" }},
+      |z₅| &gt; 2 in {{ f.pct_abs_z5_gt2|pct(false) }})</span></li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endif %}
+  <h3>High-materiality events the market ignored</h3>
+  {% if r.spot_review %}
+  <table class="compact">
+    <thead><tr><th>t0</th><th>Symbol</th><th>Event</th><th>Category</th><th class="num">Materiality</th><th class="num">z₅</th></tr></thead>
+    <tbody>
+    {% for e in r.spot_review %}
+      <tr>
+        <td class="nowrap">{{ e.t0 }}</td>
+        <td><a href="/t/{{ e.symbol }}#reactions">{{ e.symbol }}</a></td>
+        <td class="small">{{ e.title }}</td>
+        <td>{{ e.category|replace("_", " ") }}</td>
+        <td class="num">{{ e.materiality }}</td>
+        <td class="num">{{ "%+.2f"|format(e.z_5) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if r.spot_review_total > r.spot_review|length %}<p class="muted small">Showing {{ r.spot_review|length }} of {{ r.spot_review_total }}.</p>{% endif %}
+  {% else %}
+  <p class="muted">None.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Implied vs realized move</h2>
+  {% if r.implied_vs_realized %}
+  <table class="num compact">
+    <thead><tr><th>t0</th><th>Symbol</th><th>Catalyst</th><th>Implied move</th><th>Snapshot · expiry</th><th>|CAR 0–1|</th><th>|Return 0–1|</th><th>Realized ÷ implied</th></tr></thead>
+    <tbody>
+    {% for x in r.implied_vs_realized %}
+      <tr>
+        <td class="nowrap">{{ x.t0 }}</td>
+        <td><a href="/t/{{ x.symbol }}">{{ x.symbol }}</a></td>
+        <td class="small">{{ x.title }} <span class="muted">({{ x.status }})</span></td>
+        <td>±{{ x.implied_move|pct(false) }}</td>
+        <td class="small">{{ x.snapshot }} · {{ x.expiry or "—" }}</td>
+        <td>{{ x.realized_abs_car_1|pct(false) }}</td>
+        <td>{{ x.realized_abs_return_1|pct(false) }}</td>
+        <td>{{ "%.2f"|format(x.ratio) if x.ratio is not none else "—" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">None yet: needs a resolved catalyst (an earnings 8-K, a roadmap event) whose move was priced by an options
+    snapshot before it.</p>
+  {% endif %}
+  <p class="muted small">Implied move: the at-the-money straddle on the first listed expiry after the catalyst, from the last
+    options snapshot before t0 (research only). Realized: the raw close-to-close move from t0−1 to t0+1, and the abnormal
+    CAR over the same two sessions. The straddle prices the move to its expiry, which can be later than t0+1.</p>
+</section>
+
+<section class="card">
+  <h2>Trend</h2>
+  <table class="num compact">
+    <thead><tr><th>Report</th><th>Usable</th>{% for cls in ("SIGNAL", "RISK", "NOISE") %}<th>{{ cls }} n</th><th>{{ cls }} mean |z₅|</th>{% endfor %}<th>SIGNAL hit rate</th><th>RISK hit rate</th></tr></thead>
+    <tbody>
+    {% for t in c.trend %}
+      <tr>
+        <td>{{ t.as_of }}</td>
+        <td>{{ t.usable }}</td>
+        {% for cls in ("SIGNAL", "RISK", "NOISE") %}
+        <td>{{ t[cls].n }}</td>
+        <td>{{ "%.2f"|format(t[cls].mean_abs_z5) if t[cls].mean_abs_z5 is not none else "—" }}</td>
+        {% endfor %}
+        <td>{{ t.SIGNAL.hit|pct(false) }}</td>
+        <td>{{ t.RISK.hit|pct(false) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% else %}
+<section class="card"><p class="muted">No calibration report yet.</p></section>
+{% endif %}
+{% endblock %}

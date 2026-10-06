@@ -61,6 +61,12 @@ publish:
 #   don't count), for compliance_notice_days;
 # - a Form 25/25-NSE/15-12B/15-12G covering the COMMON STOCK (warrant, unit and note delistings
 #   don't count) once the stock has stopped trading for delisted_stale_sessions QTUM sessions.
+# M9 haircuts (multiplicative; both together = x 0.25):
+# - fully diluted shares (common + warrants + options + unvested RSUs + convertible shares, XBRL)
+#   up more than dilution_yoy_max year on year -> x dilution_multiplier. The year-ago count must
+#   be dated on or after the stock's first trading session (no SPAC / pre-IPO baselines);
+# - cash runway (cash + short-term investments / quarterly operating burn) under
+#   runway_min_months -> x runway_multiplier.
 # Freed weight goes to the other pure-plays within caps, then QTUM. (8-K Item 5.01 only alerts.)
 overlay:
   enabled: true
@@ -68,3 +74,7 @@ overlay:
   delisted_stale_sessions: 10
   # Accession numbers you've reviewed and cleared (e.g. a Form 25 for an exchange transfer).
   cleared_accessions: []
+  dilution_yoy_max: 0.20
+  dilution_multiplier: 0.5
+  runway_min_months: 12
+  runway_multiplier: 0.5
