@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     # M7: owner decision 2026-10-05: Sonnet 5.5.
     classifier_model: str = Field(default="claude-sonnet-5-5", validation_alias="CLASSIFIER_MODEL")
-    synth_model: str | None = Field(default=None, validation_alias="SYNTH_MODEL")
+    # M10: conclusions (no tools). Owner decision 2026-10-06: Opus 5.5.
+    synth_model: str = Field(default="claude-opus-5-5", validation_alias="SYNTH_MODEL")
     # M6: web-search research runs (the only tool-enabled calls). Owner decision 2026-10-05: Opus.
     research_model: str = Field(default="claude-opus-5-5", validation_alias="RESEARCH_MODEL")
     # M6: the one-time 12-month backfill (Message Batches) runs automatically once an API key is
@@ -76,7 +77,6 @@ class Settings(BaseSettings):
     @field_validator(
         "csrf_secret",
         "anthropic_api_key",
-        "synth_model",
         "sec_user_agent",
         "massive_api_key",
         "telegram_bot_token",
@@ -95,7 +95,9 @@ class Settings(BaseSettings):
         # docker compose passes unset vars as "" — treat them as absent.
         return None if v == "" else v
 
-    @field_validator("research_model", "classifier_model", "research_backfill", mode="before")
+    @field_validator(
+        "research_model", "classifier_model", "synth_model", "research_backfill", mode="before"
+    )
     @classmethod
     def _empty_is_default(cls, v: object, info: ValidationInfo) -> object:
         # docker compose passes unset vars as "": fall back to the field default.
@@ -104,7 +106,7 @@ class Settings(BaseSettings):
             return cls.model_fields[info.field_name].default
         return v
 
-    @field_validator("research_model", "classifier_model", mode="after")
+    @field_validator("research_model", "classifier_model", "synth_model", mode="after")
     @classmethod
     def _model_id(cls, v: str, info: ValidationInfo) -> str:
         if not re.fullmatch(r"claude-[a-z0-9\-]{1,60}", v):
@@ -462,6 +464,11 @@ class PublishParams(_Strict):
 
 
 ACCESSION_RE = r"^\d{10}-\d{2}-\d{6}$"
+# M10 conclusions: ticker stances (spec §6.2) and theme tilts.
+STANCES = ("ACCUMULATE", "HOLD", "TRIM", "AVOID")
+Stance = Literal["ACCUMULATE", "HOLD", "TRIM", "AVOID"]
+TILTS = ("PURE_PLAYS", "NEUTRAL", "QTUM")
+HORIZONS = ("1m", "3m", "6m", "12m", "24m", "36m")
 
 
 class OverlayParams(_Strict):
@@ -483,6 +490,24 @@ class OverlayParams(_Strict):
     dilution_multiplier: float = Field(ge=0, le=1)
     runway_min_months: float = Field(gt=0, le=120)
     runway_multiplier: float = Field(ge=0, le=1)
+    # M10 layer 2: stance multipliers (after hysteresis). While a ticker's track record is
+    # unproven, its multiplier is clamped to `unproven_clamp`. Layer 1 is never clamped.
+    stance_multipliers: dict[Stance, Annotated[float, Field(ge=0, le=2)]]
+    unproven_clamp: tuple[Annotated[float, Field(ge=0, le=2)], Annotated[float, Field(ge=0, le=2)]]
+
+    @field_validator("stance_multipliers")
+    @classmethod
+    def _all_stances(cls, v: dict[str, float]) -> dict[str, float]:
+        if set(v) != set(STANCES):
+            raise ValueError(f"stance_multipliers must name exactly {list(STANCES)}")
+        return {k: v[k] for k in STANCES}
+
+    @field_validator("unproven_clamp")
+    @classmethod
+    def _clamp_order(cls, v: tuple[float, float]) -> tuple[float, float]:
+        if v[0] > v[1]:
+            raise ValueError("unproven_clamp must be [low, high]")
+        return v
 
 
 class StrategiesConfig(_Strict):
@@ -656,13 +681,66 @@ class CalibrationParams(_Strict):
     high_materiality_max_abs_z5: float = Field(gt=0)
 
 
+class ConclusionParams(_Strict):
+    """Stance hysteresis and synthesis context (spec §6.2, M10)."""
+
+    # Scorecard-total band boundaries (ascending): AVOID < avoid_below <= TRIM < trim_below <=
+    # HOLD < accumulate_from <= ACCUMULATE.
+    avoid_below: float = Field(ge=-100, le=100)
+    trim_below: float = Field(ge=-100, le=100)
+    accumulate_from: float = Field(ge=-100, le=100)
+    threshold_margin: float = Field(ge=0, le=200)
+    consecutive_days: int = Field(ge=1, le=60)
+    cooldown_days: int = Field(ge=0, le=365)
+    trigger_min_materiality: Materiality
+    context_days: int = Field(ge=7, le=365)
+    max_events: int = Field(ge=5, le=300)
+    keep_min_materiality: Materiality  # events at/above this are kept before filling by recency
+    stance_max_age_days: int = Field(ge=1, le=365)  # older stances don't reach the overlay
+
+    @field_validator("accumulate_from")
+    @classmethod
+    def _ordered(cls, v: float, info: ValidationInfo) -> float:
+        a, t = info.data.get("avoid_below"), info.data.get("trim_below")
+        if a is None or t is None or not a < t < v:
+            raise ValueError("need avoid_below < trim_below < accumulate_from")
+        return v
+
+
+class TrackRecordParams(_Strict):
+    """Conclusion track record (spec §6.4, M10)."""
+
+    # HOLD is a hit when |excess return| is below this band, per horizon.
+    hold_band: dict[str, float]  # keys: exactly HORIZONS (validated)
+    min_mature_calls: int = Field(ge=1, le=1000)  # mature 6m calls before a stance is "proven"
+    momentum_lookback_days: int = Field(ge=5, le=365)
+    confidence_buckets: tuple[float, ...] = Field(min_length=2)  # ascending edges in [0, 1]
+
+    @field_validator("hold_band")
+    @classmethod
+    def _all_horizons(cls, v: dict[str, float]) -> dict[str, float]:
+        if set(v) != set(HORIZONS) or any(not 0 < b < 10 for b in v.values()):
+            raise ValueError(f"hold_band must give a positive band for each of {list(HORIZONS)}")
+        return {h: v[h] for h in HORIZONS}
+
+    @field_validator("confidence_buckets")
+    @classmethod
+    def _edges(cls, v: tuple[float, ...]) -> tuple[float, ...]:
+        if v[0] != 0 or v[-1] != 1 or any(b <= a for a, b in pairwise(v)):
+            raise ValueError("confidence_buckets must rise strictly from 0 to 1")
+        return v
+
+
 class WeightsConfig(_Strict):
     """`config/weights.yaml`: scorecard weights and anchors, reaction-engine and calibration
-    parameters (spec §6.1, §6.3, M9). Numbers only; initial values for owner review."""
+    parameters (spec §6.1, §6.3, M9); stance hysteresis and the track record (M10). Numbers only;
+    initial values for owner review."""
 
     scorecard: ScorecardParams
     reactions: ReactionParams
     calibration: CalibrationParams
+    conclusions: ConclusionParams
+    track_record: TrackRecordParams
 
 
 def load_weights(config_dir: Path) -> WeightsConfig:
@@ -786,9 +864,17 @@ class ClassifyParams(_Strict):
     max_per_run: int = Field(ge=1, le=1000)
 
 
+class SynthesisParams(_Strict):
+    """M10 conclusion call parameters (no tools, ever)."""
+
+    max_tokens: int = Field(ge=1024, le=32_000)
+    effort: Literal["low", "medium", "high"]
+    max_attempts: int = Field(ge=1, le=3)  # an invalid answer is retried once (spec §6.2)
+
+
 class LlmConfig(_Strict):
-    """`config/llm.yaml` (M6, M7): prices, research and classifier parameters. Numbers and
-    identifiers only."""
+    """`config/llm.yaml` (M6, M7, M10): prices, research, classifier and synthesis parameters.
+    Numbers and identifiers only."""
 
     prices: dict[Annotated[str, Field(pattern=r"^claude-[a-z0-9\-]+$")], ModelPrice]
     web_search_per_1k: Usd
@@ -797,6 +883,7 @@ class LlmConfig(_Strict):
     chars_per_token: Annotated[int, Field(ge=1, le=10)]  # input estimate for the budget guard
     research: ResearchParams
     classify: ClassifyParams
+    synthesis: SynthesisParams
 
 
 def load_llm_config(config_dir: Path) -> LlmConfig:

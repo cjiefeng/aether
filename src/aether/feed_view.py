@@ -43,6 +43,7 @@ class FeedFilters:
     min_materiality: int = 1
     tier: str | None = None
     show_noise: bool = False
+    event: int | None = None  # M10: one event (a conclusion's citation link)
 
     @classmethod
     def parse(
@@ -55,6 +56,7 @@ class FeedFilters:
         tier: str,
         noise: str,
         symbols: list[str],
+        event: str = "",
     ) -> FeedFilters:
         k = klass if klass in CLASSES else None
         cat = category if category in CATEGORY_CLASS else None
@@ -62,6 +64,9 @@ class FeedFilters:
             m = min(5, max(1, int(min_materiality or 1)))
         except ValueError:
             m = 1
+        ev = int(event) if event.isdigit() and len(event) <= 12 else None
+        if ev is not None:  # a single cited event: show it whatever its class or materiality
+            return cls(min_materiality=1, show_noise=True, event=ev)
         return cls(
             cls=k,
             category=cat,
@@ -152,6 +157,8 @@ def feed_rows(engine: Engine, f: FeedFilters, limit: int = 200) -> list[FeedRow]
         q = q.where(ec.c["class"] != "NOISE")
     if f.tier:
         q = q.where(events.c.trust_tier == f.tier)
+    if f.event is not None:
+        q = q.where(events.c.id == f.event)
     if f.symbol:
         q = q.where(
             events.c.id.in_(

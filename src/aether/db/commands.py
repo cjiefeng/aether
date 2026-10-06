@@ -34,6 +34,8 @@ ALLOWED_KINDS = frozenset(
         "research_sweep",
         # M8: the owner marks a catalyst hit / slipped / cancelled, or reopens it.
         "mark_catalyst",
+        # M10: re-run conclusions for one ticker (or all + the theme); LLM spend, budget-guarded.
+        "synthesize",
     }
 )
 

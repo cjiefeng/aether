@@ -1,5 +1,106 @@
 # Milestone report
 
+## M10: Conclusions, track record, brief (2026-10-06)
+
+Weekly LLM conclusions per ticker and for the theme: Claude Opus 5.5, **no tools**, every citation checked, stance changes gated in code. Also: a track record against two naive baselines, stance multipliers in the research overlay with an earned-trust clamp, the overlay value-added check (layer 3), the weekly brief and the review pack's M10 sections. Phase 2 is complete.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| No unvalidated/quarantined citations reach the DB | ✅ | `tests/test_synthesis.py`: an unknown id twice → nothing in `conclusions`, a `conclusion_failures` row (error text only), and the retry prompt carries only the validator's message; a quarantined event is never in the context and citing it is rejected, then a valid retry is stored; thesis points without evidence, `injection_suspected`, a wrong ticker/as_of, an out-of-range confidence, an unknown catalyst id, refusals and truncation are all rejected, not repaired. The cited events are re-read right before the write. |
+| A proposed flip without a qualifying trigger is stored as `held` | ✅ | `test_flip_without_trigger_is_stored_as_held` (HOLD → proposed AVOID with no cited event: stored HOLD, `held = 1`, reason "no qualifying trigger…"); `tests/test_hysteresis.py` covers the material-event trigger (too small, too old and quarantined events don't count), the 5-day score-threshold trigger with its margin, the 14-day cooldown, the T1 RISK bypass (downgrades only; T2 doesn't bypass) and the theme tilt (no score trigger). |
+| Outcome rows fill as synthetic prices mature | ✅ | `tests/test_track_record.py::test_outcome_rows_fill_as_prices_mature`: 1m/3m complete and 6m+ pending, the 1m excess return matches a hand computation, QTUM is judged vs QQQ and the theme as basket − QTUM, momentum and HOLD baselines are filled, held updates get no rows, a rerun writes nothing, and the 6m rows complete when more sessions arrive. |
+| "No track record yet" banner renders | ✅ | `tests/test_web_conclusions.py`: on the ticker page (before and after a conclusion exists) and on `/track-record`; the brief's Telegram text says it too. |
+| An unproven ticker's AVOID gives × 0.75, a proven one's gives × 0 | ✅ | `tests/test_overlay_stance.py`: pure overlay (DEMO 15% → 11.25%, freed weight to the uncut pure-plays, QTUM stays 45%) and through `publish_targets`: clamped and cited by conclusion id; after 10 mature 6-month calls beating both baselines, × 0 (DEMO out, QTUM still 45%). Also: ACCUMULATE is relative and never squeezes QTUM or breaks a cap; a stance older than 35 days or a publish without `weights` changes nothing. |
+| Overlay outcome rows fill as synthetic prices mature | ✅ | `test_overlay_outcome_rows_fill_as_prices_mature`: the 1m base return matches a hand computation, adjusted = base with no adjustments, and the 6m row completes as prices extend. |
+| Tests green, no network | ✅ | `make test`: 626 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 137 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0011_conclusions`** (hand-written, STRICT):
+  - `conclusions` (ticker stance or theme tilt; held flag, proposal and reason; payload; evidence map; model, prompt version, input hash, cost; previous id). CHECKs tie the stance vocabulary to the kind.
+  - `conclusion_outcomes` (WITHOUT ROWID; with the start/end sessions and both baselines).
+  - `overlay_outcomes` (WITHOUT ROWID; FK to `profile_targets`).
+  - `briefs` (one per ISO week) and `conclusion_failures`.
+  - Alert kind `weekly_brief`.
+- **Synthesis** (`synthesize/`):
+  - context with citable ids (event text in one untrusted block; facts labelled FACT/UNCONFIRMED);
+  - prompt with operational stance definitions taken from the §6.4 hit rules (no opinions) and a fixed JSON schema per kind;
+  - validator, hysteresis, runner;
+  - `SYNTH_MODEL` defaults to `claude-opus-5-5`, effort `high`, `config/llm.yaml` → `synthesis`.
+- **Track record** (`score/track_record.py`): outcomes at 1–36 months, baselines, per-stance/per-ticker summaries, confidence buckets and the Brier score, the proven test, and the layer 3 paper portfolios with the 12-publish verdict.
+- **Overlay layer 2** (`portfolio/overlay.py`, `publish.py`): stance multipliers after layer 1, the clamp, renormalisation inside the sleeve, the conclusion id in the chain and input hash. `ALGO_VERSION` is `m10.1`.
+- **Weekly brief** (`synthesize/brief.py`): deterministic; Telegram copy once a week. **Review pack**: stances with track record and the overlay value-added line.
+- **Jobs**:
+  - `track_record` 07:30 SGT (startup catch-up);
+  - `conclusions` Sunday 08:30 (and once 15 minutes after start when no conclusion is newer than 8 days and a key is set);
+  - `weekly_brief` Sunday 09:00;
+  - the CSRF'd `synthesize` command (one ticker, or all + the theme).
+- **Dashboard**:
+  - Overview: tilt banner and stance columns.
+  - Ticker page: the conclusion card with clickable citations, hysteresis status, track record, history with diffs and **Re-run conclusion**.
+  - New pages: `/track-record` and `/briefs`.
+  - `/feed?event=N` (citation links) and catalyst row anchors.
+  - Holdings and Review show stance steps and the value-added line.
+
+### Decisions (deviations from the spec / plan)
+1. **Your calls (2026-10-06):**
+   - Opus 5.5 for synthesis;
+   - every non-held conclusion counts as a call (overlapping windows, noted in the UI);
+   - the brief goes to Telegram;
+   - startup catch-up after 8 days.
+2. **Evidence ids are strings** (`E812`, `S:dilution`, `X:theme`, …) instead of the spec's integers. Options, scorecard, fact and theme citations need ids too.
+3. **Stance bands** (initial values for your review, `weights.yaml` → `conclusions`):
+   - AVOID < −50 ≤ TRIM < −20 ≤ HOLD < +20 ≤ ACCUMULATE;
+   - margin 20 points (10% of the range) for 5 days;
+   - the score trigger only counts in the direction of the proposed change.
+4. **"Since the last conclusion"** means published after the previous conclusion was created. The T1 RISK cooldown bypass applies to downgrades only, and the event must also qualify under rule 1 (materiality ≥ 4).
+5. **HOLD band per horizon**: 10% at 6 months, scaled by √(months/6) (4% at 1m … 24.5% at 36m).
+6. **Layer 2 sizing**:
+   - names cut by either layer never receive freed weight;
+   - stances that push the sleeve above its base total are renormalised within the uncut names, so ACCUMULATE is a relative tilt and QTUM's fixed weight is never squeezed;
+   - a stance can't lift a name over its cap;
+   - a stance older than 35 days is ignored.
+7. **`injection_suspected` from the synthesis model is a failure** (nothing stored, logged), the same as other invalid answers.
+8. **Theme tilt**: PURE_PLAYS / NEUTRAL / QTUM, judged on the equal-weight pure-play basket minus QTUM, rule (1) + cooldown only. It isn't used in sizing.
+9. **The brief is deterministic** (no LLM). "Top signals" ranks the week's SIGNAL events by materiality, then confidence.
+10. **Layer 3 verdict** uses chained 1-month returns of the monthly publishes, as each publish is held until the next one.
+
+### Facts
+- No facts changed or added.
+
+### Open questions
+- **Overlapping calls:** with weekly reaffirmations counted, n reaches 10 mature 6-month calls per ticker about 8½ months after the first conclusion, but the hits are highly correlated. If you'd rather count independent calls only (first + changes), it's a one-line change in `score/track_record.py::_calls`.
+- **No paid live run:** the live check had no API key, so the synthesis paths are exercised by tests over the real SDK with a fake transport. The first real run (≈ $1–2 for 7 calls) happens 15 minutes after your deploy, or on **Re-run conclusion**.
+- Still open from M9: IONQ's FD halving and the confounding scope.
+
+### Live check (isolated compose project `aether-m10` on 127.0.0.1:8090, its own volume and image tag; Anthropic, Telegram, Tiger and Massive blanked; your SEC user agent passed for EDGAR; backfill off; a throwaway password; torn down afterwards. Your `aether` stack kept running throughout)
+- The worker migrated a fresh DB to `0011_conclusions`. Every job came back `ok`: prices, EDGAR, options, strategies, rebalance, reactions, theme, scorecards and the new `track_record` (18 overlay outcome rows, all pending, for the 3 bootstrap publishes). Without a key, the conclusion catch-up isn't scheduled.
+- Scorecards as in M9: QTUM +8, INFQ −6, IONQ −8, QNT −13, RGTI −16, QBTS −25. With no conclusions, the safe targets are unchanged from M9 (IONQ still halved by the FD rule).
+- **Browser** (logged in):
+  - `/t/IONQ` shows the conclusion card ("No conclusion yet", "No track record yet."), and **Re-run conclusion** went through the command queue to the worker, which answered inline "ANTHROPIC_API_KEY is not set";
+  - `/track-record` (empty tables, the overlap note, layer 3 "Too early: 0 of 12" per profile, **Re-run all conclusions**);
+  - Overview: the tilt banner and the stance columns;
+  - `/holdings`: the overlay value-added line;
+  - `/briefs`: "No briefs yet".
+  - Fixed during the check: an htmx `hx-disabled-elt` selector on the re-run form that the polling status inherited (console error), a duplicate "Theme tilt" heading, and a missing full stop after command error details.
+
+### Owner checklist
+- [ ] Review `config/weights.yaml` → `conclusions` (bands, margin, 5 days, 14-day cooldown, context caps, 35-day stance age) and `track_record` (HOLD bands, 10 calls, 90-day momentum).
+- [ ] Review `config/strategies.yaml` → `overlay.stance_multipliers` (ACCUMULATE 1.25; set 1.0 if research should only reduce) and `unproven_clamp` [0.75, 1.25].
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0011_conclusions`. With `ANTHROPIC_API_KEY` set, the first conclusions run about 15 minutes after start (≈ $1–2 under the daily soft budget); stances reach targets at the next publish (2026-11-01) or **Publish targets now**.
+- [ ] Still open from earlier milestones: `DAILY_LLM_BUDGET_USD`, `MASSIVE_API_KEY`, the Telegram bot setup, the facts not yet signed off, and the M9 decisions above.
+
+### How to verify
+```bash
+make test            # 626 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open /t/IONQ, /track-record and /briefs
+```
+
 ## M9: Scorecards, reactions, theme (2026-10-06)
 
 The deterministic §6.1 scorecard (including fully diluted EV and cash runway from SEC XBRL), the §6.3 event-reaction engine with the Calibration page and implied vs realized moves, the QTUM theme decomposition, and research-overlay layer 1's dilution and runway haircuts. **$0 LLM**: nothing in M9 calls a model.

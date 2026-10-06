@@ -1,6 +1,6 @@
 {# Options panel (spec §6.8). Research only: options are never held, suggested or used in sizing. #}
 {% set o = options.panel %}
-<section class="card">
+<section class="card" id="options">
   <div class="card-head"><h2>Options (research only)</h2>
     <span class="muted small reason">{% if o.d %}Snapshot {{ o.d }} · {{ o.provider }}{% endif %}</span></div>
   {% if options.stale %}<p class="banner stale">{% if options.last_ok %}Options snapshot stale since {{ options.last_ok }}.{% else %}No successful options snapshot yet.{% endif %}</p>{% endif %}

@@ -67,6 +67,12 @@ publish:
 #   be dated on or after the stock's first trading session (no SPAC / pre-IPO baselines);
 # - cash runway (cash + short-term investments / quarterly operating burn) under
 #   runway_min_months -> x runway_multiplier.
+# M10 layer 2: each pure-play's weight is scaled by its latest stance (after hysteresis, no
+# older than conclusions.stance_max_age_days in weights.yaml). While a ticker's track record is
+# unproven (< 10 mature 6-month calls, or not beating both baselines) the multiplier is clamped to
+# unproven_clamp. Set ACCUMULATE to 1.0 if research should only ever reduce positions.
+# Names cut by either layer never receive freed weight. If stances add up to more than the
+# sleeve, the uncut names are scaled back pro rata, so QTUM's fixed weight is never squeezed.
 # Freed weight goes to the other pure-plays within caps, then QTUM. (8-K Item 5.01 only alerts.)
 overlay:
   enabled: true
@@ -78,3 +84,5 @@ overlay:
   dilution_multiplier: 0.5
   runway_min_months: 12
   runway_multiplier: 0.5
+  stance_multipliers: {ACCUMULATE: 1.25, HOLD: 1.0, TRIM: 0.5, AVOID: 0.0}
+  unproven_clamp: [0.75, 1.25]

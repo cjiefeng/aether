@@ -72,3 +72,38 @@ calibration:
   signal_ignored_mean_abs_z5: 0.75      # SIGNAL category with mean |z5| below this -> "ignored"
   high_materiality: 4                   # events at/above this materiality ...
   high_materiality_max_abs_z5: 0.5      # ... with |z5| below this are listed for spot review
+
+# Conclusions (spec §6.2, M10): stance hysteresis, enforced in code. A new stance that differs
+# from the current one is accepted only if (a) the model cites a non-quarantined event of post-cap
+# materiality >= trigger_min_materiality published since the previous conclusion, or (b) the
+# scorecard total has sat beyond the current stance's band by threshold_margin for
+# consecutive_days daily scorecards in the direction of the change; AND cooldown_days have passed
+# since the last stance change (a cited T1 RISK event bypasses the cooldown on a downgrade).
+# Otherwise the previous stance is kept and the run is stored as a "held" update.
+conclusions:
+  # Scorecard-total bands (the total runs -100..+100):
+  # AVOID < avoid_below <= TRIM < trim_below <= HOLD < accumulate_from <= ACCUMULATE.
+  avoid_below: -50
+  trim_below: -20
+  accumulate_from: 20
+  threshold_margin: 20        # 10% of the -100..+100 range
+  consecutive_days: 5
+  cooldown_days: 14
+  trigger_min_materiality: 4
+  # Synthesis context: events from the last context_days (non-quarantined, classified), at most
+  # max_events; events at or above keep_min_materiality go in first, then the most recent.
+  context_days: 90
+  max_events: 60
+  keep_min_materiality: 3
+  # A stance older than this no longer reaches the research overlay (layer 2).
+  stance_max_age_days: 35
+
+# Conclusion track record (spec §6.4, M10). Forward excess return vs QTUM (vs QQQ for QTUM's own
+# stance; the theme tilt uses the equal-weight pure-play basket vs QTUM).
+# Hits: ACCUMULATE > 0; TRIM / AVOID < 0; HOLD |excess| < hold_band. The bands scale with the
+# square root of the horizon from 10% at 6 months.
+track_record:
+  hold_band: {1m: 0.04, 3m: 0.07, 6m: 0.10, 12m: 0.14, 24m: 0.20, 36m: 0.245}
+  min_mature_calls: 10          # mature 6-month calls before a ticker's stance is "proven"
+  momentum_lookback_days: 90    # momentum baseline: sign of the 90-day excess return
+  confidence_buckets: [0.0, 0.5, 0.6, 0.7, 0.8, 1.0]

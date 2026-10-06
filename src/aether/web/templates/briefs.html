@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Briefs · Aether{% endblock %}
+{% block content %}
+<h1>Weekly briefs</h1>
+<p class="muted small">Sunday 09:00 SGT. Built from the database (no LLM): what changed, signals, risks, filtered noise,
+  upcoming catalysts, the stance table with track record and position drift. The Telegram copy has no holdings values.</p>
+{% for b in briefs %}
+{% set p = b.payload %}
+<section class="card">
+  <h2>{{ b.week }} <span class="muted small">{{ b.as_of }}</span></h2>
+  {% if b.status != "done" %}
+  <p class="banner stale">Failed: {{ b.error }}</p>
+  {% else %}
+  <h3>What changed</h3>
+  <ul class="points">
+    {% for c in p.changes %}<li>{{ c.who }}: {{ c.text }} <span class="muted small">#{{ c.id }}</span></li>{% else %}<li class="muted">No stance changes.</li>{% endfor %}
+  </ul>
+  {% if p.score_moves %}
+  <p class="small">Score moves (week): {% for m in p.score_moves %}{{ m.symbol }} {{ "%+.0f"|format(m.prev) }} → {{ "%+.0f"|format(m.total) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+  <h3>Stances</h3>
+  <ul class="points">{% for s in p.stances %}<li>{{ s.line[2:] }}</li>{% else %}<li class="muted">No conclusions yet.</li>{% endfor %}</ul>
+  <h3>Top signals</h3>
+  <ul class="points">{% for e in p.signals %}<li><a href="/feed?event={{ e.id }}">#{{ e.id }}</a> {{ e.symbols|join("/") or "theme" }} · m{{ e.materiality }} {{ e.category }}: {{ e.title }}</li>{% else %}<li class="muted">None this week.</li>{% endfor %}</ul>
+  <h3>Risks</h3>
+  <ul class="points">
+    {% for e in p.risks %}<li><a href="/feed?event={{ e.id }}">#{{ e.id }}</a> {{ e.symbols|join("/") or "theme" }} · m{{ e.materiality }} {{ e.category }}: {{ e.title }}</li>{% endfor %}
+    {% for f in p.flags %}<li>Open flag {{ f.symbol }}: {{ f.detail }}</li>{% endfor %}
+    {% if not p.risks and not p.flags %}<li class="muted">None this week.</li>{% endif %}
+  </ul>
+  <p class="small">Filtered noise: {{ p.counts.NOISE }} NOISE items, {{ p.counts.quarantined }} quarantined (signals {{ p.counts.SIGNAL }}, risks {{ p.counts.RISK }}).</p>
+  <h3>Next 30 days</h3>
+  <ul class="points">
+    {% for e in p.earnings %}<li>{{ e.date }} {{ e.symbol }} earnings</li>{% endfor %}
+    {% for c in p.catalysts %}<li>{{ c.window_start }} {{ c.symbol or "theme" }}: {{ c.title }}</li>{% endfor %}
+    {% if not p.earnings and not p.catalysts %}<li class="muted">Nothing scheduled.</li>{% endif %}
+  </ul>
+  <p class="small">{{ p.reaction_note }}</p>
+  {% if p.drift %}
+  <h3>Position drift ({{ p.drift.profile }})</h3>
+  <ul class="points">{% for line in p.drift.lines %}<li>{{ line }}</li>{% else %}<li class="muted">Every holding is within 1.5× of its target.</li>{% endfor %}</ul>
+  {% endif %}
+  {% endif %}
+</section>
+{% else %}
+<p class="muted">No briefs yet. The first one is built on Sunday at 09:00 SGT.</p>
+{% endfor %}
+{% endblock %}

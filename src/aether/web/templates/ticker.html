@@ -26,6 +26,10 @@
   </table>
 </section>
 
+{% if conclusion is not none %}
+{% with symbol = s.symbol, rerun = true %}{% include "_conclusion.html" %}{% endwith %}
+{% endif %}
+
 <section class="card">
   <h2>Price and volume</h2>
   <div class="chart tall" data-chart="ticker" data-src="/api/prices/{{ s.symbol }}"{% if s.type in ("etf", "pure_play") %} data-markers="/api/reactions/{{ s.symbol }}"{% endif %}></div>

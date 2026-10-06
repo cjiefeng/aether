@@ -6,7 +6,8 @@ VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
 events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance, M6: news +
-research, M7: classifier state + eval runs, M8: catalysts + short interest). Keep this file and
+research, M7: classifier state + eval runs, M8: catalysts + short interest, M9: scores, M10:
+conclusions + track record + briefs). Keep this file and
 `migrations/versions/*` in sync (a test compares them).
 """
 
@@ -160,6 +161,7 @@ ALERT_KINDS = (
     "off_cycle_review",  # M5
     "review_pack",  # M5
     "llm_budget",  # M6
+    "weekly_brief",  # M10
 )
 ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
 
@@ -1117,5 +1119,173 @@ calibration_reports = Table(
     Column("created_at", Text, nullable=False),
     _date_ck("as_of"),
     _json_ck("payload"),
+    sqlite_strict=True,
+)
+
+# --------------------------------------------------------------------------- M10: conclusions
+
+STANCE_VALUES = ("ACCUMULATE", "HOLD", "TRIM", "AVOID")
+TILT_VALUES = ("PURE_PLAYS", "NEUTRAL", "QTUM")
+HORIZON_VALUES = ("1m", "3m", "6m", "12m", "24m", "36m")
+
+
+def _quoted(values: tuple[str, ...]) -> str:
+    return ",".join(f"'{v}'" for v in values)
+
+
+# One row per synthesis run that passed validation (spec §6.2). `stance` is the stance after
+# hysteresis; a blocked flip keeps the previous stance with `held = 1` and the model's proposal in
+# `proposed_stance`. Theme rows (kind 'theme', no symbol) hold a tilt between QTUM and the
+# pure-plays. `evidence` is the id -> label/url map the run could cite (for rendering citations).
+conclusions = Table(
+    "conclusions",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol")),
+    Column("as_of", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("stance", Text, nullable=False),
+    Column("proposed_stance", Text, nullable=False),
+    Column("held", Integer, nullable=False, server_default="0"),
+    Column("hold_reason", Text),
+    Column("confidence", REAL, nullable=False),
+    Column("horizon", Text, nullable=False),
+    Column("payload", Text, nullable=False),
+    Column("evidence", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("prompt_version", Text, nullable=False),
+    Column("input_hash", LargeBinary, nullable=False),
+    Column("cost_micros", Micros, nullable=False, server_default="0"),
+    Column("prev_id", Integer, ForeignKey("conclusions.id")),
+    _in_ck("kind", ("ticker", "theme")),
+    CheckConstraint("(kind = 'ticker') = (symbol IS NOT NULL)", name="symbol_kind"),
+    CheckConstraint(
+        f"(kind = 'ticker' AND stance IN ({_quoted(STANCE_VALUES)}) "
+        f"AND proposed_stance IN ({_quoted(STANCE_VALUES)})) OR "
+        f"(kind = 'theme' AND stance IN ({_quoted(TILT_VALUES)}) "
+        f"AND proposed_stance IN ({_quoted(TILT_VALUES)}))",
+        name="stance",
+    ),
+    CheckConstraint("held = 1 OR stance = proposed_stance", name="held_stance"),
+    _bool_ck("held"),
+    CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence"),
+    _in_ck("horizon", ("12m", "36m")),
+    _date_ck("as_of"),
+    _json_ck("payload"),
+    _json_ck("evidence"),
+    CheckConstraint("length(input_hash) = 32", name="input_hash_len"),
+    CheckConstraint("cost_micros >= 0", name="cost"),
+    Index(None, "symbol", "as_of"),
+    Index(None, "kind", "id"),
+    sqlite_strict=True,
+)
+
+# Forward excess return of each conclusion (spec §6.4), filled in as each horizon matures, with
+# the two naive baselines judged on the same window ("always HOLD" and 90-day momentum).
+conclusion_outcomes = Table(
+    "conclusion_outcomes",
+    metadata,
+    Column(
+        "conclusion_id",
+        Integer,
+        ForeignKey("conclusions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("horizon", Text, nullable=False),
+    Column("benchmark", Text, nullable=False),
+    Column("start_d", Text),
+    Column("end_d", Text, nullable=False),
+    Column("excess_return", REAL),
+    Column("hit", Integer),
+    Column("hold_hit", Integer),
+    Column("momentum_stance", Text),
+    Column("momentum_hit", Integer),
+    Column("status", Text, nullable=False),
+    Column("computed_at", Text, nullable=False),
+    PrimaryKeyConstraint("conclusion_id", "horizon"),
+    _in_ck("horizon", HORIZON_VALUES),
+    _in_ck("status", ("pending", "complete")),
+    CheckConstraint("hit IS NULL OR hit IN (0, 1)", name="hit_bool"),
+    CheckConstraint("hold_hit IS NULL OR hold_hit IN (0, 1)", name="hold_hit_bool"),
+    CheckConstraint("momentum_hit IS NULL OR momentum_hit IN (0, 1)", name="momentum_hit_bool"),
+    CheckConstraint(
+        "status = 'pending' OR (excess_return IS NOT NULL AND hit IS NOT NULL)",
+        name="complete_has_values",
+    ),
+    _date_ck("start_d", nullable=True),
+    _date_ck("end_d"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# Layer 3 of the research overlay (spec §6.6.1): each publish's base and published (overlay-
+# adjusted) targets held as two buy-and-hold paper portfolios.
+overlay_outcomes = Table(
+    "overlay_outcomes",
+    metadata,
+    Column("profile", Text, nullable=False),
+    Column("as_of", Text, nullable=False),
+    Column("horizon", Text, nullable=False),
+    Column("start_d", Text),
+    Column("end_d", Text, nullable=False),
+    Column("base_return", REAL),
+    Column("adjusted_return", REAL),
+    Column("status", Text, nullable=False),
+    Column("computed_at", Text, nullable=False),
+    PrimaryKeyConstraint("profile", "as_of", "horizon"),
+    ForeignKeyConstraint(
+        ["profile", "as_of"],
+        ["profile_targets.profile", "profile_targets.as_of"],
+        ondelete="CASCADE",
+    ),
+    _in_ck("horizon", HORIZON_VALUES),
+    _in_ck("status", ("pending", "complete")),
+    CheckConstraint(
+        "status = 'pending' OR (base_return IS NOT NULL AND adjusted_return IS NOT NULL)",
+        name="complete_has_values",
+    ),
+    _date_ck("start_d", nullable=True),
+    _date_ck("end_d"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# Weekly brief archive (spec §6.2): deterministic digest, one per ISO week.
+briefs = Table(
+    "briefs",
+    metadata,
+    Column("as_of", Text, primary_key=True),
+    Column("week", Text, nullable=False, unique=True),
+    Column("payload", Text, nullable=False),
+    Column("telegram_text", Text),
+    Column("status", Text, nullable=False),
+    Column("error", Text),
+    Column("created_at", Text, nullable=False),
+    _in_ck("status", ("done", "failed")),
+    _date_ck("as_of"),
+    _json_ck("payload"),
+    sqlite_strict=True,
+)
+
+# Synthesis runs that failed validation twice (spec §6.2: "log failures"). The error text only;
+# the rejected model output is never stored.
+conclusion_failures = Table(
+    "conclusion_failures",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol")),
+    Column("as_of", Text, nullable=False),
+    Column("attempts", Integer, nullable=False),
+    Column("error", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("prompt_version", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    _in_ck("kind", ("ticker", "theme")),
+    CheckConstraint("attempts >= 0", name="attempts"),
+    CheckConstraint("length(error) <= 1000", name="error_len"),
+    _date_ck("as_of"),
+    Index(None, "created_at"),
     sqlite_strict=True,
 )

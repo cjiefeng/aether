@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
-from sqlalchemy import Engine, delete, select, update
+from sqlalchemy import Engine, delete, func, select, update
 
 from aether.alerts.dispatch import enqueue_test_alert, run_alerts
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
@@ -42,8 +42,9 @@ from aether.config import (
     load_weights,
 )
 from aether.db.engine import write_tx
-from aether.db.models import commands, job_runs
+from aether.db.models import commands, conclusions, job_runs
 from aether.db.types import to_iso, utcnow_iso
+from aether.facts import load_facts
 from aether.ingest.dividends import ingest_dividends
 from aether.ingest.earnings_calendar import ingest_earnings_calendar
 from aether.ingest.edgar import ingest_edgar
@@ -85,6 +86,9 @@ from aether.score.calibration import has_report, run_calibration
 from aether.score.reaction import run_reactions
 from aether.score.scorecard import run_scorecards
 from aether.score.theme import run_theme
+from aether.score.track_record import run_track_record
+from aether.synthesize.brief import weekly_brief
+from aether.synthesize.run import SynthDeps, run_conclusions, synth_symbols
 
 __all__ = ["JobResult", "build_scheduler", "process_commands", "run_job"]
 
@@ -198,7 +202,56 @@ def strategies_job(engine: Engine, settings: Settings) -> JobResult:
 
 
 def rebalance_job(engine: Engine, settings: Settings) -> JobResult:
-    return run_rebalance(engine, load_strategies(settings.config_dir))
+    return run_rebalance(
+        engine, load_strategies(settings.config_dir), weights=load_weights(settings.config_dir)
+    )
+
+
+def track_record_job(engine: Engine, settings: Settings) -> JobResult:
+    return run_track_record(engine, load_weights(settings.config_dir).track_record)
+
+
+def synth_deps(settings: Settings, llm: LlmClient) -> SynthDeps:
+    w = load_weights(settings.config_dir)
+    return SynthDeps(
+        llm=llm,
+        llm_cfg=load_llm_config(settings.config_dir),
+        model=settings.synth_model,
+        conclusions=w.conclusions,
+        track=w.track_record,
+        facts=load_facts(settings.config_dir),
+    )
+
+
+def conclusions_job(
+    engine: Engine, settings: Settings, llm: LlmClient | None, symbols: list[str] | None = None
+) -> JobResult:
+    if llm is None:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set; conclusions are disabled")
+    return run_conclusions(
+        engine,
+        synth_deps(settings, llm),
+        sgt_today(),
+        symbols=symbols,
+        include_theme=symbols is None,
+    )
+
+
+def brief_job(engine: Engine, settings: Settings, telegram: bool) -> JobResult:
+    rubric = load_rubric(settings.config_dir)
+    return weekly_brief(
+        engine,
+        load_weights(settings.config_dir).track_record,
+        rubric.risk_flags,
+        today=sgt_today(),
+        telegram=telegram,
+        short_rule=rubric.short_interest,
+    )
+
+
+def latest_conclusion_at(engine: Engine) -> str | None:
+    with engine.connect() as conn:
+        return conn.execute(select(func.max(conclusions.c.created_at))).scalar()
 
 
 def make_tiger(settings: Settings) -> tuple[TigerReadOnly | None, str | None]:
@@ -331,6 +384,10 @@ PORTFOLIO_CATCH_UP_DELAY = timedelta(minutes=5)
 # M9 scores catch up after prices, EDGAR and the classifier have had a first pass.
 SCORES_CATCH_UP_DELAY = timedelta(minutes=8)
 CALIBRATION_FIRST_DELAY = timedelta(minutes=12)
+# M10: synthesis catches up once at startup when no conclusion is newer than this (owner decision
+# 2026-10-06), after the scores have had their first pass.
+SYNTH_CATCH_UP_AFTER = timedelta(days=8)
+SYNTH_CATCH_UP_DELAY = timedelta(minutes=15)
 
 
 def _catch_up(engine: Engine, job: str, delay: timedelta = timedelta(0)) -> dict[str, Any]:
@@ -460,6 +517,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                     load_strategies(settings.config_dir),
                     trigger="off_cycle",
                     trigger_event_id=eid,
+                    weights=load_weights(settings.config_dir),
                 ),
             )
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
@@ -612,6 +670,36 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             if summary.changed:
                 run_job(engine, "catalysts", lambda: JobResult(rows_written=summary.changed))
 
+    # Conclusions (M10): Sunday 08:30 SGT, after the calibration report; the `synthesize` command
+    # re-runs one ticker (or all + theme). Budget-guarded synchronous calls, no tools.
+    synth_lock = threading.Lock()
+
+    def synthesize_command(args: dict[str, Any]) -> dict[str, Any]:
+        args.pop("_command_id", None)
+        if llm is None:
+            return {"ok": False, "error": llm_off}
+        sym = args.get("symbol")
+        known = synth_symbols(engine)
+        if sym is not None and sym not in known:
+            return {"ok": False, "error": f"unknown symbol {sym!r}"}
+        if not synth_lock.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        try:
+            result = run_job(
+                engine,
+                "conclusions",
+                lambda: conclusions_job(engine, settings, llm, [sym] if sym else None),
+            )
+        finally:
+            synth_lock.release()
+        return {"ok": result is not None, "rows": result.rows_written if result else 0}
+
+    def run_conclusions_job() -> None:
+        if llm is None:
+            return  # disabled: logged once at startup
+        with synth_lock:
+            run_job(engine, "conclusions", lambda: conclusions_job(engine, settings, llm))
+
     def mark_catalyst(args: dict[str, Any]) -> dict[str, Any]:
         args.pop("_command_id", None)
         with catalysts_lock:
@@ -629,6 +717,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         "update_portfolio_settings": update_portfolio_settings,
         "sync_holdings": sync_holdings_command,
         "publish_targets": publish_now,
+        "synthesize": synthesize_command,
     }
 
     def commands_tick() -> None:
@@ -792,10 +881,47 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                     today=sgt_today(),
                     telegram=on,
                     short_rule=load_rubric(settings.config_dir).short_interest,
+                    weights=load_weights(settings.config_dir),
                 ),
             )
 
     sched.add_job(run_monthly_review, "cron", day="1,2", hour=10, minute=30, id="review_pack")
+
+    # M10: track record + overlay outcomes daily 07:30; conclusions Sunday 08:30 (and once,
+    # 15 min after start, if no conclusion is newer than 8 days and an API key is set); the
+    # weekly brief Sunday 09:00.
+    sched.add_job(
+        wrap("track_record", lambda: track_record_job(engine, settings)),
+        "cron",
+        hour=7,
+        minute=30,
+        id="track_record",
+        **_catch_up(engine, "track_record", SCORES_CATCH_UP_DELAY + timedelta(minutes=2)),
+    )
+    last_synth = latest_conclusion_at(engine)
+    synth_due = (
+        last_synth is None
+        or datetime.now(UTC) - datetime.fromisoformat(last_synth) > SYNTH_CATCH_UP_AFTER
+    )
+    sched.add_job(
+        run_conclusions_job,
+        "cron",
+        day_of_week="sun",
+        hour=8,
+        minute=30,
+        id="conclusions",
+        **(
+            {"next_run_time": datetime.now(ZoneInfo(TZ)) + SYNTH_CATCH_UP_DELAY}
+            if synth_due and llm is not None
+            else {}
+        ),
+    )
+
+    def run_brief() -> None:
+        on = telegram is not None and telegram.blocked is None
+        run_job(engine, "weekly_brief", lambda: brief_job(engine, settings, on))
+
+    sched.add_job(run_brief, "cron", day_of_week="sun", hour=9, minute=0, id="weekly_brief")
     # Alerts (M3): every 10 min; covers the hourly job-health check (spec §9).
     sched.add_job(
         run_alerts_job,

@@ -27,7 +27,7 @@
         <thead><tr><th>Symbol</th><th>Base</th><th>Target</th></tr></thead>
         <tbody>
         {% for c in t.chain %}<tr><td>{{ c.symbol }}</td><td>{{ w(c.base) }}</td><td>{{ w(c.final) }}</td></tr>
-          {% for st in c.steps %}<tr><td></td><td colspan="2" class="small">{{ st.label }}{% if st.event_id %} (event #{{ st.event_id }}){% endif %}: {{ st.url|extlink(st.form ~ " " ~ st.filed_at) }} → {{ w(st.weight) }}</td></tr>{% endfor %}
+          {% for st in c.steps %}<tr><td></td><td colspan="2" class="small">{{ st.label }}{% if st.conclusion_id %} (<a href="/t/{{ c.symbol }}#conclusion">conclusion #{{ st.conclusion_id }}</a>){% else %}{% if st.event_id %} (event #{{ st.event_id }}){% endif %}: {{ st.url|extlink(st.form ~ " " ~ st.filed_at) }}{% endif %} → {{ w(st.weight) }}</td></tr>{% endfor %}
         {% endfor %}
         </tbody>
       </table>
@@ -68,6 +68,11 @@
       {% if c.symbol %}{{ c.symbol }}{% else %}theme{% endif %}: {{ c.title }}{% if c.fact_id %} <span class="badge fact-{{ c.fact_status }}">{{ c.fact_status|replace("_", " ") }}</span>{% endif %}</li>{% endfor %}
   </ul>
   {% else %}<p class="muted small">None in the window.</p>{% endif %}
+  {% endif %}
+  {% if pk.stances is defined %}
+  <h3>Stances and track record</h3>
+  <ul class="points small">{% for st in pk.stances %}<li>{{ st.line[2:] }}</li>{% else %}<li class="muted">No conclusions yet.</li>{% endfor %}</ul>
+  <p class="small">Overlay value-added: {{ pk.overlay_value }}</p>
   {% endif %}
   {% if pk.options is defined %}
   <h3>Options (research only, never trades or sizing)</h3>

@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Track record · Aether{% endblock %}
+{% block content %}
+<h1>Track record</h1>
+<p class="banner {{ 'stale' if tr.overall['6m'].n < min_calls else 'note' }}"><strong>{{ tr.verdict }}</strong></p>
+<p class="muted small">Every stored conclusion is judged on its forward excess total return vs QTUM (vs QQQ for QTUM's own
+  stance; basket minus QTUM for the theme tilt) at 1–36 months, as each horizon matures. Hits: ACCUMULATE &gt; 0, TRIM/AVOID &lt; 0,
+  HOLD inside the band. Baselines on the same windows: "always HOLD" and momentum (sign of the 90-day excess return).
+  {{ tr.overlap_note }} {% if tr.last_ok %}Last computed {{ tr.last_ok }}.{% endif %}</p>
+
+<section class="card">
+  <h2>Stances now</h2>
+  {% if stances %}
+  <table class="compact">
+    <thead><tr><th>Name</th><th>Stance</th><th class="num">Confidence</th><th>As of</th><th>Track record (6m)</th></tr></thead>
+    <tbody>
+    {% for s in stances %}
+      <tr>
+        <td>{% if s.symbol %}<a href="/t/{{ s.symbol }}#conclusion">{{ s.symbol }}</a>{% else %}Theme tilt{% endif %}{% if s.label %} <span class="muted small">{{ s.label }}</span>{% endif %}</td>
+        <td><span class="badge stance-{{ s.stance }}">{{ s.stance }}</span>{% if s.held %} <span class="small muted">proposed {{ s.proposed }}, held</span>{% endif %}</td>
+        <td class="num">{{ "%.2f"|format(s.confidence) }}</td>
+        <td>{{ s.as_of }}</td>
+        <td class="small">{{ s.standing.label }}{% if s.standing.n %} (hit {{ s.standing.hit_rate|pct(false) }}, HOLD {{ s.standing.hold_rate|pct(false) }}, momentum {{ s.standing.momentum_rate|pct(false) }}, n = {{ s.standing.n }}){% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No conclusions yet.</p>
+  {% endif %}
+</section>
+
+{% macro summary_table(rows_by_key, key_label) %}
+<table class="num compact">
+  <thead><tr><th>{{ key_label }}</th>{% for h in tr.horizons %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for key, s in rows_by_key.items() %}
+    <tr><td>{{ key }}</td>
+      {% for h in tr.horizons %}{% set x = s[h] %}
+      <td>{% if x.n %}{{ x.hit_rate|pct(false) }} <span class="muted small">n={{ x.n }}, mean {{ x.mean_excess|pct }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
+<section class="card">
+  <h2>Hit rate vs baselines</h2>
+  <table class="num compact">
+    <thead><tr><th></th>{% for h in tr.horizons %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr><td>Mature calls</td>{% for h in tr.horizons %}<td>{{ tr.overall[h].n }}</td>{% endfor %}</tr>
+      <tr><td>Aether hit rate</td>{% for h in tr.horizons %}<td>{{ tr.overall[h].hit_rate|pct(false) }}</td>{% endfor %}</tr>
+      <tr><td>"Always HOLD"</td>{% for h in tr.horizons %}<td>{{ tr.overall[h].hold_rate|pct(false) }}</td>{% endfor %}</tr>
+      <tr><td>Momentum</td>{% for h in tr.horizons %}<td>{{ tr.overall[h].momentum_rate|pct(false) }}</td>{% endfor %}</tr>
+      <tr><td>Mean excess return</td>{% for h in tr.horizons %}<td>{{ tr.overall[h].mean_excess|pct }}</td>{% endfor %}</tr>
+      <tr><td>Median excess return</td>{% for h in tr.horizons %}<td>{{ tr.overall[h].median_excess|pct }}</td>{% endfor %}</tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Per stance</h2>
+  {{ summary_table(tr.per_stance, "Stance") }}
+</section>
+
+<section class="card">
+  <h2>Per ticker</h2>
+  {% if tr.per_ticker %}{{ summary_table(tr.per_ticker, "Ticker") }}{% else %}<p class="muted">No outcomes yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Confidence calibration ({{ tr.calibration.horizon }})</h2>
+  <table class="num compact">
+    <thead><tr><th>Confidence</th><th>n</th><th>Predicted</th><th>Realized hit rate</th></tr></thead>
+    <tbody>
+    {% for b in tr.calibration.buckets %}
+      <tr><td>{{ "%.1f"|format(b.lo) }}–{{ "%.1f"|format(b.hi) }}</td><td>{{ b.n }}</td><td>{{ b.predicted|pct(false) }}</td><td>{{ b.realized|pct(false) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="small">Brier score: {{ "%.3f"|format(tr.calibration.brier) if tr.calibration.brier is not none else "—" }}
+    <span class="muted">(mean of (confidence − hit)²; lower is better, 0.25 = always saying 0.5).</span></p>
+</section>
+
+<section class="card">
+  <h2>Theme tilt outcomes</h2>
+  {{ summary_table({"Basket minus QTUM": tr.theme}, "") }}
+</section>
+{% with conclusion = theme, stance = (stances|selectattr("kind", "equalto", "theme")|first), symbol = none, rerun = true %}{% include "_conclusion.html" %}{% endwith %}
+
+<section class="card" id="overlay">
+  <h2>Does the overlay add value? <span class="muted small">layer 3</span></h2>
+  {% if tr.overlay %}
+  {% for profile, o in tr.overlay.items() %}
+  <h3>{{ profile }}</h3>
+  <p>{{ o.verdict }}{% if o.chained_base is defined %} Chained 1-month returns: adjusted {{ o.chained_adjusted|pct }} vs base {{ o.chained_base|pct }}.{% endif %}</p>
+  {% if o.horizons %}
+  <table class="num compact">
+    <thead><tr><th>Horizon</th><th>Publishes</th><th>Base (mean)</th><th>Adjusted (mean)</th></tr></thead>
+    <tbody>{% for h, x in o.horizons.items() %}<tr><td>{{ h }}</td><td>{{ x.n }}</td><td>{{ x.mean_base|pct }}</td><td>{{ x.mean_adjusted|pct }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+  {% else %}
+  <p class="muted">No published targets yet.</p>
+  {% endif %}
+  <p class="muted small">Each publish's base targets and its overlay-adjusted targets, held as two buy-and-hold paper portfolios.
+    After 12 monthly publishes, if the adjusted portfolio hasn't beaten the base, set <code>overlay.enabled: false</code> to switch the overlay off.</p>
+</section>
+
+{% if tr.failures %}
+<section class="card">
+  <h2>Recent failed conclusion runs</h2>
+  <table class="compact">
+    <thead><tr><th>When</th><th>Name</th><th>Attempts</th><th>Error</th></tr></thead>
+    <tbody>{% for f in tr.failures %}<tr><td class="nowrap">{{ f.created_at }}</td><td>{{ f.symbol or "theme" }}</td><td>{{ f.attempts }}</td><td class="small">{{ f.error }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

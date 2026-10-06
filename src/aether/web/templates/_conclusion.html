@@ -1,0 +1,80 @@
+{# One conclusion card. `conclusion`: synthesize.view.ticker_conclusions(); `stance`: its stance-table
+   row (track-record standing); `cite`: synthesize.view.citation; `symbol`: the ticker or none (theme);
+   `rerun`: show the re-run button. Model text is rendered as escaped plain text. #}
+{% set c = conclusion.current %}
+{% macro cites(ev, ids) %}{% if ids %}<span class="cites">{% for i in ids %}{% set x = cite(ev, i) %}<a href="{{ x.href or '#' }}" title="{{ x.label }}">{{ i }}</a>{% endfor %}</span>{% endif %}{% endmacro %}
+<section class="card" id="conclusion">
+  <div class="card-head">
+    <h2>{% if symbol %}Conclusion{% else %}Theme tilt{% endif %}{% if c and c.payload.label %} <span class="muted small">{{ c.payload.label }}</span>{% endif %}</h2>
+    {% if rerun %}
+    <div>
+      {% if symbol %}<input type="hidden" id="synth-symbol" name="symbol" value="{{ symbol }}">{% endif %}
+      <button type="button" hx-post="/commands/synthesize"{% if symbol %} hx-include="#synth-symbol"{% endif %} hx-target="#synth-result" hx-swap="innerHTML" hx-disabled-elt="this">Re-run {% if symbol %}conclusion{% else %}all conclusions{% endif %}</button>
+      <span id="synth-result" class="result" role="status">{% with status = active_command_status(request, "synthesize") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span>
+    </div>
+    {% endif %}
+  </div>
+  {% if c %}
+  <p><span class="badge stance-{{ c.stance }}">{{ c.stance }}</span>
+    <span class="muted">confidence {{ "%.2f"|format(c.confidence) }} · horizon {{ c.horizon }} · as of {{ c.as_of }} · conclusion #{{ c.id }}</span></p>
+  {% if c.held %}
+  <p class="banner stale">Proposed {{ c.proposed_stance }}, held at {{ c.stance }}: {{ c.hold_reason }}.</p>
+  {% elif c.payload.hysteresis and c.payload.hysteresis.previous and c.payload.hysteresis.previous != c.stance %}
+  <p class="banner note">Changed from {{ c.payload.hysteresis.previous }} ({{ c.payload.hysteresis.reason }}).</p>
+  {% endif %}
+  <p class="verdict">{{ c.payload.one_line_verdict }}</p>
+  {% if c.payload.sleeve_note %}<p><strong>Quantum-sleeve view:</strong> {{ c.payload.sleeve_note }}</p>{% endif %}
+  <h3>Thesis</h3>
+  <ul class="points">{% for pt in c.payload.thesis %}<li>{{ pt.point }}{{ cites(c.evidence, pt.evidence_ids) }}</li>{% endfor %}</ul>
+  <h3>Bear case</h3>
+  <ul class="points">{% for pt in c.payload.bear_case %}<li>{{ pt.point }}{{ cites(c.evidence, pt.evidence_ids) }}</li>{% else %}<li class="muted">None given.</li>{% endfor %}</ul>
+  <h3>What would change my mind</h3>
+  <ul class="points">{% for w in c.payload.what_would_change_my_mind %}<li>{{ w }}</li>{% endfor %}</ul>
+  {% if c.payload.key_dates %}
+  <h3>Key dates</h3>
+  <ul class="points">{% for kd in c.payload.key_dates %}<li><span class="nowrap">{{ kd.date }}</span> {{ kd.event }}{% if kd.catalyst_id %} <a href="/catalysts#c{{ kd.catalyst_id }}">C{{ kd.catalyst_id }}</a>{% endif %}</li>{% endfor %}</ul>
+  {% endif %}
+  {% else %}
+  <p class="muted">No conclusion yet. Conclusions run on Sundays at 08:30 SGT (needs <code>ANTHROPIC_API_KEY</code>).</p>
+  {% endif %}
+
+  <h3>Track record</h3>
+  {% set st = stance.standing if stance else none %}
+  {% if not st or st.n == 0 %}
+  <p class="banner stale">No track record yet.</p>
+  {% else %}
+  <p>{{ st.n }} mature 6-month calls: hit rate {{ st.hit_rate|pct(false) }} vs "always HOLD" {{ st.hold_rate|pct(false) }}
+    and momentum {{ st.momentum_rate|pct(false) }}. <strong>{{ st.label }}</strong>.</p>
+  {% endif %}
+  <p class="muted small">Calls are judged on excess total return vs {% if symbol == "QTUM" %}QQQ{% elif symbol %}QTUM{% else %}QTUM (basket minus QTUM){% endif %}; held updates don't count.
+    Personal research tool, not financial advice.</p>
+
+  {% if conclusion.failures %}
+  <p class="small muted">Recent failed runs: {% for f in conclusion.failures %}{{ f.as_of }} ({{ f.error }}){% if not loop.last %}; {% endif %}{% endfor %}</p>
+  {% endif %}
+
+  {% if conclusion.history|length > 1 %}
+  <details>
+    <summary>History ({{ conclusion.history|length }})</summary>
+    <table class="compact">
+      <thead><tr><th>As of</th><th>Stance</th><th class="num">Confidence</th><th>Change vs previous</th></tr></thead>
+      <tbody>
+      {% for h in conclusion.history %}
+        <tr>
+          <td class="nowrap">{{ h.as_of }} <span class="muted small">#{{ h.id }}</span></td>
+          <td><span class="badge stance-{{ h.stance }}">{{ h.stance }}</span>{% if h.held %} <span class="small muted">proposed {{ h.proposed_stance }}, held</span>{% endif %}</td>
+          <td class="num">{{ "%.2f"|format(h.confidence) }}</td>
+          <td class="small">
+            {% if h.diff %}
+              {% if h.diff.stance %}{{ h.diff.stance[0] }} → {{ h.diff.stance[1] }}; {% endif %}confidence {{ "%+.2f"|format(h.diff.confidence) }}
+              {% for pt in h.diff.added %}<div class="diff-added">{{ pt.point }}</div>{% endfor %}
+              {% for pt in h.diff.removed %}<div class="diff-removed">{{ pt }}</div>{% endfor %}
+            {% else %}first conclusion{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+</section>

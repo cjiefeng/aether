@@ -20,6 +20,21 @@
 </p>
 {% endif %}
 
+{% set tilt = stances.get("$THEME") %}
+<section class="card" id="tilt">
+  <h2>Theme tilt <span class="muted small">quantum-sleeve view</span></h2>
+  {% if tilt %}
+  <p><span class="badge stance-{{ tilt.stance }}">{{ tilt.stance|replace("_", " ") }}</span>
+    <span class="muted">confidence {{ "%.2f"|format(tilt.confidence) }} · as of {{ tilt.as_of }}</span>
+    {% if tilt.held %}<span class="small muted">(proposed {{ tilt.proposed }}, held: {{ tilt.hold_reason }})</span>{% endif %}</p>
+  <p>{{ tilt.verdict }}</p>
+  <p class="small">{% if tilt.standing.n == 0 %}No track record yet.{% else %}Track record: {{ tilt.standing.label }} (6-month hit rate {{ tilt.standing.hit_rate|pct(false) }}, n = {{ tilt.standing.n }}).{% endif %}
+    <a href="/track-record">Track record</a></p>
+  {% else %}
+  <p class="muted">No theme conclusion yet. Conclusions run on Sundays at 08:30 SGT (needs <code>ANTHROPIC_API_KEY</code>).</p>
+  {% endif %}
+</section>
+
 <section class="card">
   <div class="card-head">
     <h2>QTUM vs pure-play basket vs SOXX vs QQQ</h2>
@@ -38,10 +53,10 @@
 <section class="card">
   <h2>Tickers</h2>
   <table class="num">
-    <thead><tr><th>Symbol</th><th>Last close</th><th>1d</th><th>30d</th><th>From 52w high</th><th>As of</th><th>Provider</th><th>Score</th></tr></thead>
+    <thead><tr><th>Symbol</th><th>Last close</th><th>1d</th><th>30d</th><th>From 52w high</th><th>As of</th><th>Provider</th><th>Score</th><th>Stance</th><th>Conf.</th><th>Δ week</th><th>Track record</th></tr></thead>
     {% for label, rows in groups %}
     <tbody>
-      <tr class="group"><th colspan="8">{{ label }}</th></tr>
+      <tr class="group"><th colspan="12">{{ label }}</th></tr>
       {% for s in rows %}
       <tr>
         <td><a href="/t/{{ s.symbol }}">{{ s.symbol }}</a></td>
@@ -52,13 +67,22 @@
         <td class="{{ 'bad' if s.stale }}">{{ s.last_d or "no data" }}</td>
         <td>{{ s.provider or "—" }}</td>
         <td>{% set sc = scores.get(s.symbol) %}{% if sc and sc.total is not none %}<a href="/t/{{ s.symbol }}#scorecard">{{ "%+.0f"|format(sc.total) }}</a>{% else %}—{% endif %}</td>
+        {% set st = stances.get(s.symbol) %}
+        {% if st %}
+        <td><a href="/t/{{ s.symbol }}#conclusion"><span class="badge stance-{{ st.stance }}">{{ st.stance }}</span></a>{% if st.held %} <span class="small muted" title="{{ st.hold_reason }}">held</span>{% endif %}</td>
+        <td>{{ "%.2f"|format(st.confidence) }}</td>
+        <td>{% if st.changed %}{{ st.prev_stance }} → {{ st.stance }}{% elif st.conf_delta is not none %}{{ "%+.2f"|format(st.conf_delta) }}{% else %}—{% endif %}</td>
+        <td class="small">{% if st.standing.n == 0 %}no record yet{% elif st.standing.proven %}{{ st.standing.hit_rate|pct(false) }} hit rate{% else %}unproven ({{ st.standing.hit_rate|pct(false) }}, n = {{ st.standing.n }}){% endif %}</td>
+        {% else %}<td>—</td><td></td><td></td><td></td>{% endif %}
       </tr>
       {% endfor %}
     </tbody>
     {% endfor %}
   </table>
   <p class="muted small">Score: the deterministic scorecard total, −100 to +100, over the components with data
-    (spec §6.1; weights in <code>config/weights.yaml</code>). Not a stance.</p>
+    (spec §6.1; weights in <code>config/weights.yaml</code>). Not a stance. Stance: the latest weekly conclusion after
+    hysteresis; Δ week is the change vs the stance a week earlier (or the confidence change). Track record: 6-month
+    hit rate; a stance is unproven until it has 10 mature calls and beats both baselines.</p>
 </section>
 
 <section class="card" id="theme">
