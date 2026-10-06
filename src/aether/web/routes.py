@@ -15,7 +15,13 @@ from aether.catalysts.mark import CatalystMark
 from aether.classify.prompt import prompt_version
 from aether.config import CATEGORY_CLASS, PROFILES, load_rubric
 from aether.db import health
-from aether.db.commands import count_recent_commands, enqueue_command
+from aether.db.commands import (
+    active_command,
+    count_recent_commands,
+    enqueue_command,
+    get_command,
+    rate_limit_resets_at,
+)
 from aether.options.view import options_panel, options_stale
 from aether.portfolio import holdings_view
 from aether.portfolio import view as strategies_view
@@ -29,6 +35,8 @@ from aether.portfolio.holdings import (
 from aether.providers.prices import US_EASTERN
 from aether.risk.flags import open_flags
 from aether.security import auth, csrf
+from aether.web import command_view
+from aether.web.command_view import CommandStatus
 
 router = APIRouter()
 
@@ -425,23 +433,48 @@ def api_strategy_curves(request: Request, profile: str = "safe") -> JSONResponse
 # --------------------------------------------------------------------------- commands
 
 
+def _command_status(request: Request, status: CommandStatus, code: int = 200) -> Response:
+    response: Response = request.app.state.templates.TemplateResponse(
+        request, "_command_status.html", {"status": status}, status_code=code
+    )
+    return response
+
+
 def _enqueue(request: Request, kind: str, args: dict[str, object] | None = None) -> Response:
     state = request.app.state
+    if kind in command_view.DEDUPE_KINDS and (row := active_command(state.ro_engine, [kind])):
+        return _command_status(request, command_view.already_active(command_view.status_for(row)))
     limit = state.settings.command_rate_limit_per_hour
     if count_recent_commands(state.ro_engine) >= limit:
-        return HTMLResponse(f"Rate limited: max {limit} commands/hour.", status_code=429)
+        resets = rate_limit_resets_at(state.ro_engine)
+        return _command_status(request, command_view.rate_limited(limit, resets), 429)
     command_id = enqueue_command(state.command_engine, kind, args or {}, _client_ip(request))
-    return HTMLResponse(f"Queued command #{command_id}.", status_code=202)
+    row = get_command(state.ro_engine, command_id)
+    assert row is not None
+    return _command_status(request, command_view.status_for(row), 202)
 
 
-def _invalid(exc: ValidationError | ValueError) -> HTMLResponse:
+def _invalid(request: Request, exc: ValidationError | ValueError) -> Response:
     if isinstance(exc, ValidationError):
         first = exc.errors()[0]
         where = ".".join(str(x) for x in first.get("loc", ()) if x != "positions")
         msg = f"Invalid input{f' ({where})' if where else ''}: {first.get('msg', 'invalid')}"
     else:
         msg = f"Invalid input: {exc}"
-    return HTMLResponse(msg[:300], status_code=400)
+    return _command_status(request, command_view.invalid(msg), 400)
+
+
+@router.get("/commands/{command_id}/status")
+def command_status(request: Request, command_id: int, shown: str = "") -> Response:
+    """Polled by the inline status: 204 while the state is unchanged (htmx keeps polling and
+    doesn't swap), otherwise the new status, which stops polling once it is final."""
+    row = get_command(request.app.state.ro_engine, command_id)
+    if row is None:
+        raise HTTPException(404)
+    status = command_view.status_for(row)
+    if status.state == shown:
+        return Response(status_code=204)
+    return _command_status(request, status)
 
 
 def _blank(v: object) -> str | None:
@@ -501,7 +534,7 @@ async def command_update_holdings(request: Request) -> Response:
             {"positions": positions, "cash": _blank(form.get("cash")) or "0"}
         )
     except (ValidationError, ValueError) as exc:
-        return _invalid(exc)
+        return _invalid(request, exc)
     return _enqueue(request, "update_holdings", update.to_args())
 
 
@@ -518,7 +551,7 @@ async def command_portfolio_settings(request: Request) -> Response:
     try:
         update = SettingsUpdate.model_validate(values)
     except ValidationError as exc:
-        return _invalid(exc)
+        return _invalid(request, exc)
     return _enqueue(request, "update_portfolio_settings", update.to_args())
 
 
@@ -535,7 +568,7 @@ async def command_publish_targets(request: Request) -> Response:
     args: dict[str, object] = {}
     if raw is not None:
         if not raw.isdigit() or len(raw) > 12:
-            return HTMLResponse("Invalid input: trigger_event_id", status_code=400)
+            return _invalid(request, ValueError("trigger_event_id"))
         args["trigger_event_id"] = int(raw)
     return _enqueue(request, "publish_targets", args)
 
@@ -554,5 +587,5 @@ async def command_mark_catalyst(request: Request) -> Response:
             }
         )
     except ValidationError as exc:
-        return _invalid(exc)
+        return _invalid(request, exc)
     return _enqueue(request, "mark_catalyst", mark.model_dump())

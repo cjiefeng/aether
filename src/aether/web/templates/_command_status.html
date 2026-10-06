@@ -1,0 +1,12 @@
+{# Inline command status (issue #18). `status`: web.command_view.CommandStatus.
+   While queued/running it polls its own endpoint and replaces itself; the endpoint answers
+   204 (no swap) while the state is unchanged, so screen readers aren't re-notified. #}
+<span class="cmd cmd-{{ status.state }}"
+  {%- if status.polling %} hx-get="/commands/{{ status.command_id }}/status?shown={{ status.state }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}
+  {%- if status.is_error %} role="alert"{% endif %}
+  {%- if status.command_id %} title="Command #{{ status.command_id }}"{% endif %}>
+  <span class="cmd-icon" aria-hidden="true"></span>
+  <span>{{ status.message }}{% if status.detail %} <span class="cmd-detail">{{ status.detail }}</span>{% endif %}
+  {%- if status.reload %} <a href="">Reload page</a>{% endif %}
+  {%- if status.state in ("failed", "stale") %} See <a href="/health">Health</a>.{% endif %}</span>
+</span>

@@ -119,6 +119,16 @@ def process_commands(
         ).all()
     done = 0
     for cmd_id, kind, args in pending:
+        # Mark it running first (short write; the handler runs outside any transaction) so
+        # the dashboard can show progress. Skip it if another processor already claimed it.
+        with write_tx(engine) as conn:
+            claimed = conn.execute(
+                update(commands)
+                .where(commands.c.id == cmd_id, commands.c.status == "pending")
+                .values(status="running")
+            ).rowcount
+        if not claimed:
+            continue
         handler = handlers.get(kind)
         if handler is None:
             status, result = "rejected", {"error": f"unknown command kind {kind!r}"}
@@ -131,7 +141,7 @@ def process_commands(
         with write_tx(engine) as conn:
             conn.execute(
                 update(commands)
-                .where(commands.c.id == cmd_id, commands.c.status == "pending")
+                .where(commands.c.id == cmd_id, commands.c.status == "running")
                 .values(status=status, processed_at=utcnow_iso(), result=json.dumps(result))
             )
         done += 1

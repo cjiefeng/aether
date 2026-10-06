@@ -58,7 +58,7 @@
 {% if tiger_mode %}
 <section class="card">
   <div class="card-head"><h2>Tiger Brokers</h2>
-    <span><button hx-disabled-elt="this" hx-post="/commands/sync-holdings" hx-target="#sync-result" hx-swap="innerHTML">Sync from Tiger</button><span id="sync-result" class="result" role="status"></span></span></div>
+    <span><button hx-disabled-elt="this" hx-post="/commands/sync-holdings" hx-target="#sync-result" hx-swap="innerHTML">Sync from Tiger</button><span id="sync-result" class="result" role="status">{% with status = active_command_status(request, "sync_holdings") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span></span></div>
   {% if h.tiger %}
   <ul class="small">
     <li>Account {{ h.tiger.account_masked or "—" }}; last successful sync {{ h.tiger.last_ok or "never" }}.</li>
