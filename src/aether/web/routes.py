@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict
 from datetime import date, datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -13,7 +14,7 @@ from aether.alerts import view as alerts_view
 from aether.catalysts import view as catalysts_view
 from aether.catalysts.mark import CatalystMark
 from aether.classify.prompt import prompt_version
-from aether.config import CATEGORY_CLASS, PROFILES, load_rubric
+from aether.config import CATEGORY_CLASS, PROFILES, load_rubric, load_weights
 from aether.db import health
 from aether.db.commands import (
     active_command,
@@ -36,6 +37,7 @@ from aether.providers.prices import US_EASTERN
 from aether.risk.flags import open_flags
 from aether.score import view as score_view
 from aether.security import auth, csrf
+from aether.synthesize import view as synth_view
 from aether.web import command_view
 from aether.web.command_view import CommandStatus
 
@@ -113,8 +115,16 @@ def overview(request: Request) -> HTMLResponse:
             "scores": score_view.latest_totals(engine),
             "theme": score_view.theme_card(engine),
             "score_fresh": score_view.freshness(engine),
+            "stances": _stances(request, today),
         },
     )
+
+
+def _stances(request: Request, today: date) -> dict[str, dict[str, Any]]:
+    """The stance table keyed by symbol (`$THEME` for the theme tilt)."""
+    engine = request.app.state.ro_engine
+    track = load_weights(request.app.state.settings.config_dir).track_record
+    return {r["key"]: r for r in synth_view.stance_table(engine, track, today)}
 
 
 @router.get("/t/{symbol}", response_class=HTMLResponse)
@@ -175,7 +185,36 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             else [],
             "score_fresh": score_view.freshness(engine),
             "fd_labels": score_view.FD_LABELS,
+            "conclusion": synth_view.ticker_conclusions(engine, symbol)
+            if type_ in ("etf", "pure_play")
+            else None,
+            "stance": _stances(request, today).get(symbol),
+            "cite": synth_view.citation,
         },
+    )
+
+
+@router.get("/track-record", response_class=HTMLResponse)
+def track_record_page(request: Request) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    track = load_weights(request.app.state.settings.config_dir).track_record
+    return _render(
+        request,
+        "track_record.html",
+        {
+            "tr": synth_view.track_record_page(engine, track),
+            "stances": synth_view.stance_table(engine, track, _today()),
+            "theme": synth_view.ticker_conclusions(engine, None, limit=10),
+            "cite": synth_view.citation,
+            "min_calls": track.min_mature_calls,
+        },
+    )
+
+
+@router.get("/briefs", response_class=HTMLResponse)
+def briefs_page(request: Request) -> HTMLResponse:
+    return _render(
+        request, "briefs.html", {"briefs": synth_view.briefs_view(request.app.state.ro_engine)}
     )
 
 
@@ -238,10 +277,12 @@ def feed_page(
     min_materiality: str = "1",
     tier: str = "",
     noise: str = "",
+    event: str = "",
 ) -> HTMLResponse:
     engine = request.app.state.ro_engine
     known = [s for s, t in market.load_tickers(engine) if t in ("etf", "pure_play")]
     f = feed_view.FeedFilters.parse(
+        event=event,
         klass=cls,
         category=category,
         symbol=symbol,
@@ -320,6 +361,7 @@ def holdings_page(request: Request) -> HTMLResponse:
         "holdings.html",
         {
             "h": holdings_view.holdings_page(engine, _today()),
+            "overlay_value": synth_view.overlay_line(engine),
             "profiles": PROFILES,
             "banner": strategies_view.BANNER,
             "family_labels": strategies_view.FAMILY_LABELS,
@@ -525,6 +567,19 @@ def command_refresh_prices(request: Request) -> Response:
 @router.post("/commands/refresh-edgar")
 def command_refresh_edgar(request: Request) -> Response:
     return _enqueue(request, "refresh_edgar")
+
+
+@router.post("/commands/synthesize")
+async def command_synthesize(request: Request) -> Response:
+    form = await request.form()
+    raw = str(form.get("symbol") or "").strip()
+    if not raw:
+        return _enqueue(request, "synthesize", {})
+    try:
+        symbol = _known_symbol(request, raw)
+    except HTTPException:
+        return _invalid(request, ValueError("unknown symbol"))
+    return _enqueue(request, "synthesize", {"symbol": symbol})
 
 
 @router.post("/commands/research-sweep")

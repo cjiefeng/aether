@@ -24,9 +24,13 @@ M9 haircuts, from XBRL fundamentals as public on the publish date (`score/fundam
 - cash runway under `runway_min_months`                                   -> x runway_multiplier
 They cite the filing behind the latest figure and carry the computed numbers in `detail`.
 
-The owner can clear a reviewed filing by accession (`overlay.cleared_accessions`). Stance
-multipliers arrive in M10. Every adjustment cites its
-evidence; options analytics and valuation never enter the overlay.
+The owner can clear a reviewed filing by accession (`overlay.cleared_accessions`).
+
+M10 layer 2: each pure-play's latest stance (after hysteresis, not older than
+`conclusions.stance_max_age_days`) scales its weight by `overlay.stance_multipliers`; while the
+ticker's track record is unproven (score/track_record.py) the multiplier is clamped to
+`overlay.unproven_clamp`. Hard rules are never clamped. Every adjustment cites its evidence
+(event, filing or conclusion id); options analytics and valuation never enter the overlay.
 """
 
 from __future__ import annotations
@@ -39,9 +43,10 @@ from typing import Any
 
 from sqlalchemy import Connection, func, select
 
-from aether.config import OverlayParams
-from aether.db.models import events, filings, prices_daily
+from aether.config import OverlayParams, TrackRecordParams
+from aether.db.models import conclusions, events, filings, prices_daily
 from aether.score import fundamentals as fnd
+from aether.score import track_record as tr
 
 CORE = "QTUM"
 PERIODIC = ("10-K", "10-Q", "10-K/A", "10-Q/A")
@@ -56,6 +61,7 @@ RULE_LABELS = {
     "acquired_or_delisted": "acquired / delisted",
     "fd_dilution": "fully diluted shares up YoY",
     "low_runway": "cash runway below minimum",
+    "stance": "stance multiplier",
 }
 
 
@@ -93,32 +99,102 @@ def _r(x: float) -> float:
     return round(x, DP) + 0.0
 
 
+@dataclass(frozen=True)
+class StanceAdj:
+    """Layer 2 (M10): one pure-play's stance multiplier after the earned-trust clamp."""
+
+    symbol: str
+    stance: str
+    raw: float  # the configured multiplier for the stance
+    applied: float  # after the clamp
+    clamped: bool
+    conclusion_id: int
+    as_of: str
+    trust: str  # the track-record standing label
+
+    def evidence(self, weight: float) -> dict[str, Any]:
+        label = f"{self.stance} × {self.raw:g}"  # noqa: RUF001
+        if self.clamped:
+            label += f" → clamped × {self.applied:g} (unproven)"  # noqa: RUF001
+        return {
+            "rule": "stance",
+            "label": label,
+            "multiplier": self.applied,
+            "raw_multiplier": self.raw,
+            "clamped": self.clamped,
+            "conclusion_id": self.conclusion_id,
+            "conclusion_as_of": self.as_of,
+            "trust": self.trust,
+            "event_id": None,
+            "accession": None,
+            "form": None,
+            "filed_at": None,
+            "url": None,
+            "detail": None,
+            "weight": _r(weight),
+        }
+
+
 def apply_overlay(
     base: Mapping[str, float],
     sleeve: Iterable[str],
     cap: float,
     findings: Iterable[Finding],
+    stances: Iterable[StanceAdj] = (),
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
-    """Published weights and the per-name adjustment chain."""
+    """Published weights and the per-name adjustment chain.
+
+    base → layer 1 (filing rules) → layer 2 (stance multipliers) → caps → redistribution:
+    - names cut by either layer (a multiplier < 1) never receive freed weight;
+    - if the stances push the sleeve above its base total, the uncut names are scaled back pro
+      rata to their adjusted weights, so QTUM's fixed weight is never squeezed;
+    - weight over a cap, or freed by cuts, goes to the uncut names pro rata within caps; the
+      remainder goes to QTUM.
+    """
     sleeve = sorted(set(sleeve))
     hits: dict[str, list[Finding]] = {}
     for f in findings:
         if f.symbol in sleeve:
             hits.setdefault(f.symbol, []).append(f)
+    by_stance = {a.symbol: a for a in stances if a.symbol in sleeve}
 
     w = {s: float(base.get(s, 0.0)) for s in sorted(set(base) | set(sleeve) | {CORE})}
     steps: dict[str, list[dict[str, Any]]] = {s: [] for s in w}
-    freed = 0.0
+    reduced: set[str] = set()
     for s in sleeve:
         for f in sorted(hits.get(s, []), key=lambda f: (f.rule, f.filed_at, f.accession)):
-            new = w[s] * f.multiplier
-            steps[s].append({**f.evidence(), "weight": _r(new)})
-            freed += w[s] - new
-            w[s] = new
+            w[s] = w[s] * f.multiplier
+            steps[s].append({**f.evidence(), "weight": _r(w[s])})
+            if f.multiplier < 1:
+                reduced.add(s)
+        a = by_stance.get(s)
+        if a is not None and w[s] > EPS:
+            w[s] = w[s] * a.applied
+            steps[s].append(a.evidence(w[s]))
+            if a.applied < 1:
+                reduced.add(s)
 
-    # Freed weight → the other (unaffected, still held) pure-plays pro rata, within caps.
     redistributed = {s: 0.0 for s in w}
-    open_ = [s for s in sleeve if s not in hits and w[s] > EPS and w[s] < cap - EPS]
+    budget = sum(float(base.get(s, 0.0)) for s in sleeve)
+    excess = sum(w[s] for s in sleeve) - budget
+    if excess > EPS:
+        up = [s for s in sleeve if s not in reduced and w[s] > EPS]
+        total = sum(w[s] for s in up)
+        scale = max(0.0, (total - excess) / total) if total > EPS else 1.0
+        for s in up:
+            redistributed[s] -= w[s] - w[s] * scale
+            w[s] *= scale
+    freed = max(0.0, -excess)
+    # Layer 2 can't lift a name over its cap (the base itself already respects it).
+    for s in sleeve:
+        limit = max(cap, float(base.get(s, 0.0)))
+        if w[s] > limit + EPS:
+            freed += w[s] - limit
+            redistributed[s] -= w[s] - limit
+            w[s] = limit
+
+    # Freed weight → the uncut, still held pure-plays pro rata, within caps.
+    open_ = [s for s in sleeve if s not in reduced and w[s] > EPS and w[s] < cap - EPS]
     for _ in range(len(sleeve) + 1):
         if freed <= EPS or not open_:
             break
@@ -154,13 +230,16 @@ def chain_text(c: Mapping[str, Any]) -> str:
     """e.g. `base 14.0% → going concern (event #812) → 0.0%`."""
     parts = [f"base {c['base'] * 100:.1f}%"]
     for st in c["steps"]:
-        if st["event_id"]:
+        if st.get("conclusion_id"):
+            ref = f"conclusion #{st['conclusion_id']}"
+        elif st["event_id"]:
             ref = f"event #{st['event_id']}"
         else:
             ref = f"{st['form'] or 'XBRL'} {st['accession']}"
         parts.append(f"{st['label']} ({ref}) → {st['weight'] * 100:.1f}%")
     if abs(c["redistributed"]) > 1e-9:
-        parts.append(f"+{c['redistributed'] * 100:.1f}% redistributed")
+        sign = "+" if c["redistributed"] > 0 else "-"
+        parts.append(f"{sign}{abs(c['redistributed']) * 100:.1f}% redistributed")
     if len(parts) > 1:
         parts.append(f"{c['final'] * 100:.1f}%")
     return " → ".join(parts)
@@ -344,4 +423,41 @@ def fundamentals_findings(
                         },
                     )
                 )
+    return out
+
+
+# --------------------------------------------------------------------------- layer 2 (reads)
+
+
+def stance_adjustments(
+    conn: Connection,
+    symbols: Iterable[str],
+    as_of: date,
+    params: OverlayParams,
+    max_age_days: int,
+    track: TrackRecordParams,
+) -> list[StanceAdj]:
+    """The latest ticker conclusion per pure-play, as of `as_of`, if recent enough."""
+    if not params.enabled:
+        return []
+    since = (as_of - timedelta(days=max_age_days)).isoformat()
+    lo, hi = params.unproven_clamp
+    out = []
+    for s in sorted(set(symbols) - {CORE}):
+        r = conn.execute(
+            select(conclusions.c.id, conclusions.c.stance, conclusions.c.as_of)
+            .where(
+                conclusions.c.kind == "ticker",
+                conclusions.c.symbol == s,
+                conclusions.c.as_of <= as_of.isoformat(),
+            )
+            .order_by(conclusions.c.as_of.desc(), conclusions.c.id.desc())
+            .limit(1)
+        ).first()
+        if r is None or r.as_of < since:
+            continue
+        st = tr.standing(tr.outcome_rows_for(conn, s), track)
+        raw = params.stance_multipliers[r.stance]
+        applied = raw if st.proven else min(max(raw, lo), hi)
+        out.append(StanceAdj(s, r.stance, raw, applied, applied != raw, r.id, r.as_of, st.label))
     return out

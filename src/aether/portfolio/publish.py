@@ -2,7 +2,8 @@
 nothing leaves the machine.
 
 - `publish_targets`: per profile, the latest strategy run's recommended weights (base) → the
-  research overlay (layer 1 filing rules) → `profile_targets`, with each name's adjustment chain
+  research overlay (layer 1 filing rules; layer 2 stance multipliers when `weights` is given,
+  which the worker always does) → `profile_targets`, with each name's adjustment chain
   and an input hash. Runs on the 1st of the month (10:30 SGT, with the review pack) and when the
   owner presses "Publish targets now" (`publish_targets` command, trigger `off_cycle`). Between
   publishes the targets don't move.
@@ -24,7 +25,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, Engine, select
 
-from aether.config import PROFILES, StrategiesConfig
+from aether.config import PROFILES, StrategiesConfig, WeightsConfig
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import (
@@ -38,11 +39,11 @@ from aether.db.models import (
 from aether.db.types import utcnow_iso
 from aether.portfolio.holdings import read_holdings, read_settings, universe_symbols
 from aether.portfolio.job import canon
-from aether.portfolio.overlay import apply_overlay, layer1_findings
+from aether.portfolio.overlay import apply_overlay, layer1_findings, stance_adjustments
 from aether.portfolio.rebalance import PlanInputs, build_plan
 from aether.runs import JobResult
 
-ALGO_VERSION = "m9.1"
+ALGO_VERSION = "m10.1"
 SGT = ZoneInfo("Asia/Singapore")
 
 
@@ -154,11 +155,24 @@ def compute_targets(
     today: date,
     trigger: str,
     trigger_event_id: int | None,
+    weights: WeightsConfig | None = None,
 ) -> list[dict[str, Any]]:
     """`profile_targets` rows for every profile (a profile with no qualifying strategy keeps its
     previous targets; with no previous targets it gets no row)."""
     sleeve = [s for s in universe_symbols(conn) if s != "QTUM"]
     findings = layer1_findings(conn, sleeve, today, config.overlay)
+    stances = (
+        []
+        if weights is None
+        else stance_adjustments(
+            conn,
+            sleeve,
+            today,
+            config.overlay,
+            weights.conclusions.stance_max_age_days,
+            weights.track_record,
+        )
+    )
     now = utcnow_iso()
     rows = []
     for profile in PROFILES:
@@ -166,13 +180,13 @@ def compute_targets(
         sid = run.summary["profiles"][profile].get("strategy_id")
         if sid:
             base = _base_weights(conn, run.id, sid)
-            weights, chain = apply_overlay(base, sleeve, pp.max_per_name, findings)
+            published, chain = apply_overlay(base, sleeve, pp.max_per_name, findings, stances)
             adjustments: dict[str, Any] = {"chain": chain, "note": None}
         else:
             prev = latest_published(conn, profile)
             if prev is None:
                 continue
-            base, weights = prev.base, prev.weights
+            base, published = prev.base, prev.weights
             adjustments = {
                 **prev.adjustments,
                 "note": "No qualifying strategy in the latest backtest; previous targets kept.",
@@ -185,6 +199,7 @@ def compute_targets(
                     "profile": profile,
                     "base": base,
                     "findings": [f.evidence() for f in findings],
+                    "stances": [a.evidence(0.0) for a in stances],
                     "overlay": config.overlay.model_dump(mode="json"),
                     "cap": pp.max_per_name,
                     "trigger": trigger,
@@ -201,7 +216,7 @@ def compute_targets(
                 "strategy_run_id": run.id,
                 "strategy_id": sid,
                 "base_weights": canon(base),
-                "published_weights": canon(weights),
+                "published_weights": canon(published),
                 "adjustments": canon(adjustments),
                 "trigger": trigger,
                 "trigger_event_id": trigger_event_id,
@@ -218,6 +233,7 @@ def publish_targets(
     today: date | None = None,
     trigger: str = "monthly",
     trigger_event_id: int | None = None,
+    weights: WeightsConfig | None = None,
 ) -> JobResult:
     today = today or sgt_today()
     with engine.connect() as conn:
@@ -228,7 +244,7 @@ def publish_targets(
             conn.execute(select(events.c.id).where(events.c.id == trigger_event_id)).first() is None
         ):
             trigger_event_id = None
-        rows = compute_targets(conn, run, config, today, trigger, trigger_event_id)
+        rows = compute_targets(conn, run, config, today, trigger, trigger_event_id, weights)
     with write_tx(engine) as conn:
         upsert(conn, profile_targets, rows, key_cols=["profile", "as_of"])
     plan = run_plan(engine, config)
@@ -297,10 +313,15 @@ def run_plan(engine: Engine, config: StrategiesConfig) -> JobResult:
     return JobResult(rows_written=1)
 
 
-def run_rebalance(engine: Engine, config: StrategiesConfig, today: date | None = None) -> JobResult:
+def run_rebalance(
+    engine: Engine,
+    config: StrategiesConfig,
+    today: date | None = None,
+    weights: WeightsConfig | None = None,
+) -> JobResult:
     """Daily: bootstrap the first publish if none exists, then refresh the plan."""
     with engine.connect() as conn:
         any_published = conn.execute(select(profile_targets.c.profile).limit(1)).first()
     if any_published is None:
-        return publish_targets(engine, config, today=today, trigger="monthly")
+        return publish_targets(engine, config, today=today, trigger="monthly", weights=weights)
     return run_plan(engine, config)

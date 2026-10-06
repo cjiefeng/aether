@@ -5,7 +5,7 @@
   <thead><tr><th>Window</th><th>Symbol</th><th>Kind</th><th>Catalyst</th><th>Source</th>{% if mark %}<th>Mark</th>{% endif %}</tr></thead>
   <tbody>
   {% for c in rows %}
-    <tr>
+    <tr id="c{{ c.id }}">
       <td class="nowrap">{{ c.window_start }}{% if c.window_end != c.window_start %} → {{ c.window_end or "no stated end" }}{% endif %}{% if c.overdue %} <span class="badge risk">no result yet</span>{% endif %}</td>
       <td>{% if c.symbol %}<a href="/t/{{ c.symbol }}">{{ c.symbol }}</a>{% else %}theme{% endif %}</td>
       <td>{{ c.kind_label }}</td>

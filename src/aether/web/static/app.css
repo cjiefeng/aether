@@ -230,3 +230,17 @@ input.num { width: 9rem; text-align: right; font-variant-numeric: tabular-nums; 
 .badge.agree { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
 .badge.disagree { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
 .banner.note { border-color: var(--line); color: var(--muted); }
+
+/* ---- M10 conclusions: stance badges, citations, history diff */
+.badge.stance-ACCUMULATE, .badge.stance-PURE_PLAYS {
+  color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.badge.stance-TRIM { color: var(--warn-fg); border-color: color-mix(in srgb, var(--warn-fg) 55%, transparent); }
+.badge.stance-AVOID { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.badge.stance-HOLD, .badge.stance-NEUTRAL, .badge.stance-QTUM { color: var(--fg); }
+.verdict { font-size: var(--fs-lg, 1.1rem); margin: var(--s2) 0 var(--s3); }
+.points { margin: 0 0 var(--s3); padding-left: var(--s5); }
+.points li { margin-bottom: var(--s2); }
+.cites { display: inline-flex; flex-wrap: wrap; gap: var(--s1, 4px); margin-left: var(--s2); }
+.cites a { font-size: var(--fs-xs); font-family: var(--mono, monospace); white-space: nowrap; }
+.diff-added::before { content: "+ "; color: var(--ok); }
+.diff-removed::before { content: "− "; color: var(--bad); }

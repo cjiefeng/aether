@@ -5,8 +5,8 @@ the plan, then build one pack and queue one Telegram message (dedupe key `review
 
 M5 sections: the selected profile's published targets with each adjustment chain, the rebalance
 plan, drift, value in USD and SGD, open risk flags, upcoming earnings and lock-ups. M8 adds the
-upcoming catalysts and the options panel per name (research only). Later milestones add stances
-(M10) and universe proposals (M12).
+upcoming catalysts and the options panel per name (research only). M10 adds the stances with
+their track record and the overlay's value-added line (layer 3). M12 adds universe proposals.
 
 Holdings never leave the machine (§1.3): the Telegram text carries target weights, flags, dates
 and the number of suggested trades only. No share counts, dollar values or account number.
@@ -22,7 +22,7 @@ from sqlalchemy import Engine, select
 
 from aether.alerts.candidates import AlertCandidate
 from aether.alerts.dispatch import enqueue
-from aether.config import RiskFlagParams, ShortInterestRule, StrategiesConfig
+from aether.config import RiskFlagParams, ShortInterestRule, StrategiesConfig, WeightsConfig
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import (
@@ -120,11 +120,39 @@ def _upcoming(engine: Engine, symbols: list[str], today: date) -> dict[str, list
     return {"earnings": earnings, "lockups": locks}
 
 
+def _m10(engine: Engine, weights: WeightsConfig, profile: str, today: date) -> dict[str, Any]:
+    """Stances with their track record, and the overlay's value-added line (M10)."""
+    from aether.score.track_record import overlay_value
+    from aether.synthesize.view import stance_line, stance_table
+
+    rows = stance_table(engine, weights.track_record, today)
+    with engine.connect() as conn:
+        ov = overlay_value(conn).get(profile)
+    return {
+        "stances": [
+            {
+                "key": r["key"],
+                "stance": r["stance"],
+                "proposed": r["proposed"],
+                "held": r["held"],
+                "confidence": r["confidence"],
+                "as_of": r["as_of"],
+                "id": r["id"],
+                "track": r["standing"].label,
+                "line": stance_line(r),
+            }
+            for r in rows
+        ],
+        "overlay_value": (ov or {}).get("verdict") or "no publish has a 1-month result yet.",
+    }
+
+
 def build_pack(
     engine: Engine,
     flags_params: RiskFlagParams,
     today: date,
     short_rule: ShortInterestRule | None = None,
+    weights: WeightsConfig | None = None,
 ) -> dict[str, Any]:
     settings = load_settings(engine)
     profile = settings.selected_profile
@@ -175,6 +203,7 @@ def build_pack(
         "upcoming": _upcoming(engine, universe, today),
         "catalysts": upcoming_catalysts(engine, today),
         "options": options_panel(engine, universe),
+        **(_m10(engine, weights, profile, today) if weights is not None else {}),
     }
 
 
@@ -224,6 +253,10 @@ def telegram_text(pack: dict[str, Any]) -> str:
             sym = c.get("symbol")
             who = f"{sym}: " if sym and not c["title"].startswith(sym) else ""
             lines.append(f"- {when} {who}{c['title']}{label}")
+    if pack.get("stances") is not None:
+        lines += ["", "Stances (track record):"]
+        lines += [s["line"] for s in pack["stances"]] or ["- no conclusions yet"]
+        lines.append(f"Overlay value-added: {pack['overlay_value']}")
     opts = pack.get("options") or []
     if opts:
         lines += ["", "Options (research only, never trades):"]
@@ -257,14 +290,14 @@ def options_line(o: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def fit(lines: list[str], limit: int = MAX_TELEGRAM) -> str:
+def fit(lines: list[str], limit: int = MAX_TELEGRAM, where: str = "/review") -> str:
     text = "\n".join(lines)
     if len(text) <= limit:
         return text
     kept: list[str] = []
     for i, line in enumerate(lines):
         more = len(lines) - i
-        tail = f"… {more} more lines on /review"
+        tail = f"… {more} more lines on {where}"
         if len("\n".join([*kept, line, tail])) > limit:
             return "\n".join([*kept, tail])
         kept.append(line)
@@ -292,16 +325,17 @@ def monthly_review(
     short_rule: ShortInterestRule | None = None,
     telegram: bool,
     now: datetime | None = None,
+    weights: WeightsConfig | None = None,
 ) -> JobResult:
     """Publish targets, build the pack, queue the Telegram message. Once per month."""
     month = today.strftime("%Y-%m")
     if month_done(engine, month):
         return JobResult(warning=f"review pack for {month} already done")
     try:
-        published = publish_targets(engine, config, today=today, trigger="monthly")
+        published = publish_targets(engine, config, today=today, trigger="monthly", weights=weights)
         if published.warning and published.rows_written == 0:
             raise RuntimeError(published.warning)
-        pack = build_pack(engine, flags_params, today, short_rule)
+        pack = build_pack(engine, flags_params, today, short_rule, weights)
         text = telegram_text(pack)
     except Exception as exc:
         with write_tx(engine) as conn:

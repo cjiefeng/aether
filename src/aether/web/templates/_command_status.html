@@ -6,7 +6,7 @@
   {%- if status.is_error %} role="alert"{% endif %}
   {%- if status.command_id %} title="Command #{{ status.command_id }}"{% endif %}>
   <span class="cmd-icon" aria-hidden="true"></span>
-  <span>{{ status.message }}{% if status.detail %} <span class="cmd-detail">{{ status.detail }}</span>{% endif %}
+  <span>{{ status.message }}{% if status.detail %} <span class="cmd-detail">{{ status.detail }}{% if status.detail[-1:] not in (".", "!", "?") %}.{% endif %}</span>{% endif %}
   {%- if status.reload %} <a href="">Reload page</a>{% endif %}
   {%- if status.state in ("failed", "stale") %} See <a href="/health">Health</a>.{% endif %}</span>
 </span>

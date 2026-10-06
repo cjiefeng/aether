@@ -113,14 +113,16 @@
   <p class="muted">No targets published yet. The first publish happens after the first backtest (daily 07:10 SGT), then on the 1st of each month.</p>
   {% else %}
   <p class="muted small">From prices through {{ h.targets.prices_as_of }}{% if h.targets.strategy_id %} · {{ family_labels.get(h.targets.strategy_id.split(":")[1], h.targets.strategy_id) }}{% endif %}.
-    Base weights from the model strategy, then the research overlay (filing hard rules). Targets don't move between publishes.</p>
+    Base weights from the model strategy, then the research overlay (filing hard rules, then stance multipliers,
+    clamped to 0.75–1.25 while a ticker's track record is unproven). Targets don't move between publishes.</p>
+  {% if overlay_value %}<p class="small">Overlay value-added: {{ overlay_value }} <a href="/track-record#overlay">Details</a></p>{% endif %}
   {% if h.targets.adjustments.note %}<p class="banner stale">{{ h.targets.adjustments.note }}</p>{% endif %}
   <table class="num">
     <thead><tr><th>Symbol</th><th>Base</th><th>Published</th><th>Adjustment chain</th></tr></thead>
     <tbody>
     {% for c in h.chains %}
       <tr><td>{{ c.symbol }}</td><td>{{ w(c.base) }}</td><td>{{ w(c.final) }}</td>
-        <td class="small">{% if c.steps or c.redistributed %}{{ c.text }}{% for st in c.steps %} {{ st.url|extlink(st.form) }}{% endfor %}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+        <td class="small">{% if c.steps or c.redistributed %}{{ c.text }}{% for st in c.steps %}{% if st.conclusion_id %} <a href="/t/{{ c.symbol }}#conclusion">conclusion #{{ st.conclusion_id }}</a>{% else %} {{ st.url|extlink(st.form) }}{% endif %}{% endfor %}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>
