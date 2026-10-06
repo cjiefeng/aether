@@ -36,6 +36,7 @@ from aether.db.models import (
     insider_txns,
     lockups,
     tickers,
+    xbrl_fetches,
 )
 from aether.db.types import utcnow_iso
 from aether.edgar import xbrl
@@ -191,9 +192,16 @@ def known_accessions(engine: Engine) -> set[str]:
         return set(conn.execute(select(filings.c.accession)).scalars())
 
 
-def symbols_with_fundamentals(engine: Engine) -> set[str]:
+def symbols_with_current_xbrl(engine: Engine) -> set[str]:
+    """Symbols whose companyfacts was fetched with the current parser version."""
     with engine.connect() as conn:
-        return set(conn.execute(select(fundamentals_q.c.symbol).distinct()).scalars())
+        return set(
+            conn.execute(
+                select(xbrl_fetches.c.symbol).where(
+                    xbrl_fetches.c.parser_version == xbrl.PARSER_VERSION
+                )
+            ).scalars()
+        )
 
 
 # --------------------------------------------------------------------------- network
@@ -384,7 +392,7 @@ def ingest_edgar(
     targets = pure_play_ciks(engine, symbols)
     done = parsed_accessions(engine)
     known = known_accessions(engine)
-    have_fundamentals = symbols_with_fundamentals(engine)
+    have_fundamentals = symbols_with_current_xbrl(engine)
 
     # 1) Network, outside any transaction.
     errors: list[str] = []
@@ -505,6 +513,12 @@ def ingest_edgar(
                 capital_structure,
                 xbrl_capital_rows(sym, instruments),
                 key_cols=["symbol", "as_of", "instrument", "source_accession"],
+            )
+            upsert(
+                conn,
+                xbrl_fetches,
+                [{"symbol": sym, "parser_version": xbrl.PARSER_VERSION, "fetched_at": now}],
+                key_cols=["symbol"],
             )
 
     log.info(

@@ -18,8 +18,14 @@ Tightened after the live check (owner decision 2026-10-05): real filings showed 
 delistings, voluntary exchange transfers and a de-SPAC 8-K 5.01 that the plain form/item rules
 would have read as permanent loss. 8-K 5.01 only alerts.
 
-The owner can clear a reviewed filing by accession (`overlay.cleared_accessions`). Layer-1
-dilution/runway haircuts arrive in M9 and stance multipliers in M10. Every adjustment cites its
+M9 haircuts, from XBRL fundamentals as public on the publish date (`score/fundamentals.py`):
+- fully diluted shares up more than `dilution_yoy_max` year on year (base dated on or after the
+  stock's first session)                                                  -> x dilution_multiplier
+- cash runway under `runway_min_months`                                   -> x runway_multiplier
+They cite the filing behind the latest figure and carry the computed numbers in `detail`.
+
+The owner can clear a reviewed filing by accession (`overlay.cleared_accessions`). Stance
+multipliers arrive in M10. Every adjustment cites its
 evidence; options analytics and valuation never enter the overlay.
 """
 
@@ -27,7 +33,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
@@ -35,6 +41,7 @@ from sqlalchemy import Connection, func, select
 
 from aether.config import OverlayParams
 from aether.db.models import events, filings, prices_daily
+from aether.score import fundamentals as fnd
 
 CORE = "QTUM"
 PERIODIC = ("10-K", "10-Q", "10-K/A", "10-Q/A")
@@ -47,6 +54,8 @@ RULE_LABELS = {
     "going_concern": "going concern",
     "compliance_notice": "listing-deficiency notice (8-K 3.01)",
     "acquired_or_delisted": "acquired / delisted",
+    "fd_dilution": "fully diluted shares up YoY",
+    "low_runway": "cash runway below minimum",
 }
 
 
@@ -60,17 +69,20 @@ class Finding:
     filed_at: str
     url: str
     event_id: int | None
+    detail: dict[str, Any] | None = field(default=None, compare=False, hash=False)
 
     def evidence(self) -> dict[str, Any]:
+        label = (self.detail or {}).get("label") or RULE_LABELS[self.rule]
         return {
             "rule": self.rule,
-            "label": RULE_LABELS[self.rule],
+            "label": label,
             "multiplier": self.multiplier,
             "event_id": self.event_id,
             "accession": self.accession,
             "form": self.form,
             "filed_at": self.filed_at,
             "url": self.url,
+            "detail": self.detail,
         }
 
 
@@ -142,7 +154,10 @@ def chain_text(c: Mapping[str, Any]) -> str:
     """e.g. `base 14.0% → going concern (event #812) → 0.0%`."""
     parts = [f"base {c['base'] * 100:.1f}%"]
     for st in c["steps"]:
-        ref = f"event #{st['event_id']}" if st["event_id"] else f"{st['form']} {st['accession']}"
+        if st["event_id"]:
+            ref = f"event #{st['event_id']}"
+        else:
+            ref = f"{st['form'] or 'XBRL'} {st['accession']}"
         parts.append(f"{st['label']} ({ref}) → {st['weight'] * 100:.1f}%")
     if abs(c["redistributed"]) > 1e-9:
         parts.append(f"+{c['redistributed'] * 100:.1f}% redistributed")
@@ -250,6 +265,7 @@ def layer1_findings(
             and summary.get("listing_notice") == "deficiency"
         ):
             add("compliance_notice", row)
+    out += fundamentals_findings(conn, syms, as_of, params, cleared)
     # One finding per (symbol, rule): the most recent filing is the evidence.
     best: dict[tuple[str, str], Finding] = {}
     for f in out:
@@ -257,3 +273,75 @@ def layer1_findings(
         if k not in best or (f.filed_at, f.accession) > (best[k].filed_at, best[k].accession):
             best[k] = f
     return [best[k] for k in sorted(best)]
+
+
+def _filing(conn: Connection, accession: str | None) -> tuple[str, str]:
+    """(filed_at, url) of a stored filing, else empty strings."""
+    if not accession:
+        return "", ""
+    r = conn.execute(
+        select(filings.c.filed_at, filings.c.url).where(filings.c.accession == accession)
+    ).first()
+    return (r.filed_at, r.url) if r else ("", "")
+
+
+def fundamentals_findings(
+    conn: Connection, syms: Iterable[str], as_of: date, params: OverlayParams, cleared: set[str]
+) -> list[Finding]:
+    """M9 haircuts: fully diluted dilution and cash runway, point in time at `as_of`."""
+    out: list[Finding] = []
+    for s in syms:
+        snap = fnd.snapshot(conn, s, as_of)
+        yoy = snap.fd_yoy.get("value")
+        if yoy is not None and yoy > params.dilution_yoy_max:
+            to = snap.fd_yoy["to"]["common"]
+            acc = to["accession"] or ""
+            if acc not in cleared:
+                filed, url = _filing(conn, acc)
+                out.append(
+                    Finding(
+                        s,
+                        "fd_dilution",
+                        params.dilution_multiplier,
+                        acc,
+                        to["form"] or "",
+                        filed or to["period_end"],
+                        url,
+                        None,
+                        {
+                            "label": f"FD shares {yoy * 100:+.1f}% YoY",
+                            "yoy": round(yoy, 6),
+                            "from_shares": snap.fd_yoy["from"]["total"],
+                            "from_date": snap.fd_yoy["from"]["common"]["period_end"],
+                            "to_shares": snap.fd_yoy["to"]["total"],
+                            "to_date": to["period_end"],
+                            "components": snap.fd_yoy["components_compared"],
+                        },
+                    )
+                )
+        if snap.runway_months is not None and snap.runway_months < params.runway_min_months:
+            assert snap.ocf_ttm is not None
+            ref = snap.ocf_ttm.refs[-1] if snap.ocf_ttm.method == "fy" else snap.ocf_ttm.refs[1]
+            acc = ref["accession"] or ""
+            if acc not in cleared:
+                filed, url = _filing(conn, acc)
+                out.append(
+                    Finding(
+                        s,
+                        "low_runway",
+                        params.runway_multiplier,
+                        acc,
+                        ref["form"] or "",
+                        filed or ref["period_end"],
+                        url,
+                        None,
+                        {
+                            "label": f"cash runway {snap.runway_months:.1f} months",
+                            "runway_months": round(snap.runway_months, 4),
+                            "liquidity": float(snap.liquidity or 0),
+                            "quarterly_burn": float(snap.quarterly_burn or 0),
+                            "ocf_ttm_end": snap.ocf_ttm.end.isoformat(),
+                        },
+                    )
+                )
+    return out

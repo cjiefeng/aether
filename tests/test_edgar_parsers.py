@@ -256,7 +256,8 @@ def test_companyfacts_recorded_qnt() -> None:
     facts = xbrl.fundamentals(cf)
     by = {(f.concept, f.period_days) for f in facts}
     assert any(c == "us-gaap:Revenues" and 80 <= d <= 100 for c, d in by)
-    assert all(d == 0 or 80 <= d <= 100 or 350 <= d <= 380 for _, d in by)  # no YTD
+    # YTD (6/9-month) durations only for the flow concepts TTM needs (M9).
+    assert all(d == 0 or 80 <= d <= 100 or 350 <= d <= 380 or c in xbrl.YTD_CONCEPTS for c, d in by)
     keys = [(f.concept, f.period_end, f.period_days) for f in facts]
     assert len(keys) == len(set(keys))
     # New filer: concepts it doesn't tag are simply absent.

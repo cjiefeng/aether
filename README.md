@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M8** (catalysts + market structure), the third Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`. M8 adds dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. M8 spends nothing on LLMs.
+Status: **M9** (scorecards, reactions, theme), the fourth Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`. M8 adds dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. M9 adds the deterministic scorecard (with fully diluted EV and cash runway from SEC XBRL), the event-reaction engine and Calibration page, the QTUM theme decomposition, and the overlay's dilution and runway haircuts. M8 and M9 spend nothing on LLMs.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -219,6 +219,33 @@ Each resolution cites the event. You can mark any catalyst hit / slipped / cance
 - **IV rank / percentile** over Aether's own last 252 snapshots ("building history (N days)" until then).
 Nothing is extrapolated past the listed expiries; a thin chain is flagged, never reported. Options never reach targets, sizing or trades (a test checks that changing every snapshot leaves published targets byte-identical).
 
+## Scorecards, reactions, theme (M9)
+
+No LLM calls; every number is computed in code. Parameters live in `config/weights.yaml` (numbers only, initial values for your review).
+
+**Fundamentals (SEC XBRL, point in time).** `score/fundamentals.py` uses only facts filed on or before the date it's asked about:
+- TTM revenue and operating cash flow: the latest fiscal year + year-to-date − the prior year's same YTD (10-Qs report Q2/Q3 cash flows only as YTD, so the EDGAR ingest now keeps 6- and 9-month values for these concepts).
+- **Fully diluted shares** = common shares outstanding + warrants + options + unvested RSUs + shares underlying convertibles, each as tagged. An untagged component is listed as "not tagged", never estimated.
+- **FD YoY** compares the same components about a year apart. The year-ago count must be dated on or after the stock's first trading session, so de-SPACs and IPOs (INFQ, QNT) show "listed < 1 year" rather than a SPAC-to-company jump.
+- Liquidity = cash + current and non-current marketable debt securities (one XBRL concept per bucket; `LongTermInvestments` is left out because it can hold strategic stakes); cash runway = liquidity ÷ (−TTM operating cash flow ÷ 4) × 3 months, or "not burning".
+- **EV** = FD shares × last close + debt + convertibles − liquidity; EV/Sales on TTM revenue.
+Flows and balances more than 400 days old are treated as stale, not used. A parser-version bump makes the next EDGAR run refetch companyfacts once for every symbol (`xbrl_fetches`).
+
+**Overlay layer 1, M9 haircuts** (`config/strategies.yaml` → `overlay`): FD shares up more than 20% YoY → × 0.5; runway under 12 months → × 0.5 (both → × 0.25). They apply at the next publish, cite the 10-Q/10-K behind the figure, and the freed weight goes to the other pure-plays within caps, then QTUM. Valuation and options never enter the overlay.
+
+**Scorecard** (daily 07:00 SGT, pure-plays and QTUM): fundamentals, dilution, signal momentum, risk load (events + open flags), short interest, catalyst position, noise ratio (with a hype flag), price context and market reaction (weight 0). Each component is the mean of its sub-scores, each mapped from a raw metric to −1…+1 by a piecewise-linear anchor map. The total is −100…+100 over the components that have data, with the coverage shown. It's an input for M10's stances, not a stance.
+
+**Event reactions** (daily 06:45 SGT, §6.3). For each non-quarantined classified event × pure-play (benchmark QTUM) or QTUM (benchmark QQQ):
+- t0 = the first NYSE session whose close is after the event time (`exchange_calendars`: holidays and 13:00 half-days);
+- a market model on total-return daily returns over the 120 sessions before t0 (β = 1 with fewer than 60);
+- CAR and z over [t0, t0+1], [t0, t0+5], [t0, t0+20], abnormal volume and the reversal ratio;
+- `confounded` if another materiality ≥ 3 event, an earnings release or a RISK filing hits the ticker within [t0−1, t0+5].
+Research items dated only by retrieval time or a date-only `page_age` are flagged "approximate time" and kept out of calibration.
+
+**Calibration** (Sunday 08:00 SGT; `/calibration`): per class and category (n ≥ 15), mean |z₁| and |z₅|, the share with |z₅| > 2, the median reversal ratio, abnormal volume and the direction hit rate, with flags that suggest (never apply) rubric changes, plus **implied vs realized move** for each catalyst resolved by an event, using the last options snapshot before it.
+
+**Theme decomposition** (daily 07:00 SGT; Overview, "quantum-sleeve view"): a 120-session OLS of QTUM's daily total returns on SOXX, QQQ and an equal-weighted pure-play basket (a name joins after 60 sessions), with betas, the basket's partial R², a 30/90-session attribution and the watchlist's weight in QTUM's holdings as a cross-check.
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -229,15 +256,17 @@ Nothing is extrapolated past the listed expiries; a thin chain is flagged, never
   - Open risk flags, recent alerts and RISK filings from the last 30 days.
   - Position drift vs the selected profile, when holdings are saved (M5).
   - Catalysts and earnings for the next 12 months (M8).
+  - The scorecard total per ticker and the QTUM theme decomposition (M9).
 - `/t/<SYMBOL>`: price and volume chart plus a summary. For pure-plays it also shows:
   - open risk flags, lock-ups (with the prospectus excerpt) and earnings dates
   - classified SEC events, a shares-outstanding chart (XBRL) and the capital-structure table
   - Form 4 insider transactions (10b5-1 badge) and the filings list with each rule hit.
-  All SEC links go to EDGAR. Every ticker page lists its catalysts (M8); QTUM and the pure-plays also get the short-interest table and the options panel (ATM IV and rank, term structure, skew, implied moves, positioning, quality flags).
+  All SEC links go to EDGAR. Every ticker page lists its catalysts (M8); QTUM and the pure-plays also get the short-interest table and the options panel (ATM IV and rank, term structure, skew, implied moves, positioning, quality flags), and from M9 the scorecard breakdown, the reaction table with "market agreed / disagreed" badges and event markers on the price chart. Pure-plays also get the valuation and dilution card (fully diluted shares by component, EV, EV/Sales, cash runway).
 - `/catalysts`: a 12-month timeline, the upcoming list with fact-status badges and a **Mark** form per row, and the hit/slip record (M8).
 - `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
 - `/holdings`: holdings and cash (editable, or read-only rows in Tiger mode), settings (profile, whole/fractional shares, new-cash-only, holdings source), published targets with each overlay chain, off-cycle events and **Publish targets now**, and the rebalance plan with USD and SGD values (M5).
 - `/review`: monthly review packs, latest first (M5); from M8 with the next 90 days of catalysts and the options panel per name.
+- `/calibration`: the weekly calibration report, flags, high-materiality events the market ignored, implied vs realized moves and the trend (M9).
 - `/feed`: every classified event (SEC filings and news), newest first. Filter by class, category, ticker, minimum materiality and trust tier; NOISE is hidden unless you ask for it. Each row shows the materiality after caps ("capped from N"), the direction per ticker, confidence, rationale, evidence quote, sources with tiers, and the rule or model/prompt version. Quarantined items carry a warning. A strip at the top shows S/N/R counts for 30 days, quarantined, waiting and failed items, and the latest eval for the current prompt (M7).
 - `/news`: news and research items with their class badge (or "pending"), each with its tier and its independent and syndicated source counts. Filter by ticker and origin. Also LLM spend vs the soft budget, backfill status, feed health, research sweeps and **Run research sweep now** (M6). Ticker pages for QTUM and the pure-plays show their 10 latest items.
 - `/login`: the password form (M5).
@@ -245,7 +274,7 @@ Nothing is extrapolated past the listed expiries; a thin chain is flagged, never
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
 - `/health`: DB, schema and last run per job.
 
-Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*`, `/api/dilution/*`, `/api/strategies/curves` and `/api/catalysts` as JSON. There are no inline scripts, so the CSP stays strict.
+Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*`, `/api/dilution/*`, `/api/strategies/curves`, `/api/catalysts` and `/api/reactions/*` as JSON. There are no inline scripts, so the CSP stays strict.
 
 ## Deploying
 
@@ -305,6 +334,9 @@ src/aether/
   risk/           flags.py: open risk flags (lock-up, insider cluster, ATM/shelf, going concern,
                   short-interest spike)
   catalysts/      seed/earnings/lock-up sync, deterministic resolution, owner marks, views (M8)
+  score/          point-in-time fundamentals, scorecards, event reactions, calibration, theme
+                  decomposition, views (M9)
+  nyse.py         NYSE session calendar (the only exchange_calendars importer)
   options/        snapshot metrics, analytics (skew, implied moves, IV rank), job, panel view
   alerts/         candidates → outbox → Telegram; telegram_guard.py (S7 is_owner), dashboard views
   sec_view.py     read-side SEC queries for the dashboard
@@ -318,7 +350,7 @@ src/aether/
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
 config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml,
-                  options.yaml, llm.yaml, catalysts_seed.yaml
+                  options.yaml, llm.yaml, catalysts_seed.yaml, weights.yaml
 evals/            classifier golden set (real items) + committed eval results
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 ```

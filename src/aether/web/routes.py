@@ -28,6 +28,7 @@ from aether.portfolio.holdings import (
 )
 from aether.providers.prices import US_EASTERN
 from aether.risk.flags import open_flags
+from aether.score import view as score_view
 from aether.security import auth, csrf
 
 router = APIRouter()
@@ -101,6 +102,9 @@ def overview(request: Request) -> HTMLResponse:
             "alerts": alerts_view.recent_alerts(engine, limit=5),
             "drift": holdings_view.drift_card(engine),
             "catalysts": catalysts_view.upcoming(engine, today, days=365),
+            "scores": score_view.latest_totals(engine),
+            "theme": score_view.theme_card(engine),
+            "score_fresh": score_view.freshness(engine),
         },
     )
 
@@ -155,7 +159,25 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             if type_ in ("etf", "pure_play")
             else [],
             "origin_labels": news_view.ORIGIN_LABELS,
+            "score": score_view.latest_scorecard(engine, symbol)
+            if type_ in ("etf", "pure_play")
+            else None,
+            "reactions": score_view.reactions_for(engine, symbol)
+            if type_ in ("etf", "pure_play")
+            else [],
+            "score_fresh": score_view.freshness(engine),
+            "fd_labels": score_view.FD_LABELS,
         },
+    )
+
+
+@router.get("/calibration", response_class=HTMLResponse)
+def calibration_page(request: Request) -> HTMLResponse:
+    engine = request.app.state.ro_engine
+    return _render(
+        request,
+        "calibration.html",
+        {"c": score_view.calibration_view(engine), "fresh": score_view.freshness(engine)},
     )
 
 
@@ -403,6 +425,14 @@ def api_dilution(request: Request, symbol: str) -> JSONResponse:
             "symbol": symbol,
             "series": [{"name": name, "data": data} for name, data in series.items()],
         }
+    )
+
+
+@router.get("/api/reactions/{symbol}")
+def api_reactions(request: Request, symbol: str) -> JSONResponse:
+    symbol = _known_symbol(request, symbol)
+    return JSONResponse(
+        {"symbol": symbol, "markers": score_view.markers(request.app.state.ro_engine, symbol)}
     )
 
 

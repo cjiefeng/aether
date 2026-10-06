@@ -116,10 +116,29 @@
 
   // ------------------------------------------------------------------ single ticker
 
+  // Event markers (M9): classified events at their anchor session t0, coloured by class.
+  var MARKER_CLASSES = [
+    { cls: "SIGNAL", name: "SIGNAL events", color: "--ok", symbol: "triangle" },
+    { cls: "RISK", name: "RISK events", color: "--bad", symbol: "pin" },
+    { cls: "NOISE", name: "NOISE events", color: "--muted", symbol: "circle" },
+  ];
+
+  function markerText(m) {
+    var z = m.z5 == null ? "z5 n/a (" + m.status + ")" : "z5 " + (m.z5 >= 0 ? "+" : "") + m.z5.toFixed(1);
+    var agree = m.agreement ? " · market " + m.agreement : "";
+    return m.cls + " · " + m.category.replace(/_/g, " ") + " · m" + m.materiality + " · " + z + agree +
+      "\n" + m.title;
+  }
+
   function setupTicker(el) {
     var chart = init(el);
-    getJSON(el.dataset.src)
-      .then(function (body) {
+    var markersReq = el.dataset.markers
+      ? getJSON(el.dataset.markers).catch(function () { return { markers: [] }; })
+      : Promise.resolve({ markers: [] });
+    Promise.all([getJSON(el.dataset.src), markersReq])
+      .then(function (bodies) {
+        var body = bodies[0];
+        var markers = bodies[1].markers || [];
         if (body.bars.length === 0) {
           message(el, "No price data yet.");
           return;
@@ -129,9 +148,23 @@
         var vol = body.bars.map(function (b) { return [b.d, b.v]; });
         var opt = baseOption(t);
         opt.legend.show = false;
-        opt.tooltip.valueFormatter = function (v) {
+        var fmt = function (v) {
           return v == null ? "" : (v >= 1e5 ? Math.round(v).toLocaleString() : v.toFixed(2));
         };
+        opt.tooltip.valueFormatter = fmt;
+        if (markers.length) {
+          opt.tooltip.formatter = function (params) {
+            var lines = [];
+            params.forEach(function (p) {
+              if (p.data && p.data.ev) {
+                lines.push(markerText(p.data.ev));
+              } else if (p.seriesName === "Close" || p.seriesName === "Volume") {
+                lines.push(p.seriesName + ": " + fmt(Array.isArray(p.value) ? p.value[1] : p.value));
+              }
+            });
+            return (params.length ? params[0].axisValueLabel + "\n" : "") + lines.join("\n");
+          };
+        }
         opt.axisPointer = { link: [{ xAxisIndex: "all" }] };
         opt.grid = [
           { left: 56, right: 16, top: 16, height: "58%" },
@@ -155,6 +188,24 @@
           { name: "Volume", type: "bar", data: vol, xAxisIndex: 1, yAxisIndex: 1,
             itemStyle: { color: t.muted }, large: true },
         ];
+        if (markers.length) {
+          var closeOn = {};
+          close.forEach(function (c) { closeOn[c[0]] = c[1]; });
+          MARKER_CLASSES.forEach(function (mc) {
+            var data = markers
+              .filter(function (m) { return m.cls === mc.cls && closeOn[m.d] != null; })
+              .map(function (m) { return { value: [m.d, closeOn[m.d]], ev: m }; });
+            if (data.length) {
+              opt.series.push({
+                name: mc.name, type: "scatter", data: data, xAxisIndex: 0, yAxisIndex: 0,
+                symbol: mc.symbol, symbolSize: 9, itemStyle: { color: cssVar(mc.color) }, z: 5,
+              });
+            }
+          });
+          opt.legend.show = true;
+          opt.legend.data = MARKER_CLASSES.map(function (mc) { return mc.name; });
+          opt.grid[0].top = 36;
+        }
         chart.setOption(opt, true);
       })
       .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });

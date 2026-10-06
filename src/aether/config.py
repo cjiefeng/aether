@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -464,7 +465,8 @@ ACCESSION_RE = r"^\d{10}-\d{2}-\d{6}$"
 
 
 class OverlayParams(_Strict):
-    """Research overlay layer 1: filing hard rules (spec §6.6.1, M5)."""
+    """Research overlay layer 1: filing hard rules (spec §6.6.1, M5) and the dilution / runway
+    haircuts (M9)."""
 
     enabled: bool
     # An 8-K Item 3.01 (listing-compliance notice) zeroes the name for this many days.
@@ -475,6 +477,12 @@ class OverlayParams(_Strict):
     # Filings the owner has reviewed and cleared (e.g. a Form 25 for an exchange transfer, or a
     # resolved compliance notice). Identifiers only.
     cleared_accessions: tuple[Annotated[str, Field(pattern=ACCESSION_RE)], ...] = ()
+    # M9 haircuts (permanent-loss risk from fundamentals): fully diluted shares up more than
+    # `dilution_yoy_max` year on year, and cash runway under `runway_min_months`.
+    dilution_yoy_max: float = Field(gt=0, le=10)
+    dilution_multiplier: float = Field(ge=0, le=1)
+    runway_min_months: float = Field(gt=0, le=120)
+    runway_multiplier: float = Field(ge=0, le=1)
 
 
 class StrategiesConfig(_Strict):
@@ -533,6 +541,132 @@ class OptionsConfig(_Strict):
 
 def load_options_config(config_dir: Path) -> OptionsConfig:
     return OptionsConfig.model_validate(_load_yaml(config_dir / "options.yaml"))
+
+
+# --------------------------------------------------------------------------- scores (M9)
+
+Anchor = tuple[float, float]
+
+
+class AnchorMap(_Strict):
+    """A piecewise-linear map from a raw metric to a score in [-1, 1], clamped at both ends.
+    Points are (metric value, score) in strictly increasing metric order."""
+
+    points: tuple[Anchor, ...] = Field(min_length=2)
+
+    @field_validator("points")
+    @classmethod
+    def _ordered(cls, v: tuple[Anchor, ...]) -> tuple[Anchor, ...]:
+        xs = [x for x, _ in v]
+        if any(b <= a for a, b in pairwise(xs)):
+            raise ValueError("anchor points must be in strictly increasing metric order")
+        if any(not -1.0 <= y <= 1.0 for _, y in v):
+            raise ValueError("anchor scores must be within [-1, 1]")
+        return v
+
+    def score(self, x: float) -> float:
+        pts = self.points
+        if x <= pts[0][0]:
+            return pts[0][1]
+        for (x0, y0), (x1, y1) in pairwise(pts):
+            if x <= x1:
+                return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+        return pts[-1][1]
+
+
+SCORE_COMPONENTS = (
+    "fundamentals",
+    "dilution",
+    "signal_momentum",
+    "risk_load",
+    "short_interest",
+    "catalyst_position",
+    "noise_ratio",
+    "price_context",
+    "market_reaction",
+)
+
+
+class ScorecardParams(_Strict):
+    weights: dict[str, float]
+    half_life_days: float = Field(gt=0, le=3650)
+    event_lookback_days: int = Field(ge=1, le=3650)
+    momentum_scale: float = Field(gt=0)
+    risk_scale: float = Field(gt=0)
+    open_flag_penalty: float = Field(ge=0)
+    noise_window_days: int = Field(ge=1, le=365)
+    noise_min_events: int = Field(ge=1)
+    hype_noise_ratio: float = Field(ge=0, le=1)
+    catalyst_horizon_days: int = Field(ge=1, le=3650)
+    reaction_window_days: int = Field(ge=1, le=3650)
+    atm_active_score: float = Field(ge=-1, le=1)
+    shelf_active_score: float = Field(ge=-1, le=1)
+    anchors: dict[str, AnchorMap]
+
+    @field_validator("weights")
+    @classmethod
+    def _weights(cls, v: dict[str, float]) -> dict[str, float]:
+        if set(v) != set(SCORE_COMPONENTS):
+            raise ValueError(f"weights must name exactly {list(SCORE_COMPONENTS)}")
+        if any(w < 0 for w in v.values()) or sum(v.values()) <= 0:
+            raise ValueError("weights must be >= 0 with a positive sum")
+        return {k: v[k] for k in SCORE_COMPONENTS}
+
+    @field_validator("anchors")
+    @classmethod
+    def _anchors(cls, v: dict[str, AnchorMap]) -> dict[str, AnchorMap]:
+        if set(v) != set(ANCHOR_METRICS):
+            raise ValueError(f"anchors must name exactly {list(ANCHOR_METRICS)}")
+        return v
+
+
+ANCHOR_METRICS = (
+    "revenue_growth",
+    "runway_months",
+    "ev_sales",
+    "fd_yoy",
+    "instruments_pct",
+    "short_pct_shares_out",
+    "days_to_cover",
+    "short_change_pp",
+    "catalysts_upcoming",
+    "catalyst_hit_rate",
+    "noise_ratio",
+    "drawdown_52w",
+    "rel_perf_90d",
+    "mean_z5",
+)
+
+
+class ReactionParams(_Strict):
+    estimation_window: int = Field(ge=20, le=500)
+    min_sessions: int = Field(ge=10, le=500)
+    min_sigma_sessions: int = Field(ge=5, le=500)
+    confound_min_materiality: int = Field(ge=1, le=5)
+    reversal_min_abs_car1: float = Field(ge=0, le=1)
+    volume_window: int = Field(ge=5, le=250)
+
+
+class CalibrationParams(_Strict):
+    min_n: int = Field(ge=1)
+    noise_like_signal_mean_abs_z5: float = Field(gt=0)
+    noise_like_signal_pct_z5_gt2: float = Field(ge=0, le=1)
+    signal_ignored_mean_abs_z5: float = Field(gt=0)
+    high_materiality: int = Field(ge=1, le=5)
+    high_materiality_max_abs_z5: float = Field(gt=0)
+
+
+class WeightsConfig(_Strict):
+    """`config/weights.yaml`: scorecard weights and anchors, reaction-engine and calibration
+    parameters (spec §6.1, §6.3, M9). Numbers only; initial values for owner review."""
+
+    scorecard: ScorecardParams
+    reactions: ReactionParams
+    calibration: CalibrationParams
+
+
+def load_weights(config_dir: Path) -> WeightsConfig:
+    return WeightsConfig.model_validate(_load_yaml(config_dir / "weights.yaml"))
 
 
 # --------------------------------------------------------------------------- catalysts (M8)

@@ -1,5 +1,127 @@
 # Milestone report
 
+## M9: Scorecards, reactions, theme (2026-10-06)
+
+The deterministic §6.1 scorecard (including fully diluted EV and cash runway from SEC XBRL), the §6.3 event-reaction engine with the Calibration page and implied vs realized moves, the QTUM theme decomposition, and research-overlay layer 1's dilution and runway haircuts. **$0 LLM**: nothing in M9 calls a model.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Component unit tests on fixtures | ✅ | `tests/test_fundamentals.py` covers TTM from FY + YTD − prior YTD; FD components, untagged and stale components; the same-component YoY; the first-session baseline; runway and "not burning"; EV and EV/Sales; point-in-time filing dates; the live-check regressions below. `tests/test_scorecard.py` covers anchor maps, config validation, decay, risk flags, each component, coverage and the job. |
+| Reaction: after-close anchoring | ✅ | `tests/test_reactions.py::test_anchor_after_close_holidays_and_half_days`: 15:59 EDT → same day; exactly 16:00 and 16:30 → next session; EST close at 21:00Z; a 13:30 ET event on the 2025-11-28 half-day → 2025-12-01. |
+| Reaction: holidays | ✅ | Same test: Friday after the close before MLK Day → Tuesday 2026-01-20; a Saturday before the observed 2026-07-03 holiday → 2026-07-06. |
+| Reaction: β fallback | ✅ | `test_beta_fallback_with_short_history` (39 sessions → β = 1, flagged, σ from r_s − r_b); `test_too_short_for_sigma_has_no_z`. |
+| Reaction: confounding | ✅ | `test_job_pending_then_complete_and_confounded`: a materiality-3 event three sessions after t0 → `confounded`, with the confounder id stored. `tests/test_calibration.py` checks that confounded rows never count. |
+| Reaction: pending → complete | ✅ | Same test: with 160 of 200 sessions stored the row is `pending` (CAR[0,20] null); after the rest arrive it's `complete`, and a rerun with nothing new writes 0 rows. |
+| Reaction: synthetic +10% jump → z₁ > 2 | ✅ | `test_jump_gives_z1_above_2_and_beta_is_estimated` (β ≈ 1.3 recovered as well). |
+| Decomposition recovers known betas within ±0.05 | ✅ | `tests/test_theme.py::test_recovers_known_betas_within_tolerance`: semis 0.40, tech 0.30 (correlated with semis, as SOXX and QQQ are) and quantum 0.20, all within ±0.05; the attribution parts add up to QTUM's sum exactly; a late listing joins the basket after 60 sessions. |
+| Synthetic 25% YoY rise in FD shares halves the weight at the next publish, cited | ✅ | `tests/test_fundamentals.py::test_25pct_fd_rise_halves_weight_at_next_publish_cited`: nothing changes before the publish; then DEMO 6.25% → 3.125%, the freed weight goes to the other pure-plays, QTUM stays at 75%, and the chain cites the 10-Q accession: `FD shares +25.0% YoY`. Also checked: runway < 12 months halves the weight, both haircuts → × 0.25, and a SPAC-style baseline or a filing not yet public gives no finding. |
+| Tests green, no network | ✅ | `make test`: 577 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict` on 126 files, no known vulnerabilities |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0010_scores`** (hand-written, STRICT):
+  - `scorecards` (WITHOUT ROWID);
+  - `theme_decomposition`;
+  - `event_reactions` (WITHOUT ROWID, as in §7, plus `approx_time`, `beta_fallback`, `ret_raw_1` and `note`; it cascades with its event);
+  - `calibration_reports`;
+  - `xbrl_fetches` (the parser version per symbol, so a parser change refetches companyfacts once).
+- **NYSE calendar** (`nyse.py`): `exchange_calendars`, the library §6.3 names (approved in planning). It's the only importer; sessions, closes (half-days included) and offsets.
+- **XBRL**:
+  - 6- and 9-month YTD values are now kept for revenue and operating cash flow;
+  - new concepts: marketable debt securities (current and non-current), options outstanding, unvested RSUs, convertible share counts, and `RevenueFromContractWithCustomerIncludingAssessedTax`.
+- **Fundamentals** (`score/fundamentals.py`, point in time on filing dates):
+  - TTM flows;
+  - fully diluted shares by component;
+  - FD YoY on the same components, with a base on or after the first session;
+  - liquidity, burn and runway;
+  - EV and EV/Sales;
+  - anything older than 400 days counts as stale.
+- **Overlay layer 1 (M9 rules)**: `fd_dilution` (> 20% YoY → × 0.5) and `low_runway` (< 12 months → × 0.5) in `config/strategies.yaml`. Each finding carries its numbers in `detail` and cites the 10-Q/10-K. `ALGO_VERSION` is `m9.1`.
+- **Scorecard** (`score/scorecard.py`, `config/weights.yaml`): the nine §6.1 components, scored through piecewise-linear anchors. The total is −100…+100 over the components with data, with `coverage` shown. QTUM gets the event, catalyst and price components only.
+- **Reactions** (`score/reaction.py`): §6.3 exactly, on total-return series. Only changed rows are written.
+- **Calibration** (`score/calibration.py`):
+  - per class and category (n ≥ 15);
+  - flags that suggest changes, never applied;
+  - a spot-review list;
+  - implied vs realized moves for catalysts resolved by an event.
+- **Theme** (`score/theme.py`): a 120-session OLS with an intercept, standard errors, the basket's partial R², the 30/90-session attribution and the holdings cross-check.
+- **Jobs**: `reactions` 06:45 SGT; `theme` + `scorecards` 07:00; `calibration` Sunday 08:00, and once at startup if no report exists. Each has a startup catch-up. No new commands.
+- **Dashboard**:
+  - Ticker page: the scorecard breakdown, a valuation and dilution card (FD shares by component with accessions, EV, EV/Sales, runway), a reaction table with "market agreed / disagreed" badges, and event markers on the price chart (coloured by class; the canvas tooltip shows category, materiality, z₅ and the title).
+  - Overview: a score column, and the theme card labelled "quantum-sleeve view".
+  - `/calibration` (in the nav) and `/api/reactions/<sym>`.
+  - There's still no inline script or style; the `usd` filter now formats floats and negatives.
+
+### Decisions (deviations from the spec / plan)
+1. **Your calls in planning (2026-10-06):**
+   - `exchange_calendars` for the NYSE calendar;
+   - the YoY base must be on or after the first trading session (INFQ and QNT show "listed < 1 year");
+   - research items dated by retrieval time, or by a date-only `page_age`, are computed, flagged "approximate time" and kept out of calibration.
+2. **Fully diluted** = common + warrants + options + unvested RSUs + convertible shares, as tagged.
+   - A component older than 400 days before the common-share date isn't counted (e.g. IONQ's 2021 warrant count).
+   - YoY compares only components tagged at both ends.
+   - Earn-outs aren't in XBRL, so they aren't counted (INFQ's earn-out is still an open question).
+3. **Liquidity** = cash + current and non-current marketable debt securities, one XBRL concept per bucket by priority, never summed (QBTS tags the same $249.6M under two concepts). `LongTermInvestments` is left out because it can hold strategic stakes. That's conservative for IONQ (it has $840M there).
+4. **Live-check fix:** RGTI was being halved for a "5.5-month runway", because it tags its $514M of AFS securities under `DebtSecuritiesAvailableForSaleExcludingAccruedInterest*`, which wasn't read. Its revenue was also a 2023 figure under an old concept. Both are fixed, with regression tests: RGTI's runway is now 107 months, and its revenue is current. TTMs and balances older than 400 days are now treated as stale.
+5. **"Market agreed":** for SIGNAL/RISK, CAR[0,5] has the classifier's sign; for NOISE, |z₅| < 2. Undirected, pending and confounded rows get no badge.
+6. **Scorecard design** (initial values for your review in `config/weights.yaml`): the component weights (fundamentals, dilution, momentum and risk 1.0; the rest 0.5; market reaction 0) and every anchor map. These are owner parameters, not opinions in prompts. M10 will take the stance thresholds and the hysteresis margin from the same file.
+7. **Theme attribution** uses sums of daily simple returns, so the parts add up exactly; the card shows contributions in points, not as a share of a possibly tiny total.
+8. **Implied vs realized** uses catalysts resolved by an event (earnings 8-Ks are catalysts since M8), with the last options snapshot before t0. It compares the move with the raw |return| and |CAR| over [t0−1, t0+1]. The straddle prices the move to its expiry, so the ratio is indicative only.
+9. **No review-pack change:** the spec adds stances to the pack in M10; a halving shows in its chain text, which has no dollar values.
+
+### Facts
+- No facts changed or added. Scores, reactions and the decomposition are computed evidence, not facts.
+
+### Open questions
+- **IONQ is halved at the next publish** by the new rule. Its own XBRL cover-page count went from 305,001,997 (2025-07-30) to 381,002,314 (2026-07-29), +24.9% in common shares and +25.5% fully diluted (common + options). This is the spec rule working as written; if you'd rather not haircut it, raise the threshold or clear that 10-Q accession (`0001193125-26-341001`) in `overlay.cleared_accessions`. No other name triggers on today's data.
+- **Confounding is very broad:** 212 of 275 reactions were confounded in the live check, and 103 of those only by routine Form 4 sales (materiality 1–2). The spec counts "a RISK filing", so I followed it. Restricting filing confounders to materiality ≥ 3 would roughly double the usable calibration sample. Your call.
+- **QNT has no EV, runway or FD count.** It doesn't tag a company-wide share count (dual class, open since M8), and as a June 2026 IPO it has only an H1 cash flow, so no TTM yet. Revenue mix (commercial vs government) isn't in non-dimensional XBRL for any name.
+- **IONQ's warrants and RSUs aren't tagged** in recent filings, so its FD count is common + options only.
+- **No research events in the live check** (no API key in the test stack), so the approximate-time exclusion only has unit tests so far.
+- **The EDGAR schedule still ignores NYSE holidays** (M2 decision 7). The calendar is available now if you want the extra polls gone.
+
+### Live check (isolated compose project `aether-m9` on 127.0.0.1:8090, its own volume and image tag; Anthropic, Telegram, Tiger and Massive blanked; your SEC user agent passed for EDGAR; a throwaway password; run twice on fresh volumes, then torn down. Your `aether` stack kept running throughout)
+- The worker migrated a fresh DB to `0010_scores` and refetched companyfacts for all five pure-plays at parser `m9.2`. Prices, EDGAR, options, short interest, strategies, rebalance, `reactions`, `theme`, `scorecards` and `calibration` all came back `ok`.
+- **Fundamentals:**
+  - IONQ: TTM revenue $246.5M (+370.6%), liquidity $2.12B, burn $113M/quarter, runway 56 months, EV $14.6B (59× sales).
+  - QBTS: revenue $12.4M (−44.2%), runway 59 months, EV/Sales 438×.
+  - RGTI: revenue $13.4M (+68.5%), runway 107 months.
+  - INFQ: runway 342 months, FD YoY n/a (listed < 1 year).
+  - QNT: n/a, as above.
+- **Overlay:** only IONQ is halved (see open questions), e.g. safe 5.4% → 2.7%. The freed weight went to the other pure-plays; QTUM stays at 75/45/15%.
+- **Scorecards:** QTUM +8, INFQ −6, IONQ −9, QNT −13, QBTS −25, RGTI −11 (coverage 58–100%).
+- **Theme (120 sessions to 2026-10-02):**
+  - β semis 0.36 ± 0.03, tech 0.49 ± 0.08, quantum 0.10 ± 0.01; R² 95%; the quantum basket's partial R² is 48%.
+  - Over 90 sessions the basket contributed −2.7 pp to QTUM's +1.3%.
+  - The pure-plays are 4.6% of QTUM's holdings.
+- **Reactions:** 275 rows: 49 complete, 212 confounded, 5 pending, 9 no data; 8 used the β fallback.
+- **Calibration:** only `insider_selling` reached n ≥ 15 (19 usable; direction hit rate 74%, mean |z₅| 0.64). No flags. One spot-review item: QBTS's 8-K 3.01 (the voluntary exchange transfer from M5), materiality 4 with z₅ +0.06. No implied vs realized rows yet, since no catalyst has resolved since the options snapshots began.
+- **Browser** (logged in):
+  - IONQ ticker page: chart markers with working tooltips, the scorecard, the valuation card and the reaction badges;
+  - the Overview theme card and score column;
+  - `/calibration`;
+  - the `/holdings` chain `base 5.4% → FD shares +25.5% YoY (10-Q 0001193125-26-341001) → 2.7%`;
+  - no console or CSP errors. `/calibration` without a session → 303.
+  - Fixed during the check: short-interest decimals, negative dollar formatting, and the misleading "share of QTUM's return" sentence.
+
+### Owner checklist
+- [ ] **Decide on IONQ's halving** (open question 1) before the 2026-11-01 publish, or before pressing **Publish targets now**.
+- [ ] Review `config/weights.yaml` (component weights, anchors, the 45-day half-life, the reaction and calibration thresholds) and the new `overlay` values in `config/strategies.yaml` (20% / × 0.5, 12 months / × 0.5).
+- [ ] Decide on the confounding scope (open question 2).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0010_scores`, and the next EDGAR run refetches companyfacts for every pure-play. Reactions, the theme and scorecards appear about 8–9 minutes after start, and the first calibration report about 12 minutes after start. **Note:** if your stack bootstraps or republishes targets after deploy, the IONQ haircut applies.
+- [ ] Still open from earlier milestones: `DAILY_LLM_BUDGET_USD`, `MASSIVE_API_KEY`, the Telegram bot setup and the facts not yet signed off.
+
+### How to verify
+```bash
+make test            # 577 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open /t/IONQ, the Overview theme card and /calibration
+```
+
 ## M8: Catalysts + market structure (2026-10-05)
 
 Dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. **$0 LLM**: nothing in M8 calls a model, and no options metric reaches targets or sizing.

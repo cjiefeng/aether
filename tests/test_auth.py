@@ -41,6 +41,8 @@ DATA_ROUTES = (
     "/api/prices/overview",
     "/api/prices/QTUM",
     "/api/strategies/curves?profile=safe",
+    "/calibration",
+    "/api/reactions/QTUM",
 )
 
 

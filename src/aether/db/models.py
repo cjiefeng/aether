@@ -1011,3 +1011,111 @@ short_interest_files = Table(
     _date_ck("settlement_date"),
     sqlite_strict=True,
 )
+
+# --------------------------------------------------------------------------- M9: scores
+
+# One row per symbol: when companyfacts was last fetched and with which parser version, so a
+# parser change (new concepts, YTD durations) refetches every symbol once (M9).
+xbrl_fetches = Table(
+    "xbrl_fetches",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), primary_key=True),
+    Column("parser_version", Text, nullable=False),
+    Column("fetched_at", Text, nullable=False),
+    sqlite_strict=True,
+)
+
+# Daily deterministic scorecard per ticker (spec §6.1). `components` holds each component's raw
+# metrics, score in [-1, 1] (or null with a reason) and weight; `total` is in [-100, 100] over the
+# components that have data (`coverage` = their share of the configured weight).
+scorecards = Table(
+    "scorecards",
+    metadata,
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("as_of", Text, nullable=False),
+    Column("components", Text, nullable=False),
+    Column("total", REAL),
+    Column("coverage", REAL, nullable=False),
+    Column("input_hash", LargeBinary, nullable=False),
+    Column("created_at", Text, nullable=False),
+    PrimaryKeyConstraint("symbol", "as_of"),
+    CheckConstraint("total IS NULL OR (total >= -100 AND total <= 100)", name="total"),
+    CheckConstraint("coverage >= 0 AND coverage <= 1", name="coverage"),
+    _date_ck("as_of"),
+    _json_ck("components"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# QTUM theme decomposition (spec §6.1): rolling OLS of QTUM on SOXX, QQQ and the equal-weighted
+# pure-play basket, ending at `as_of` (the last QTUM session).
+theme_decomposition = Table(
+    "theme_decomposition",
+    metadata,
+    Column("as_of", Text, primary_key=True),
+    Column("n_sessions", Integer, nullable=False),
+    Column("betas", Text, nullable=False),
+    Column("attribution", Text, nullable=False),
+    Column("r2", REAL),
+    Column("quantum_partial_r2", REAL),
+    Column("watchlist_weight_in_qtum", REAL),
+    Column("basket_members", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    _date_ck("as_of"),
+    _json_ck("betas"),
+    _json_ck("attribution"),
+    _json_ck("basket_members"),
+    sqlite_strict=True,
+)
+
+REACTION_STATUSES = ("pending", "complete", "confounded", "no_data")
+
+# Event-reaction check (spec §6.3), one row per event x affected ticker.
+event_reactions = Table(
+    "event_reactions",
+    metadata,
+    Column("event_id", Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("t0", Text),  # NULL only when no anchor session exists (no_data)
+    Column("benchmark", Text, nullable=False),
+    Column("beta", REAL),
+    Column("sigma_resid", REAL),
+    Column("beta_fallback", Integer, nullable=False, server_default="0"),
+    Column("car_1", REAL),
+    Column("car_5", REAL),
+    Column("car_20", REAL),
+    Column("z_1", REAL),
+    Column("z_5", REAL),
+    Column("z_20", REAL),
+    Column("ret_raw_1", REAL),  # raw stock return over [t0, t0+1], for implied vs realized
+    Column("abn_volume", REAL),
+    Column("reversal_ratio", REAL),
+    Column("status", Text, nullable=False),
+    Column("confounders", Text, nullable=False, server_default="[]"),
+    Column("approx_time", Integer, nullable=False, server_default="0"),
+    Column("note", Text),
+    Column("computed_at", Text, nullable=False),
+    PrimaryKeyConstraint("event_id", "symbol"),
+    _in_ck("status", REACTION_STATUSES),
+    _bool_ck("beta_fallback"),
+    _bool_ck("approx_time"),
+    _date_ck("t0", nullable=True),
+    CheckConstraint("t0 IS NOT NULL OR status = 'no_data'", name="t0_required"),
+    _json_ck("confounders"),
+    Index(None, "symbol", "t0"),
+    Index(None, "status"),
+    sqlite_strict=True,
+    sqlite_with_rowid=False,
+)
+
+# Weekly calibration report (spec §6.3).
+calibration_reports = Table(
+    "calibration_reports",
+    metadata,
+    Column("as_of", Text, primary_key=True),
+    Column("payload", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    _date_ck("as_of"),
+    _json_ck("payload"),
+    sqlite_strict=True,
+)

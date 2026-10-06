@@ -204,3 +204,8 @@ input.num { width: 9rem; text-align: right; font-variant-numeric: tabular-nums; 
   *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
   button:active { transform: none; }
 }
+
+/* ---- M9 scores: reaction agreement badges, caveat banner */
+.badge.agree { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.badge.disagree { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.banner.note { border-color: var(--line); color: var(--muted); }

@@ -34,15 +34,19 @@ def pct(value: float | None, signed: bool = True) -> str:
     return f"{value * 100:+.1f}%" if signed else f"{value * 100:.1f}%"
 
 
-def usd(value: Decimal | None) -> str:
-    """Decimal dollars -> compact text ($1.25B, $350.0M, $12.50)."""
+def usd(value: Decimal | float | None) -> str:
+    """Dollars -> compact text ($1.25B, $350.0M, $12.50). Floats (computed metrics such as EV,
+    display only) are converted via their repr."""
     if value is None:
         return "—"
+    if isinstance(value, float):
+        value = Decimal(repr(value))
     a = abs(value)
+    sign = "-" if value < 0 else ""
     for scale, suffix in ((Decimal(10) ** 9, "B"), (Decimal(10) ** 6, "M")):
         if a >= scale:
-            return f"${value / scale:,.2f}{suffix}"
-    return f"${value:,.2f}"
+            return f"{sign}${a / scale:,.2f}{suffix}"
+    return f"{sign}${a:,.2f}"
 
 
 def intc(value: int | None) -> str:

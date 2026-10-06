@@ -42,7 +42,7 @@ from aether.portfolio.overlay import apply_overlay, layer1_findings
 from aether.portfolio.rebalance import PlanInputs, build_plan
 from aether.runs import JobResult
 
-ALGO_VERSION = "m5.2"
+ALGO_VERSION = "m9.1"
 SGT = ZoneInfo("Asia/Singapore")
 
 

@@ -39,6 +39,7 @@ from aether.config import (
     load_sources,
     load_strategies,
     load_watchlist,
+    load_weights,
 )
 from aether.db.engine import write_tx
 from aether.db.models import commands, job_runs
@@ -80,6 +81,10 @@ from aether.providers.tiger import TigerConfig, TigerReadOnly
 from aether.research.runner import backfill_state, poll_backfill, run_sweep, submit_backfill
 from aether.review.pack import monthly_review
 from aether.runs import JobResult, run_job
+from aether.score.calibration import has_report, run_calibration
+from aether.score.reaction import run_reactions
+from aether.score.scorecard import run_scorecards
+from aether.score.theme import run_theme
 
 __all__ = ["JobResult", "build_scheduler", "process_commands", "run_job"]
 
@@ -254,6 +259,24 @@ def options_job(engine: Engine, settings: Settings) -> JobResult:
     return snapshot_options(engine, YFinanceOptions(), load_options_config(settings.config_dir))
 
 
+def reactions_job(engine: Engine, settings: Settings) -> JobResult:
+    return run_reactions(engine, load_weights(settings.config_dir).reactions)
+
+
+def scorecards_job(engine: Engine, settings: Settings) -> JobResult:
+    return run_scorecards(
+        engine, load_weights(settings.config_dir), load_rubric(settings.config_dir)
+    )
+
+
+def theme_job(engine: Engine) -> JobResult:
+    return run_theme(engine)
+
+
+def calibration_job(engine: Engine, settings: Settings) -> JobResult:
+    return run_calibration(engine, load_weights(settings.config_dir).calibration, sgt_today())
+
+
 def news_rss_job(engine: Engine, settings: Settings) -> JobResult:
     client = RssClient()
     try:
@@ -295,6 +318,9 @@ BACKFILL_POLL_MINUTES = 15
 BACKFILL_SUBMIT_DELAY = timedelta(minutes=2)
 CATCH_UP_AFTER = timedelta(hours=24)
 PORTFOLIO_CATCH_UP_DELAY = timedelta(minutes=5)
+# M9 scores catch up after prices, EDGAR and the classifier have had a first pass.
+SCORES_CATCH_UP_DELAY = timedelta(minutes=8)
+CALIBRATION_FIRST_DELAY = timedelta(minutes=12)
 
 
 def _catch_up(engine: Engine, job: str, delay: timedelta = timedelta(0)) -> dict[str, Any]:
@@ -702,6 +728,43 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         minute=50,
         id="fx",
         **_catch_up(engine, "fx"),
+    )
+
+    # M9 scores (spec §9): event reactions 06:45, theme decomposition + scorecards 07:00 (after
+    # prices at 06:30), calibration report Sunday 08:00 (and once at startup if none exists).
+    sched.add_job(
+        wrap("reactions", lambda: reactions_job(engine, settings)),
+        "cron",
+        hour=6,
+        minute=45,
+        id="reactions",
+        **_catch_up(engine, "reactions", SCORES_CATCH_UP_DELAY),
+    )
+
+    def run_scores() -> None:
+        run_job(engine, "theme", lambda: theme_job(engine))
+        run_job(engine, "scorecards", lambda: scorecards_job(engine, settings))
+
+    sched.add_job(
+        run_scores,
+        "cron",
+        hour=7,
+        minute=0,
+        id="scores",
+        **_catch_up(engine, "scorecards", SCORES_CATCH_UP_DELAY + timedelta(minutes=1)),
+    )
+    sched.add_job(
+        wrap("calibration", lambda: calibration_job(engine, settings)),
+        "cron",
+        day_of_week="sun",
+        hour=8,
+        minute=0,
+        id="calibration",
+        **(
+            {}
+            if has_report(engine)
+            else {"next_run_time": datetime.now(ZoneInfo(TZ)) + CALIBRATION_FIRST_DELAY}
+        ),
     )
 
     # Monthly publish + review pack: the 1st at 10:30 SGT; the 2nd is the retry (it does nothing

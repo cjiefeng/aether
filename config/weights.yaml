@@ -1,0 +1,74 @@
+# Scorecard, event-reaction and calibration parameters (spec §6.1, §6.3, M9). Numbers only (the
+# model forbids unknown keys). Initial values for owner review. Nothing here is sent to an LLM;
+# M10 passes the computed scorecard to synthesis as metrics.
+
+scorecard:
+  # Component weights. The total is 100 x sum(w * score) / sum(w) over the components that have
+  # data (scores are in [-1, 1], so the total is in [-100, 100]). market_reaction is context only.
+  weights:
+    fundamentals: 1.0
+    dilution: 1.0
+    signal_momentum: 1.0
+    risk_load: 1.0
+    short_interest: 0.5
+    catalyst_position: 0.5
+    noise_ratio: 0.5
+    price_context: 0.5
+    market_reaction: 0.0
+  # Signal momentum / risk load: sum(materiality x direction x confidence x 0.5^(age/half-life))
+  # over non-quarantined SIGNAL (or RISK) events in the lookback; score = tanh(sum / scale).
+  half_life_days: 45
+  event_lookback_days: 365
+  momentum_scale: 10
+  risk_scale: 10
+  # Each open risk flag (lock-up within 60 days, insider cluster, active ATM, short-interest spike,
+  # going concern) adds this much to the risk sum.
+  open_flag_penalty: 2
+  # Noise ratio = NOISE / all classified events over the window (scored only with enough events).
+  # "Hype" flag: ratio above hype_noise_ratio while the 30-day price return is positive.
+  noise_window_days: 30
+  noise_min_events: 3
+  hype_noise_ratio: 0.6
+  catalyst_horizon_days: 180
+  # Market reaction (weight 0): mean z5 of complete, non-confounded reactions in this window.
+  reaction_window_days: 90
+  # Dilution sub-scores for an active ATM program (<= 365 days old) or, failing that, an active
+  # shelf (<= 3 years old).
+  atm_active_score: -1.0
+  shelf_active_score: -0.5
+  # Piecewise-linear maps from each raw metric to a score in [-1, 1], clamped at both ends.
+  # points: [metric value, score], metric values strictly increasing.
+  anchors:
+    revenue_growth: {points: [[-0.2, -1.0], [0.0, -0.25], [0.5, 0.5], [1.0, 1.0]]}
+    runway_months: {points: [[6, -1.0], [12, -0.5], [24, 0.0], [48, 1.0]]}
+    ev_sales: {points: [[10, 1.0], [30, 0.0], [100, -1.0]]}
+    fd_yoy: {points: [[0.0, 0.5], [0.1, 0.0], [0.2, -0.5], [0.5, -1.0]]}
+    instruments_pct: {points: [[0.0, 0.5], [0.1, 0.0], [0.3, -1.0]]}
+    short_pct_shares_out: {points: [[0.05, 0.5], [0.15, 0.0], [0.30, -1.0]]}
+    days_to_cover: {points: [[1, 0.5], [3, 0.0], [7, -1.0]]}
+    short_change_pp: {points: [[-5, 0.5], [0, 0.0], [5, -1.0]]}
+    catalysts_upcoming: {points: [[0, 0.0], [3, 0.5]]}
+    catalyst_hit_rate: {points: [[0.0, -1.0], [0.5, 0.0], [1.0, 1.0]]}
+    noise_ratio: {points: [[0.2, 0.5], [0.5, 0.0], [0.8, -1.0]]}
+    drawdown_52w: {points: [[-0.6, -1.0], [-0.2, 0.0], [0.0, 0.5]]}
+    rel_perf_90d: {points: [[-0.3, -1.0], [0.0, 0.0], [0.3, 1.0]]}
+    mean_z5: {points: [[-2, -1.0], [0, 0.0], [2, 1.0]]}
+
+# Event-reaction check (spec §6.3). Fixed by the spec: CAR windows [t0,t0+1], [t0,t0+5],
+# [t0,t0+20]; t0 = first NYSE session whose close is after the event time.
+reactions:
+  estimation_window: 120   # sessions ending at t0-1 for beta and residual sigma
+  min_sessions: 60         # fewer -> beta = 1 (fallback flagged)
+  min_sigma_sessions: 20   # fewer -> no z-scores
+  confound_min_materiality: 3
+  reversal_min_abs_car1: 0.005  # |CAR[0,1]| below this -> no reversal ratio (division noise)
+  volume_window: 20
+
+# Calibration report (spec §6.3): flags suggest actions and are never applied automatically.
+calibration:
+  min_n: 15                             # non-confounded events before a category is reported
+  noise_like_signal_mean_abs_z5: 1.5    # NOISE category with mean |z5| >= this ...
+  noise_like_signal_pct_z5_gt2: 0.25    # ... or this share of |z5| > 2 -> "behaves like signal"
+  signal_ignored_mean_abs_z5: 0.75      # SIGNAL category with mean |z5| below this -> "ignored"
+  high_materiality: 4                   # events at/above this materiality ...
+  high_materiality_max_abs_z5: 0.5      # ... with |z5| below this are listed for spot review
