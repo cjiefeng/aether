@@ -74,7 +74,7 @@ services:
     healthcheck:
       test: ["CMD", "python", "-m", "aether.healthcheck", "app"]
       interval: 15s
-      timeout: 5s
+      timeout: 15s
       retries: 5
 
   # Tooling container (make test/lint/fmt/lock). Nothing is installed on the host.
