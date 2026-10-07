@@ -75,6 +75,7 @@ The portfolio features serve one **family-fund sleeve**. These are owner paramet
 
 - **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays (and, from M13, the adjacent names).
 - **Concentration:** at most **9 names besides QTUM** (pure-plays + adjacent, amended 2026-10-08). The monthly review respects the cap (§6.7.2): it may propose removing **any** of the 9 on serious bad news, and when all 9 slots are full it never proposes an add, but sends a separate **strong-candidate** notification for an exceptional name, so the owner decides. Risk appetite is expressed through the size of the QTUM core (§6.5).
+- **Investment thesis:** the owner's **Quantum Thesis** lives in `STRATEGY.md`: conviction in the technology, not one company; diversify across modalities; include picks-and-shovels suppliers; modest positions built stepwise; red flags. Aether applies it **only as deterministic checks** (§6.10, M13). The thesis text never goes into prompts or config.
 - **Market:** US-listed stocks only. Listed companies only; no private or pre-IPO holdings.
 - **Base currency:** SGD. Holdings, trades and targets are in USD; the dashboard also shows value and performance in SGD (reporting only, §6.6).
 - **Horizon:** 12 years or more. A **100% drawdown** of the sleeve is accepted, so volatility and drawdown limits are shown, not enforced (§6.5). Risk control focuses on **permanent loss** (going concern, delisting, heavy dilution) through the research overlay (§6.6.1).
@@ -637,6 +638,7 @@ The same monthly run gets a second track that screens the **industries around qu
 
 **Computed in code and shown with every candidate:**
 
+- **Fills a gap** (§6.10): whether the candidate adds a modality (pure-play track) or a supplier sector (adjacent track) the active names don't cover. It's one ranking input, alongside exposure, evidence strength, market cap and overlap, and never overrides the 9-name cap or the slot rules (§6.7.2).
 - **Market cap** with its date and provider, and the **bucket**: small < $2B (flagged: volatility, liquidity, dilution risk), mid $2–50B, large > $50B (quantum exposure likely diluted). The bucket is one input, never decisive on its own.
 - **Overlap:** QTUM weight from the latest holdings snapshot, and any active watchlist name it duplicates. Ownership links (e.g. a parent holding a stake in a pure-play) need cited evidence.
 
@@ -677,6 +679,26 @@ A strong candidate triggers a **separate Telegram notification** from the Aether
 
 Thresholds live in `config/universe.yaml` (`strong_candidate: {min_independent_sources: 2, min_t1_sources: 1, cooldown_reviews: 3}`, `removal: {min_materiality: 4}`).
 
+### 6.7.3 Full re-evaluation (owner-triggered; M13)
+
+The monthly review protects current names: a removal needs serious, cited bad news (§6.7.2). The owner can instead trigger a **full re-evaluation** (a "Run full re-evaluation" button on the Universe page: a CSRF-protected `universe_full_review` command, rate-limited to once per 7 days). It re-ranks every current name and every candidate together and **proposes a complete set of up to 9 names** besides QTUM. That set can differ from today's ("repopulate").
+
+- **No protection for current names:** a current name competes as a candidate. The §6.7.2 removal triggers aren't required, but every proposed **drop** must still give cited reasons (red flags, weaker evidence, modality or sector redundancy).
+- **Same rules as every review:**
+  - the add eligibility of §6.7 / §6.7.1
+  - the hard exclusions (hyperscalers, semiconductors, private, non-US)
+  - market cap as one input, with its bucket
+  - the 9-name cap
+  - the §6.10 thesis checks: modality and supplier coverage, concentration flags, red flags, winner signals
+  - QTUM overlap
+- **Ranking inputs** (all shown): exposure, evidence strength, red flags, `fills_gap`, market cap and its bucket, overlap. The proposed set is checked in code against the concentration flags (a set that breaks one is marked, with the reason). It need not fill all 9 slots.
+- **Output** (Universe page "Full re-evaluation" tab, review pack section, one Telegram summary under S7):
+  - the proposed set versus the current set: keep, drop and add, each with reasons and evidence
+  - weights by modality and sector before and after, under the selected profile's caps and floors (illustrative, computed in code)
+  - every candidate considered and why it was or wasn't chosen
+- **Proposals only:** the watchlist changes by PR, holdings change only when the owner trades, and nothing is applied automatically.
+- **Cost:** one run uses both review tracks' caps (`UNIVERSE_REVIEW_BUDGET_USD` + `UNIVERSE_ADJACENT_BUDGET_USD`).
+
 ### 6.8 Options analytics (`options/`; snapshot from M5, analytics in M8; research only; no LLM)
 
 **Purpose:** the options market prices expected moves and downside fear that filings and news don't show. Aether reports this for the owner's decisions. **Options are never held, suggested as trades or used in sizing** (§1.4, §6.6.1).
@@ -707,9 +729,51 @@ On the 1st of each month at 10:30 SGT (after the universe review, §6.7), Aether
 - **M8:** catalysts and the options panel per name.
 - **M10:** stances with track record, and the overlay's value-added line (§6.6.1, layer 3).
 - **M12:** the universe review's proposals.
-- **M13:** the adjacent-industry proposals and the name-cap status (N of 9 used).
+- **M13:** the adjacent-industry proposals, the name-cap status (N of 9 used), and the **thesis check** (§6.10): weights by modality and supplier sector, concentration flags, red flags per holding, gaps, and winner signals.
 
 **Delivery:** the dashboard **Review** page (full pack, archive) and a Telegram message (S7; plain text, no link previews, ≤4096 chars, overflow says "more on /review"). Holdings never leave the machine (§1.3), so the Telegram text carries target weights, flags, dates and the number of suggested trades only: no share counts, dollar values or account number. It's sent once per month (dedupe key); a failed publish is retried once the next day.
+
+### 6.10 Thesis checks (`portfolio/thesis.py`; M13; no LLM)
+
+The owner's Quantum Thesis (`STRATEGY.md`) is applied as **deterministic checks on stored data**. Results are shown and fed to the monthly review as computed metrics. They **never place trades or change weights**: the research overlay (§6.6.1) remains the only automatic weight adjustment. All thresholds live in `config/thesis.yaml` (numbers only, `extra=forbid`) and are initial values for owner review.
+
+**1. Categories.**
+- Every `pure_play` has a `modality` (`superconducting`, `trapped_ion`, `neutral_atom`, `photonic`, `annealing`, `spin_silicon`, `other`). Each tag is a fact in `facts.yaml` with a T1 source (the company's own filing).
+- Every `adjacent` name has its `sector` (§6.7.1).
+- QTUM is `etf`.
+- Initial tags (to verify as facts at implementation): IONQ and QNT `trapped_ion`, RGTI `superconducting`, QBTS `annealing` (it also runs a gate-model superconducting programme), INFQ `neutral_atom`; KEYS `test_measurement`, FEIM `sensing_timing`, PANW `pqc_cyber`.
+
+**2. Weights and concentration** (shown on Holdings, Strategies and in the review pack, for actual holdings and for each profile's published targets).
+- Weight by modality and by supplier sector, as % of the sleeve excluding QTUM and as % of the whole sleeve.
+- **Flags:**
+  - a single modality over `max_modality_share` (default **50%**) of the non-QTUM sleeve
+  - a single company over `max_name_share` (default **25%**)
+  - fewer than `min_modalities` (default **3**) modalities held
+
+**3. Red flags per holding** (`pure_play` and `adjacent`; shown on ticker pages, Holdings and in the review pack, each with its evidence):
+
+| Thesis red flag | Deterministic check (defaults) | Data |
+|---|---|---|
+| Repeated share issuance | ≥ 2 dilutive financings (424B primary, ATM drawdowns, 8-K 3.02) in 12 months, **or** fully diluted shares up > 20% YoY | `filings`, `capital_structure`, M9 FD counts |
+| Cash runway under ~2 years | runway < **24 months** (liquidity ÷ trailing quarterly operating burn, as §6.1) | `fundamentals_q` |
+| Revenue flat or missing while spending rises | TTM revenue growth ≤ **+5%** while TTM operating expenses grow > **+25%** YoY. "Missing expectations" is checked only against the company's own guidance where it's recorded as a fact; there's no consensus-estimate source | `fundamentals_q`, `facts` |
+| Large cash-draining acquisitions | cash paid for acquisitions (XBRL `PaymentsToAcquireBusinessesNetOfCashAcquired`, TTM) > **25% of liquidity**, or an 8-K Item 2.01 with stated cash consideration above that share | `fundamentals_q`, `filings` |
+
+- The 24-month runway flag is a **monitor**. The overlay's automatic runway haircut stays at 12 months (§6.6.1) unless the owner aligns them.
+- Red flags are review inputs, not removal triggers. Removal still needs a §6.7.2 trigger.
+
+**4. Winner signals** (thesis rule 4; shown per pure-play, never automatic):
+- an error-correction milestone, i.e. a resolved catalyst of kind `roadmap` tagged `error_correction` (M8 catalysts)
+- recurring revenue: TTM revenue up in **4 consecutive** quarters
+- an end to dilution: no dilutive financing in 12 months and fully diluted shares up < **5%** YoY
+
+When all three are present, the review pack shows "winner signals present". The stance overlay (§6.6.1, layer 2) is still the only path to a higher weight.
+
+**5. ETF hyperscaler check** (thesis rule 5): QTUM's combined weight in `excluded_symbols` (§6.7.1) from the latest holdings snapshot. It's flagged above `max_etf_hyperscaler_weight` (default **10%**). On 2026-10-06 it was about 5.6% (MSFT 1.48, AMZN 1.18, BABA 1.07, GOOGL 1.09, ORCL 0.79).
+
+**6. Gaps:** modalities and supplier sectors with no active name. These feed the monthly review's `fills_gap` flag (§6.7.1).
+
+**7. Stepwise building** (thesis rule 3): the rebalance planner's existing **new-cash-only** mode (§6.6) is the stepwise path. The plan shows QTUM's drawdown from its 52-week high and the count of red flags, so "sector drawdown, thesis intact" is visible. It's information only, never a trade instruction.
 
 ---
 
@@ -717,7 +781,7 @@ On the 1st of each month at 10:30 SGT (after the universe review, §6.7), Aether
 
 Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands of rows per year and a database in the tens of MB.
 
-- `tickers` (symbol TEXT PK, name, type CHECK IN ('etf','pure_play','adjacent','benchmark','context'), sector TEXT NULL CHECK IN (the §6.7.1 sector ids) and required when type = 'adjacent', cik TEXT, active INTEGER 0/1) (`adjacent` and `sector` from M13)
+- `tickers` (symbol TEXT PK, name, type CHECK IN ('etf','pure_play','adjacent','benchmark','context'), modality TEXT NULL CHECK IN ('superconducting','trapped_ion','neutral_atom','photonic','annealing','spin_silicon','other') and required when type = 'pure_play' (M13), sector TEXT NULL CHECK IN (the §6.7.1 sector ids) and required when type = 'adjacent', cik TEXT, active INTEGER 0/1) (`adjacent` and `sector` from M13)
 - `prices_daily` (symbol, d TEXT, o/h/l/c REAL, volume INTEGER, provider TEXT, PK(symbol, d)) `WITHOUT ROWID`
 - `fundamentals_q` (symbol, period_end, concept, value_micros INTEGER, unit, source_accession; PK(symbol, period_end, concept)) `WITHOUT ROWID`
 - `capital_structure` (symbol, as_of, instrument CHECK IN ('convertible','warrant','earnout','atm','shelf'), amount_micros INTEGER NULL, shares_underlying INTEGER NULL, strike_micros INTEGER NULL, source_accession, PK(symbol, as_of, instrument, source_accession))
@@ -896,7 +960,7 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M12** | Monthly universe review | `config/universe.yaml` (criteria), deterministic discovery (QTUM holdings, EDGAR full-text search, current pure-plays), deep research on `RESEARCH_DEEP_MODEL`, deterministic eligibility checks, no-tools proposal with citation validator, `universe_reviews` / `universe_candidates`, Telegram summary + Universe page, proposals also in the monthly review pack (§6.9), monthly job, per-run budget cap. Depends on M3 (Telegram), M6 (research runner, LLM wrapper) and M10 (citation validator). | On recorded fixtures: a candidate below the market-cap or liquidity floor is never proposed as `add`, even when the model says add; a candidate without a T1 business excerpt is never `add`; a synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove`; a recent listing with <60 sessions → `watch`; unknown evidence IDs are rejected; the Telegram text is plain, ≤4096 chars, and sent once per review; a month with no changes sends "No changes proposed"; hitting the budget cap marks the run `failed` and sends nothing; the job is registered for the 1st of the month at 10:00 SGT |
-| **M13** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, **§6.7.2 slot rules** (removal of any of the 9 on a qualifying bad-news trigger; strong-candidate Telegram notification when all slots are full), shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; a `remove` proposal for any of the 9 needs a qualifying trigger (RISK ≥ 4 with T1 or 2×T2, an overlay hard rule, or an accepted AVOID), otherwise it's downgraded to a `watch` note; with all 9 slots full no `add` is proposed; a candidate meeting the strong-candidate thresholds sends exactly one `universe_strong_candidate` Telegram message naming the weakest current name, and isn't re-sent within 3 reviews without new evidence; one that misses a threshold stays `watch` with no notification; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track |
+| **M13** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Thesis checks (§6.10)**: `tickers.modality` with T1-sourced facts, `config/thesis.yaml`, concentration by modality/sector, the four red-flag monitors, winner signals, the QTUM hyperscaler-weight check, gaps feeding `fills_gap`, shown on Holdings, Strategies, ticker pages and in the review pack. **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, **§6.7.2 slot rules** (removal of any of the 9 on a qualifying bad-news trigger; strong-candidate Telegram notification when all slots are full), shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Thesis checks (synthetic fixtures):** a pure-play without a modality fails the loader; a sleeve with one modality over 50% raises the concentration flag; each red flag fires on its synthetic trigger and not just below it (2 vs 1 financing; 23 vs 25 months of runway; +4% revenue with +30% opex vs +6%; acquisitions at 26% vs 24% of liquidity); winner signals need all three; a QTUM snapshot with 11% hyperscaler weight is flagged; no thesis check changes a weight or writes a trade; **full re-evaluation:** a current name with no §6.7.2 trigger can still be proposed as a drop, with cited reasons; the proposed set never exceeds 9 or includes an excluded name; a set breaking a concentration flag is marked; the command is CSRF-protected and refused a second time within 7 days; `STRATEGY.md` text never appears in a prompt (a test greps the prompt builders). **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; a `remove` proposal for any of the 9 needs a qualifying trigger (RISK ≥ 4 with T1 or 2×T2, an overlay hard rule, or an accepted AVOID), otherwise it's downgraded to a `watch` note; with all 9 slots full no `add` is proposed; a candidate meeting the strong-candidate thresholds sends exactly one `universe_strong_candidate` Telegram message naming the weakest current name, and isn't re-sent within 3 reviews without new evidence; one that misses a threshold stays `watch` with no notification; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track; **§6.7.3 full re-evaluation** (owner-triggered `universe_full_review` command, complete proposed set of ≤ 9, no protection for current names, cited reasons for every drop, before/after modality and sector weights); **close-out:** the M13 report's owner checklist must raise cjiefeng/aether#29 (the deferred **full holdings review**, which may repopulate the set) and offer to run the first full re-evaluation; #29 is **resolved** (outcome comment, then closed) only after that review and the owner's decision, never auto-closed by the M13 PR |
 
 ---
 
