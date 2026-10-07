@@ -44,6 +44,10 @@ There's a new **M13** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1
   - **Sectors, in priority order:** PQC & cyber and sensing & timing first; test & measurement, photonics, cryogenics and telecom next; materials and end users last.
   - **Excluded in code:** hyperscalers and cloud platforms, semiconductors (SEC SIC 3674), pure-plays, and names already held.
   - **Code checks:** an add needs quantum evidence from the last 12 months (one T1 or two T2 sources) and a free slot. Market cap, its bucket and overlap with QTUM are computed in code.
+- **Slot rules (§6.7.2, owner, 2026-10-08), both tracks:**
+  - **Removals:** the review may propose removing **any** of the 9 on serious bad news. It needs a cited trigger: a RISK event with materiality ≥4 (T1 or 2×T2), an overlay hard rule, or an accepted AVOID stance. Without one, it's only a "watch" note.
+  - **When all 9 are full:** no adds are proposed. An exceptional candidate sends a separate **strong-candidate (#10) Telegram notification** from the Aether bot for the owner to review. It needs high exposure, 2+ independent evidence items including a T1 source, and every floor met. It names the current name it compares least favourably with.
+  - Aether never drops a name to make room.
   - **Output:** a table plus a shortlist of at most 5.
   - **Budget:** its own cap, `UNIVERSE_ADJACENT_BUDGET_USD` (default $10).
 

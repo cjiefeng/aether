@@ -74,7 +74,7 @@ Holdings are used for drift vs target, the rebalance plan (§6.6) and "you're 2�
 The portfolio features serve one **family-fund sleeve**. These are owner parameters for the engineering, not opinions, and they never go into LLM prompts.
 
 - **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays (and, from M13, the adjacent names).
-- **Concentration:** at most **9 names besides QTUM** (pure-plays + adjacent, amended 2026-10-08). The monthly review respects the cap: an add without a free slot must be paired with a remove, or is proposed as watch. Risk appetite is expressed through the size of the QTUM core (§6.5).
+- **Concentration:** at most **9 names besides QTUM** (pure-plays + adjacent, amended 2026-10-08). The monthly review respects the cap (§6.7.2): it may propose removing **any** of the 9 on serious bad news, and when all 9 slots are full it never proposes an add, but sends a separate **strong-candidate** notification for an exceptional name, so the owner decides. Risk appetite is expressed through the size of the QTUM core (§6.5).
 - **Market:** US-listed stocks only. Listed companies only; no private or pre-IPO holdings.
 - **Base currency:** SGD. Holdings, trades and targets are in USD; the dashboard also shows value and performance in SGD (reporting only, §6.6).
 - **Horizon:** 12 years or more. A **100% drawdown** of the sleeve is accepted, so volatility and drawdown limits are shown, not enforced (§6.5). Risk control focuses on **permanent loss** (going concern, delisting, heavy dilution) through the research overlay (§6.6.1).
@@ -633,7 +633,7 @@ The same monthly run gets a second track that screens the **industries around qu
 2. Not excluded (above).
 3. **Quantum-related evidence in the last 12 months:** at least one product, contract or partnership, backed by **one T1 source or two independent T2 sources** (S1 trust tiers).
 4. Size and liquidity floors as §6.7 criterion 3; history as criterion 4 (else `watch`).
-5. **A free slot** under `max_names_ex_qtum`. Without one, the add must be paired with a proposed `remove`; otherwise it's downgraded to `watch`.
+5. **A free slot** under `max_names_ex_qtum`. Without one, the slot rules in §6.7.2 apply (no add; `watch`, or a strong-candidate notification).
 
 **Computed in code and shown with every candidate:**
 
@@ -653,6 +653,29 @@ The same monthly run gets a second track that screens the **industries around qu
 - a ranked shortlist of **at most 5**, sector priority first, one line of reasoning each.
 
 **Cost:** the adjacent track has its own cap, `UNIVERSE_ADJACENT_BUDGET_USD` (default 10.00), on top of the §6.7 cap. Rough cost: $3–8 per run.
+
+### 6.7.2 Slot rules: removals and the strong-candidate notification (M13; both tracks)
+
+The 9-name cap (§1.4) covers pure-plays and adjacent names together. These rules apply to both review tracks (§6.7, §6.7.1).
+
+**Removals: any of the 9, on serious bad news.** Besides each track's structural removal triggers, the review may propose `remove` for **any** active name when there's serious negative news. It doesn't need a replacement to do so. Code requires at least one of these since the previous review, cited in the proposal:
+
+- a non-quarantined **RISK** event with post-cap materiality **≥ 4**, backed by a **T1 source or two independent T2 sources** (e.g. going concern, a listing-deficiency notice, a restatement, fraud or regulatory action, loss of a principal contract or programme, a failed or abandoned core product, a large dilutive financing);
+- an overlay hard rule (§6.6.1, layer 1) currently zeroing the name;
+- or an AVOID stance (§6.2) accepted by hysteresis, not `held`.
+
+A `remove` without a qualifying trigger is downgraded to a `watch` note ("concerns, no qualifying event"). Removal is still only a proposal: the owner decides, and the watchlist changes by PR.
+
+**Adds when all 9 slots are full: notify, don't propose.** If no slot is free after the month's removals, a candidate that passes every add criterion is shown as `watch`. It's escalated as a **strong candidate** (#10) only if code confirms all of:
+
+- exposure `high` (code-validated: a T1 excerpt shows a quantum-related principal product line);
+- at least **2 independent** qualifying evidence items in the last 12 months, at least **1 of them T1**;
+- size, liquidity and history floors met, and not excluded;
+- not already escalated in the last **3 reviews** unless there's new qualifying evidence since then.
+
+A strong candidate triggers a **separate Telegram notification** from the Aether bot (alert kind `universe_strong_candidate`, S7 rules, deduped per symbol per review). It contains: ticker, what the company does, why it's strong (cited evidence with tiers), market cap and bucket, QTUM overlap, the **current name it compares least favourably with** (the model's comparison, cited), and the reminder "Adding needs a slot: remove a name or raise the cap. Review on /universe." Aether never drops a held name to make room.
+
+Thresholds live in `config/universe.yaml` (`strong_candidate: {min_independent_sources: 2, min_t1_sources: 1, cooldown_reviews: 3}`, `removal: {min_materiality: 4}`).
 
 ### 6.8 Options analytics (`options/`; snapshot from M5, analytics in M8; research only; no LLM)
 
@@ -732,7 +755,7 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
 - `universe_reviews` (id INTEGER PK, as_of, status CHECK IN ('running','done','failed'), payload TEXT JSON, model, prompt_version, cost_micros INTEGER, error NULL) (M12)
 - `universe_candidates` (review_id FK, symbol, track CHECK IN ('pure_play','adjacent'), action CHECK IN ('add','remove','watch','keep','skip'), cik NULL, sector NULL, exposure NULL CHECK IN ('high','med','low'), market_cap_micros NULL, mcap_bucket NULL CHECK IN ('small','mid','large'), overlap TEXT JSON, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12; `track`, `sector`, `exposure`, market-cap fields and `skip` from M13)
-- `alerts` (id INTEGER PK, event_id FK NULL, kind (M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
+- `alerts` (id INTEGER PK, event_id FK NULL, kind (M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`; M13 adds `universe_strong_candidate`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
 - `job_runs` (id INTEGER PK, job, started_at, finished_at, status, rows_written, provider, error)
 
 Notes:
@@ -873,7 +896,7 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M12** | Monthly universe review | `config/universe.yaml` (criteria), deterministic discovery (QTUM holdings, EDGAR full-text search, current pure-plays), deep research on `RESEARCH_DEEP_MODEL`, deterministic eligibility checks, no-tools proposal with citation validator, `universe_reviews` / `universe_candidates`, Telegram summary + Universe page, proposals also in the monthly review pack (§6.9), monthly job, per-run budget cap. Depends on M3 (Telegram), M6 (research runner, LLM wrapper) and M10 (citation validator). | On recorded fixtures: a candidate below the market-cap or liquidity floor is never proposed as `add`, even when the model says add; a candidate without a T1 business excerpt is never `add`; a synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove`; a recent listing with <60 sessions → `watch`; unknown evidence IDs are rejected; the Telegram text is plain, ≤4096 chars, and sent once per review; a month with no changes sends "No changes proposed"; hitting the budget cap marks the run `failed` and sends nothing; the job is registered for the 1st of the month at 10:00 SGT |
-| **M13** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, slot rule, shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; with no free slot an unpaired `add` becomes `watch`; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track |
+| **M13** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, **§6.7.2 slot rules** (removal of any of the 9 on a qualifying bad-news trigger; strong-candidate Telegram notification when all slots are full), shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; a `remove` proposal for any of the 9 needs a qualifying trigger (RISK ≥ 4 with T1 or 2×T2, an overlay hard rule, or an accepted AVOID), otherwise it's downgraded to a `watch` note; with all 9 slots full no `add` is proposed; a candidate meeting the strong-candidate thresholds sends exactly one `universe_strong_candidate` Telegram message naming the weakest current name, and isn't re-sent within 3 reviews without new evidence; one that misses a threshold stays `watch` with no notification; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track |
 
 ---
 
