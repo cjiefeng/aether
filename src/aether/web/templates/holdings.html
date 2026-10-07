@@ -108,7 +108,7 @@
 
 <section class="card">
   <div class="card-head"><h2>Published targets: {{ s.selected_profile|capitalize }}</h2>
-    {% if h.targets %}<span class="muted small">Targets published {{ h.targets.as_of }}{% if h.targets.trigger == "off_cycle" %} (off-cycle{% if h.targets.trigger_event_id %}, event #{{ h.targets.trigger_event_id }}{% endif %}){% endif %}; next publish {{ h.next_publish }}</span>{% endif %}</div>
+    {% if h.targets %}<span class="muted small">Targets published {{ h.targets.as_of }}{% if h.targets.trigger == "off_cycle" %} (off-cycle{% if h.targets.trigger_event_id %}, event #{{ h.targets.trigger_event_id }}{% endif %}){% elif h.targets.trigger == "config_change" %} (republished after a config change){% endif %}; next publish {{ h.next_publish }}</span>{% endif %}</div>
   {% if not h.targets %}
   <p class="muted">No targets published yet. The first publish happens after the first backtest (daily 07:10 SGT), then on the 1st of each month.</p>
   {% else %}

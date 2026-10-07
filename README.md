@@ -119,7 +119,7 @@ Delivery:
 
 **Holdings.** `/holdings` holds the sleeve: QTUM, the pure-plays and USD cash (nothing else), with optional average cost per share. Saving queues an `update_holdings` command (CSRF, rate-limited); the worker applies it and writes `holdings_history`. The dashboard never writes holdings. Holdings never leave the machine and never go into an LLM prompt. A deprecated `config/positions.yaml` is imported once at worker startup if present (the file is docker-ignored, so in Docker this only happens if you mount it).
 
-**Monthly targets (§6.6).** The selected profile's targets are **published on the 1st at 10:30 SGT** (retried on the 2nd if it failed), or when you press **Publish targets now**. Between publishes they don't move. The very first publish happens as soon as a backtest exists.
+**Monthly targets (§6.6).** The selected profile's targets are **published on the 1st at 10:30 SGT** (retried on the 2nd if it failed), or when you press **Publish targets now**. Between publishes they don't move. The very first publish happens as soon as a backtest exists. **Editing `strategies.yaml`** (the `backtest` or `profiles` sections) is the exception: at the next worker start the backtest reruns (even if it ran less than a day ago), and the targets republish straight away, marked "republished after a config change" on `/holdings`. New prices alone never republish.
 
 **Research overlay, layer 1 (§6.6.1).** At each publish, filing hard rules set a pure-play's weight to 0:
 - going concern in its latest 10-K/10-Q;

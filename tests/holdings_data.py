@@ -64,10 +64,15 @@ def seed_prices(
 
 
 def fake_run(
-    engine: Engine, as_of: str, weights: dict[str, dict[str, float] | None], tag: str = ""
+    engine: Engine,
+    as_of: str,
+    weights: dict[str, dict[str, float] | None],
+    tag: str = "",
+    config: str = "{}",
 ) -> int:
     """A strategy run with chosen recommended weights per profile (None = no qualifying
-    strategy). Profiles not given reuse the first given weights."""
+    strategy). Profiles not given reuse the first given weights. `config` is the stored
+    `strategy_runs.config` JSON."""
     first = next(w for w in weights.values() if w is not None)
     summary = {"as_of": as_of, "profiles": {}}
     rows, wrows = [], []
@@ -96,7 +101,7 @@ def fake_run(
             .values(
                 as_of=as_of,
                 input_hash=digest,
-                config="{}",
+                config=config,
                 summary=json.dumps(summary),
                 created_at=utcnow_iso(),
             )

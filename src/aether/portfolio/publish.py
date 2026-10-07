@@ -9,6 +9,9 @@ nothing leaves the machine.
   publishes the targets don't move.
 - `run_rebalance`: the daily plan against the latest published targets (07:10 SGT and after any
   holdings/settings/Tiger update). If nothing was ever published, it publishes first (bootstrap).
+  If the latest backtest ran under a different `strategies.yaml` (backtest/profiles) than the run
+  behind the published targets, it republishes at once (trigger `config_change`, issue #13): the
+  monthly freeze stops market-driven churn, but a config edit is the owner's decision.
 
 Reads happen first; writes are short `write_tx` blocks.
 """
@@ -38,7 +41,7 @@ from aether.db.models import (
 )
 from aether.db.types import utcnow_iso
 from aether.portfolio.holdings import read_holdings, read_settings, universe_symbols
-from aether.portfolio.job import canon
+from aether.portfolio.job import canon, run_config_digest
 from aether.portfolio.overlay import apply_overlay, layer1_findings, stance_adjustments
 from aether.portfolio.rebalance import PlanInputs, build_plan
 from aether.runs import JobResult
@@ -313,15 +316,36 @@ def run_plan(engine: Engine, config: StrategiesConfig) -> JobResult:
     return JobResult(rows_written=1)
 
 
+def published_config_stale(conn: Connection) -> bool:
+    """True when the latest run's backtest config differs from that of the run behind the latest
+    published targets. A data-only change (new prices, same config) is not stale."""
+    published_run = conn.execute(
+        select(profile_targets.c.strategy_run_id)
+        .order_by(profile_targets.c.as_of.desc(), profile_targets.c.published_at.desc())
+        .limit(1)
+    ).scalar()
+    run = latest_run(conn)
+    if published_run is None or run is None or published_run == run.id:
+        return False
+    published = run_config_digest(conn, published_run)
+    return published is not None and published != run_config_digest(conn, run.id)
+
+
 def run_rebalance(
     engine: Engine,
     config: StrategiesConfig,
     today: date | None = None,
     weights: WeightsConfig | None = None,
 ) -> JobResult:
-    """Daily: bootstrap the first publish if none exists, then refresh the plan."""
+    """Daily: bootstrap the first publish if none exists, republish after a config change, then
+    refresh the plan."""
     with engine.connect() as conn:
         any_published = conn.execute(select(profile_targets.c.profile).limit(1)).first()
+        stale = any_published is not None and published_config_stale(conn)
     if any_published is None:
         return publish_targets(engine, config, today=today, trigger="monthly", weights=weights)
+    if stale:
+        return publish_targets(
+            engine, config, today=today, trigger="config_change", weights=weights
+        )
     return run_plan(engine, config)

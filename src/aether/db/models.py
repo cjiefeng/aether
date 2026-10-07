@@ -719,6 +719,9 @@ portfolio_settings = Table(
     sqlite_strict=True,
 )
 
+# `config_change` (issue #13): republished because `strategies.yaml` changed the backtest.
+TARGET_TRIGGERS = ("monthly", "off_cycle", "config_change")
+
 # Published monthly targets per profile (spec §6.6, §6.6.1): base weights (the selected sleeve
 # method) after the research overlay, with each name's adjustment chain. `as_of` is the publish
 # date (SGT); a second publish on the same day replaces the row.
@@ -739,7 +742,7 @@ profile_targets = Table(
     Column("input_hash", LargeBinary, nullable=False),
     PrimaryKeyConstraint("profile", "as_of"),
     _in_ck("profile", PROFILES),
-    _in_ck("trigger", ("monthly", "off_cycle")),
+    _in_ck("trigger", TARGET_TRIGGERS),
     _date_ck("as_of"),
     _date_ck("prices_as_of"),
     _json_ck("base_weights"),

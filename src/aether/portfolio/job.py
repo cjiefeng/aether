@@ -22,7 +22,7 @@ from decimal import Decimal
 from typing import Any
 
 import numpy as np
-from sqlalchemy import Engine, delete, insert, select
+from sqlalchemy import Connection, Engine, delete, func, insert, select
 
 from aether.config import PROFILES, StrategiesConfig
 from aether.db.engine import write_tx
@@ -112,12 +112,36 @@ def canon(obj: Any) -> str:
     return json.dumps(_clean(obj), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+# Only what the backtest reads, so M5's rebalance/publish/overlay settings don't force a new run.
+BACKTEST_CONFIG_KEYS = ("backtest", "profiles")
+
+
+def config_digest(config_json: Mapping[str, Any]) -> bytes:
+    """Digest of the backtest part of a strategies config: the current YAML
+    (`config.model_dump(mode="json")`) and a stored run's `config` column compare directly."""
+    part = {k: config_json.get(k) for k in BACKTEST_CONFIG_KEYS}
+    return hashlib.sha256(canon(part).encode()).digest()
+
+
+def run_config_digest(conn: Connection, run_id: int) -> bytes | None:
+    raw = conn.execute(select(strategy_runs.c.config).where(strategy_runs.c.id == run_id)).scalar()
+    return None if raw is None else config_digest(json.loads(raw))
+
+
+def config_changed(engine: Engine, config: StrategiesConfig) -> bool:
+    """True when the latest run was computed under a different backtest config than `config`
+    (issue #13: a deploy that edits `strategies.yaml` must not keep showing the old run).
+    False with no run yet; the usual catch-up handles that."""
+    with engine.connect() as conn:
+        run_id = conn.execute(select(func.max(strategy_runs.c.id))).scalar()
+        stored = None if run_id is None else run_config_digest(conn, run_id)
+    return stored is not None and stored != config_digest(config.model_dump(mode="json"))
+
+
 def input_hash(inputs: Inputs, config: StrategiesConfig) -> bytes:
     payload = {
         "algo": ALGO_VERSION,
-        # Only what the backtest reads, so M5's rebalance/publish/overlay settings don't force a
-        # new run.
-        "config": config.model_dump(mode="json", include={"backtest", "profiles"}),
+        "config": config.model_dump(mode="json", include=set(BACKTEST_CONFIG_KEYS)),
         "sleeve": list(inputs.sleeve),
         "closes": {s: [[d, repr(c)] for d, c in rows] for s, rows in inputs.closes.items()},
         "dividends": inputs.dividends,
