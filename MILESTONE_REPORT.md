@@ -23,7 +23,7 @@ The 9-name cap, the market-cap-as-one-input rule and the slot rules (§6.7.2) ar
 2. **The runway thresholds differ:** the red-flag monitor uses 24 months, but the overlay's automatic haircut stays at 12 months. Align them if you want the overlay to act at 24.
 3. **"Missing expectations"** is checked only against the company's own recorded guidance; there's no free consensus-estimate source.
 
-**Deferred owner decision:** the **9th slot** is left open on purpose. The owner decides it after M13's first monthly review. It's tracked in cjiefeng/aether#29, and M13's close-out checklist must raise it.
+**Deferred owner decision:** after M13, the owner will review **all holdings**, not just the open 9th slot, and may repopulate the whole set. M13 adds an owner-triggered **full re-evaluation** (§6.7.3) for this. It re-ranks current names and candidates together, with no protection for current names, and proposes a complete set of up to 9. It's tracked in cjiefeng/aether#29, and M13's close-out checklist must raise it.
 
 ## Fixes: config-change rerun (#13) and sleeve performance chart (#24) (2026-10-08)
 
