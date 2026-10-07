@@ -125,6 +125,8 @@ def add_event(
     cls: str = "RISK",
     category: str = "going_concern",
     quarantined: bool = False,
+    trust_tier: str = "T1",
+    injection_suspected: bool = False,
 ) -> int:
     _event_seq[0] += 1
     n = _event_seq[0]
@@ -137,10 +139,11 @@ def add_event(
                 title=f"Synthetic {category} event {n} for {symbol}",
                 url=url,
                 source_domain="example.test",
-                trust_tier="T1",
+                trust_tier=trust_tier,
                 published_at=published_at,
                 origin="manual",
                 quarantined=int(quarantined),
+                injection_suspected=int(injection_suspected),
                 created_at=utcnow_iso(),
             )
             .returning(events.c.id)

@@ -21,6 +21,8 @@ services:
     environment:
       AETHER_DB_PATH: /data/aether.db
       AETHER_LOG_LEVEL: ${AETHER_LOG_LEVEL:-INFO}
+      # M11: one JSON object per line (`docker compose logs worker | jq`); `text` for the old format.
+      AETHER_LOG_FORMAT: ${AETHER_LOG_FORMAT:-json}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SEC_USER_AGENT: ${SEC_USER_AGENT:-}
       MASSIVE_API_KEY: ${MASSIVE_API_KEY:-}
@@ -33,6 +35,8 @@ services:
       # API key is set (owner decision 2026-10-05); RESEARCH_BACKFILL=false turns it off.
       RESEARCH_MODEL: ${RESEARCH_MODEL:-claude-opus-5-5}
       RESEARCH_BACKFILL: ${RESEARCH_BACKFILL:-true}
+      # M11: escalations (alert + verification research + re-synthesis) per SGT day.
+      MAX_ESCALATIONS_PER_DAY: ${MAX_ESCALATIONS_PER_DAY:-5}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_ALLOWED_USER_ID: ${TELEGRAM_ALLOWED_USER_ID:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
@@ -57,12 +61,14 @@ services:
       AETHER_DB_PATH: /data/aether.db
       AETHER_BIND: 0.0.0.0:8082
       AETHER_LOG_LEVEL: ${AETHER_LOG_LEVEL:-INFO}
+      AETHER_LOG_FORMAT: ${AETHER_LOG_FORMAT:-json}
       AETHER_CSRF_SECRET: ${AETHER_CSRF_SECRET:-}
       # S2 (M5): the app refuses to start without both (`make hash-password`).
       AETHER_DASHBOARD_PASSWORD_HASH: ${AETHER_DASHBOARD_PASSWORD_HASH:-}
       AETHER_SESSION_SECRET: ${AETHER_SESSION_SECRET:-}
       # Display only (News page spend card); the worker enforces it.
       DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-5.00}
+      MAX_ESCALATIONS_PER_DAY: ${MAX_ESCALATIONS_PER_DAY:-5}
     ports:
       - "8080:8082"
     # rw at the filesystem level so the WAL reader can map -shm; the SQLite connection itself is mode=ro.

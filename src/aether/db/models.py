@@ -162,6 +162,8 @@ ALERT_KINDS = (
     "review_pack",  # M5
     "llm_budget",  # M6
     "weekly_brief",  # M10
+    "escalation",  # M11
+    "escalation_result",  # M11
 )
 ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
 
@@ -847,7 +849,7 @@ feed_state = Table(
     sqlite_strict=True,
 )
 
-RESEARCH_KINDS = ("sweep", "backfill")
+RESEARCH_KINDS = ("sweep", "backfill", "verify")  # verify: M11 escalation
 RESEARCH_STATUSES = ("running", "submitted", "done", "failed", "budget_refused")
 
 # Claude web-search research runs (the only tool-enabled LLM calls, spec S1). One row per
@@ -1290,5 +1292,41 @@ conclusion_failures = Table(
     CheckConstraint("length(error) <= 1000", name="error_len"),
     _date_ck("as_of"),
     Index(None, "created_at"),
+    sqlite_strict=True,
+)
+
+
+# --------------------------------------------------------------------------- M11: escalation
+# One row per (event, ticker) that met an escalation trigger (spec §5.2.5). Refused rows are final
+# and record which cap refused them; they never run. `detail` holds step outcomes (no model text).
+ESCALATION_TRIGGERS = ("materiality", "t1_risk")
+ESCALATION_STATUSES = ("running", "done", "failed", "refused")
+ESCALATION_REFUSALS = ("daily_cap", "ticker_cooldown")
+
+escalations = Table(
+    "escalations",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("event_id", Integer, ForeignKey("events.id"), nullable=False),
+    Column("symbol", Text, ForeignKey("tickers.symbol"), nullable=False),
+    Column("trigger", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("refusal", Text),
+    Column("research_run_id", Integer, ForeignKey("research_runs.id")),
+    Column("conclusion_id", Integer, ForeignKey("conclusions.id")),
+    Column("detail", Text, nullable=False, server_default="{}"),
+    Column("created_at", Text, nullable=False),
+    Column("finished_at", Text),
+    _in_ck("trigger", ESCALATION_TRIGGERS),
+    _in_ck("status", ESCALATION_STATUSES),
+    CheckConstraint(
+        "refusal IS NULL OR refusal IN (" + ",".join(f"'{r}'" for r in ESCALATION_REFUSALS) + ")",
+        name="refusal",
+    ),
+    CheckConstraint("(status = 'refused') = (refusal IS NOT NULL)", name="refused_has_reason"),
+    _json_ck("detail"),
+    UniqueConstraint("event_id", "symbol"),
+    Index(None, "created_at"),
+    Index(None, "symbol", "created_at"),
     sqlite_strict=True,
 )

@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Ops · Aether{% endblock %}
+{% block content %}
+<h1>Ops</h1>
+
+{% if failing %}
+<p class="banner stale">{{ failing|length }} job{{ "" if failing|length == 1 else "s" }} failing for more than {{ failing_hours }}h (also sent as an alert). Data from {{ "it" if failing|length == 1 else "them" }} is stale.</p>
+{% endif %}
+
+<div class="grid2">
+<section class="card">
+  <h2>LLM spend</h2>
+  <p>Today (SGT): <strong>${{ "%.2f"|format(spend.today) }}</strong> of the ${{ "%.2f"|format(spend.budget) }} soft budget
+    ({{ spend.pct }}%){% if spend.pct >= 100 %} <span class="bad">calls stopped until tomorrow</span>{% elif spend.pct >= 80 %} <span class="warn">over 80%</span>{% endif %}.
+    {{ spend.calls_today }} call{{ "" if spend.calls_today == 1 else "s" }}{% if spend.refused_today %}, {{ spend.refused_today }} refused by the budget guard{% endif %}.</p>
+  {% if by_purpose %}
+  <table class="small">
+    <thead><tr><th>Purpose (last {{ spend_days }} days)</th><th class="num">Calls</th><th class="num">Cost</th></tr></thead>
+    <tbody>
+    {% for p in by_purpose %}
+      <tr><td>{{ p.purpose }}</td><td class="num">{{ p.calls }}</td><td class="num">${{ "%.2f"|format(p.cost) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="muted small">Message Batches (all time): ${{ "%.2f"|format(spend.batch_total) }}, outside the daily soft budget.
+    The hard cap is the monthly spend limit on the Anthropic Console workspace: check it there.</p>
+</section>
+
+<section class="card">
+  <h2>Escalations</h2>
+  <p>Used today (SGT): <strong>{{ esc.used_today }} / {{ esc.max_per_day }}</strong>{% if esc.refused_today %}, {{ esc.refused_today }} refused{% endif %}.
+    {% if esc.used_today >= esc.max_per_day %}<span class="warn">Daily cap reached; further triggers are refused until SGT midnight.</span>{% endif %}</p>
+  <p class="muted small">Trigger: post-cap materiality ≥ {{ esc_params.min_materiality }}, or a T1 RISK event ≥ {{ esc_params.t1_risk_min_materiality }}.
+    Each escalation sends an alert, runs one verification search and re-synthesizes the ticker (hysteresis still applies).
+    At most one per ticker every {{ esc_params.cooldown_hours }}h. Quarantined events never escalate.</p>
+  {% if esc.recent %}
+  <table class="small">
+    <thead><tr><th>When</th><th>Ticker</th><th>Event</th><th>Outcome</th></tr></thead>
+    <tbody>
+    {% for e in esc.recent %}
+      <tr>
+        <td class="nowrap">{{ e.created_at[:16]|replace("T", " ") }}</td>
+        <td><a href="/t/{{ e.symbol }}">{{ e.symbol }}</a></td>
+        <td><a href="/feed?event={{ e.event_id }}">#{{ e.event_id }}</a> {{ e.title or "" }}</td>
+        <td>
+          {% if e.status == "refused" %}<span class="muted">refused: {{ e.refusal|replace("_", " ") }}</span>
+          {% else %}<span class="{{ 'ok' if e.status == 'done' else ('bad' if e.status == 'failed' else '') }}">{{ e.status }}</span>
+            {% if e.verify %}<span class="muted">· verify {{ e.verify }}</span>{% endif %}
+            {% if e.conclusion_id %}<span class="muted">· <a href="/t/{{ e.symbol }}#conclusion">conclusion #{{ e.conclusion_id }}</a></span>{% endif %}
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No escalations yet.</p>
+  {% endif %}
+</section>
+</div>
+
+<section class="card">
+  <h2>Jobs</h2>
+  {% if failing %}
+  <h3>Failing for more than {{ failing_hours }}h</h3>
+  <table class="small">
+    <thead><tr><th>Job</th><th>Failing since</th><th class="num">Failed runs</th><th>Last error</th></tr></thead>
+    <tbody>
+    {% for f in failing %}
+      <tr><td>{{ f.job }}</td><td class="nowrap">{{ f.first_failure[:16]|replace("T", " ") }}</td><td class="num">{{ f.failures }}</td><td>{{ f.last_error or "" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Last run per job</h3>
+  {% endif %}
+  {% if jobs %}
+  <table class="small">
+    <thead><tr><th>Job</th><th>Status</th><th>Started</th><th>Finished</th><th>Provider</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr>
+        <td>{{ j.job }}</td>
+        <td class="{{ 'ok' if j.status == 'ok' else ('bad' if j.status == 'failed' else '') }}">{{ j.status }}</td>
+        <td class="nowrap">{{ j.started_at[:16]|replace("T", " ") }}</td>
+        <td class="nowrap">{{ (j.finished_at or "—")[:16]|replace("T", " ") }}</td>
+        <td>{{ j.provider or "—" }}</td>
+        <td>{{ j.error or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No job runs recorded yet.</p>
+  {% endif %}
+</section>
+
+<div class="grid2">
+<section class="card">
+  <h2>Backups</h2>
+  {% if backups.newest %}
+  <p>Newest: <code>{{ backups.newest }}</code>{% if backups.newest_age_h is not none %}, {{ backups.newest_age_h }}h old{% endif %}{% if backups.newest_age_h is not none and backups.newest_age_h > 26 %} <span class="warn">(the nightly backup is overdue)</span>{% endif %}. {{ backups.count }} kept.</p>
+  {% else %}
+  <p class="muted">No backups yet. The worker writes one nightly at 04:00 SGT (<code>make backup</code> for one now).</p>
+  {% endif %}
+  {% if backups.drill_status %}
+  <p>Last restore drill {{ backups.drill_at[:16]|replace("T", " ") }}: <span class="{{ 'ok' if backups.drill_status == 'ok' else 'bad' }}">{{ backups.drill_status }}</span>{% if backups.drill_note %} <span class="muted">({{ backups.drill_note }})</span>{% endif %}.</p>
+  {% else %}
+  <p class="muted">No restore drill yet. It runs Sundays at 04:30 SGT (<code>make restore-drill</code> for one now).</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Classifier evals</h2>
+  {% if evals %}
+  <table class="small">
+    <thead><tr><th>Prompt version</th><th>Run</th><th class="num">Items</th><th class="num">Agreement</th><th class="num">RISK recall</th><th>Adversarial</th><th>Result</th></tr></thead>
+    <tbody>
+    {% for e in evals %}
+      <tr>
+        <td><code>{{ e.prompt_version }}</code></td>
+        <td class="nowrap">{{ e.created_at[:10] }}</td>
+        <td class="num">{{ e.n_items }}</td>
+        <td class="num">{{ "%.0f%%"|format(e.class_agreement * 100) if e.class_agreement is not none else "—" }}</td>
+        <td class="num">{{ "%.0f%%"|format(e.risk_recall * 100) if e.risk_recall is not none else "—" }}</td>
+        <td>{{ e.adversarial }}</td>
+        <td><span class="{{ 'ok' if e.passed else 'bad' }}">{{ "pass" if e.passed else "fail" }}</span>{% if e.provisional %} <span class="muted">(provisional labels)</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No eval results yet (<code>make eval</code>).</p>
+  {% endif %}
+</section>
+</div>
+
+<p class="muted small">Database details: <a href="/health">Health</a>.</p>
+{% endblock %}

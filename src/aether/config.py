@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     daily_llm_budget_usd: Decimal = Field(
         default=Decimal("5.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
+    # M11: escalations (alert + verification research + re-synthesis) per SGT day (spec §5.2.5).
+    max_escalations_per_day: int = Field(
+        default=5, ge=0, le=50, validation_alias="MAX_ESCALATIONS_PER_DAY"
+    )
+    # M11: `json` (one JSON object per line) or `text`.
+    log_format: Literal["json", "text"] = Field(
+        default="text", validation_alias="AETHER_LOG_FORMAT"
+    )
     sec_user_agent: str | None = Field(default=None, validation_alias="SEC_USER_AGENT")
     # Massive (formerly Polygon) free "Stocks Basic" key: price fallback when yfinance fails.
     massive_api_key: SecretStr | None = Field(default=None, validation_alias="MASSIVE_API_KEY")
@@ -96,7 +104,13 @@ class Settings(BaseSettings):
         return None if v == "" else v
 
     @field_validator(
-        "research_model", "classifier_model", "synth_model", "research_backfill", mode="before"
+        "research_model",
+        "classifier_model",
+        "synth_model",
+        "research_backfill",
+        "max_escalations_per_day",
+        "log_format",
+        mode="before",
     )
     @classmethod
     def _empty_is_default(cls, v: object, info: ValidationInfo) -> object:
@@ -872,8 +886,19 @@ class SynthesisParams(_Strict):
     max_attempts: int = Field(ge=1, le=3)  # an invalid answer is retried once (spec §6.2)
 
 
+class EscalationParams(_Strict):
+    """M11 escalation (spec §5.2.5). The daily cap is `MAX_ESCALATIONS_PER_DAY` (env)."""
+
+    min_materiality: int = Field(ge=1, le=5)  # post-cap materiality of any class
+    t1_risk_min_materiality: int = Field(ge=1, le=5)  # a RISK event on a T1 source
+    cooldown_hours: int = Field(ge=0, le=168)  # at most one escalation per ticker per window
+    verify_max_uses: int = Field(ge=1, le=10)  # web searches in the verification run
+    verify_window_days: int = Field(ge=1, le=30)  # search window: event date - N .. today
+
+
 class LlmConfig(_Strict):
-    """`config/llm.yaml` (M6, M7, M10): prices, research, classifier and synthesis parameters.
+    """`config/llm.yaml` (M6, M7, M10, M11): prices, research, classifier, synthesis and
+    escalation parameters.
     Numbers and identifiers only."""
 
     prices: dict[Annotated[str, Field(pattern=r"^claude-[a-z0-9\-]+$")], ModelPrice]
@@ -884,6 +909,7 @@ class LlmConfig(_Strict):
     research: ResearchParams
     classify: ClassifyParams
     synthesis: SynthesisParams
+    escalation: EscalationParams
 
 
 def load_llm_config(config_dir: Path) -> LlmConfig:

@@ -18,7 +18,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_NAME_RE = re.compile(r"^aether-(\d{8})\.db$")
+NAME_RE = re.compile(r"^aether-(\d{8})\.db$")
 
 
 def backup(
@@ -51,7 +51,7 @@ def prune(dest_dir: Path, *, keep_days: int, today: date) -> list[Path]:
     cutoff = today - timedelta(days=keep_days - 1)
     removed = []
     for p in dest_dir.iterdir():
-        m = _NAME_RE.match(p.name)
+        m = NAME_RE.match(p.name)
         if m and datetime.strptime(m.group(1), "%Y%m%d").date() < cutoff:
             p.unlink()
             removed.append(p)
