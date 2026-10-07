@@ -24,6 +24,43 @@
 ### How to verify
 `make test` (647 passed), `make lint` and `make secrets-scan` are clean. Browser check against a throwaway synthetic DB: chart, markers, tooltips, mode/range switching, light and dark themes, and 375 px width (no horizontal page scroll). No console or CSP errors.
 
+## Roadmap change: M13 adjacent industries (2026-10-08, owner-approved)
+
+There's a new **M13** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1.3, §1.4, §6.3, §6.4, §6.5, **new §6.7.1**, §6.9, §7, §8, §10, §11.
+
+**Context:** the owner asked for a screen of the industries around quantum computing on 2026-10-07. Out of it:
+- **Three adjacent tickers are added** (CIKs verified 2026-10-07 against SEC's `company_tickers_exchange.json`):
+
+  | Ticker | Exchange | Sector | CIK |
+  |---|---|---|---|
+  | KEYS | NYSE | test & measurement | 0001601046 |
+  | FEIM | Nasdaq | sensing & timing | 0000039020 |
+  | PANW | Nasdaq | PQC & cybersecurity | 0001327567 |
+
+  - All three have a 20-session median dollar volume well above the $5M floor (yfinance, 2026-10-07): KEYS ~$355M, FEIM ~$30M, PANW ~$2.05B.
+  - They get the full pipeline and can be held. They stay out of the pure-play theme basket. Reactions and the track record use QQQ as the benchmark.
+- **Name cap (mandate §1.4):** at most **9 names besides QTUM**. It's now 5 pure-plays + 3 adjacent = 8, so 1 slot is free. The owner or the monthly review fills it.
+- **The monthly review gets an adjacent-industry track (§6.7.1):**
+  - **Sectors, in priority order:** PQC & cyber and sensing & timing first; test & measurement, photonics, cryogenics and telecom next; materials and end users last.
+  - **Excluded in code:** hyperscalers and cloud platforms, semiconductors (SEC SIC 3674), pure-plays, and names already held.
+  - **Code checks:** an add needs quantum evidence from the last 12 months (one T1 or two T2 sources) and a free slot. Market cap, its bucket and overlap with QTUM are computed in code.
+  - **Output:** a table plus a shortlist of at most 5.
+  - **Budget:** its own cap, `UNIVERSE_ADJACENT_BUDGET_USD` (default $10).
+
+**Owner decisions to review**
+1. Adjacent names are **in the strategy sleeve by default** (`sleeve_types: [pure_play, adjacent]`). Drop `adjacent` from `sleeve_types` to track them without modelling them.
+   - **Every name gets a slice** (owner, 2026-10-08): each eligible name gets a minimum weight, `min_per_name` (safe 1.5%, medium 3%, aggressive 4% of the portfolio). Only the rest of the sleeve is allocated by the chosen method.
+   - So a steady name like PANW can't crowd the others out, and momentum no longer leaves non-top-3 names at zero.
+   - The research overlay can still zero or halve a name on evidence.
+2. **QQQ as the benchmark** for adjacent names' reactions and track record.
+3. **Sector priorities and seed lists** in `config/universe.yaml`.
+4. **Extra LLM cost:** about +$0.3–0.7 a day for sweeps and conclusions, plus up to $10 a month for the adjacent review track.
+
+**Not investable or outside the mandate (from the screen; listed in the review's info section, never proposed)**
+- **Private:** Entrust, PQShield, Bluefors, Quantum Design, Toptica, Zurich Instruments / Rohde & Schwarz, Quantum Machines, Qblox.
+- **Taken private in Dec 2023:** Toshiba.
+- **Not US exchange-listed:** Thales, Air Liquide, BAE, Hamamatsu, Oxford Instruments, Silex, BT, Singtel.
+
 ## M10: Conclusions, track record, brief (2026-10-06)
 
 Weekly LLM conclusions per ticker and for the theme: Claude Opus 5.5, **no tools**, every citation checked, stance changes gated in code. Also: a track record against two naive baselines, stance multipliers in the research overlay with an earned-trust clamp, the overlay value-added check (layer 3), the weekly brief and the review pack's M10 sections. Phase 2 is complete.

@@ -31,7 +31,7 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 | **1b. Portfolio** | M4–M5 | Backtested model strategies per risk profile, password login, holdings page, monthly targets with the filing-rule overlay, rebalance planner, SGD view, monthly review pack, options snapshots | **$0** |
 | **2. Intelligence** | M6–M10 | News classification, catalysts, options analytics, scorecards, event reactions, conclusions with track record, the stance overlay, weekly brief | Budgeted |
 | **3. Hardening** | M11 | Escalation flow, ops, backups, K8s (optional) | — |
-| **4. Discovery** | M12 | Monthly universe review: proposed pure-plays to add/remove, sent on Telegram | Budgeted (separate cap) |
+| **4. Discovery** | M12–M13 | Monthly universe review: proposed pure-plays (M12) and adjacent-industry names (M13) to add/remove, sent on Telegram; adjacent tickers KEYS, FEIM, PANW tracked and holdable (M13) | Budgeted (separate cap) |
 
 ### 1.2 Watchlist (in `config/watchlist.yaml`; editable without code changes)
 
@@ -45,18 +45,25 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 | **RGTI** | Pure-play | pure_play |
 | **QBTS** | Pure-play (D-Wave) | pure_play |
 | **INFQ** | Pure-play (Infleqtion) | pure_play |
+| **KEYS** | Adjacent: test & measurement (from M13) | adjacent |
+| **FEIM** | Adjacent: sensing & timing (from M13) | adjacent |
+| **PANW** | Adjacent: PQC & cybersecurity (from M13) | adjacent |
 
 **Benchmarks** (prices only, no conclusions): `QQQ` (broad tech/market; also QTUM's benchmark for event reactions) and `SOXX` (semiconductors; used to break down what drives QTUM, §6.1).
 
 **Context tickers** (prices only, no conclusions): `IBM, GOOGL, MSFT, AMZN, NVDA`.
 
-**Monthly universe review (M12, §6.7).** On the 1st of each month Aether proposes pure-plays to add or remove, with sources. It **never edits the watchlist itself**: the owner applies a proposal by editing `watchlist.yaml` through a PR.
+**Adjacent tickers (M13, §6.7.1)** are companies in industries around quantum computing (PQC, cryogenics, photonics, test & measurement, sensing & timing, quantum networking, end users, specialty materials) with documented quantum-related products or contracts. Each has a `sector` identifier from a fixed list. They get the full pure-play pipeline (prices, EDGAR, news, classification, scorecard, conclusions) and are holdable, but they stay **out of the pure-play basket** used by the theme decomposition (§6.1). The initial three (CIKs verified 2026-10-07 against SEC's `company_tickers_exchange.json`): KEYS `0001601046` (NYSE), FEIM `0000039020` (Nasdaq), PANW `0001327567` (Nasdaq).
+
+**Name cap:** at most **9 active `pure_play` + `adjacent` names** (QTUM excluded), `max_names_ex_qtum` in `config/universe.yaml`. The watchlist loader refuses a config over the cap. With 5 pure-plays and 3 adjacent names, 1 slot is free.
+
+**Monthly universe review (M12, §6.7; adjacent track M13, §6.7.1).** On the 1st of each month Aether proposes pure-plays and adjacent-industry names to add or remove, with sources. It **never edits the watchlist itself**: the owner applies a proposal by editing `watchlist.yaml` through a PR.
 
 ### 1.3 Positions (Holdings page, from M5)
 
 The owner enters, edits and saves holdings (ticker, shares, optional cost basis, plus a USD cash balance) on the **Holdings** page (§8). Each save is a CSRF-protected `update_holdings` command that the worker applies; the dashboard never writes holdings itself. The target is the **selected risk profile's** published monthly target: the model strategy (§6.5) after the research overlay (§6.6.1), not a hand-written weight list. If no holdings are saved, all position features are hidden.
 
-**Optional Tiger Brokers sync (read-only, M5).** If Tiger credentials are configured (S8), the owner can switch `holdings_source` from `manual` to `tiger`. A daily job and a "Sync from Tiger" button then replace the share counts of **strategy-universe symbols only** (QTUM + pure-plays) with the account's positions. Positions outside the universe are ignored (only their count is shown), and the sleeve's cash stays a manual entry, because account cash isn't all earmarked for this sleeve. If a sync fails, the last snapshot stays in use with a "stale since …" banner. Manual entry remains the default and the fallback.
+**Optional Tiger Brokers sync (read-only, M5).** If Tiger credentials are configured (S8), the owner can switch `holdings_source` from `manual` to `tiger`. A daily job and a "Sync from Tiger" button then replace the share counts of **strategy-universe symbols only** (QTUM + pure-plays, plus adjacent names from M13) with the account's positions. Positions outside the universe are ignored (only their count is shown), and the sleeve's cash stays a manual entry, because account cash isn't all earmarked for this sleeve. If a sync fails, the last snapshot stays in use with a "stale since …" banner. Manual entry remains the default and the fallback.
 
 `config/positions.yaml` (git-ignored) is **deprecated**: if it exists when M5 first runs, its `holdings` are imported once and the file is then ignored.
 
@@ -66,7 +73,8 @@ Holdings are used for drift vs target, the rebalance plan (§6.6) and "you're 2�
 
 The portfolio features serve one **family-fund sleeve**. These are owner parameters for the engineering, not opinions, and they never go into LLM prompts.
 
-- **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays. Risk appetite is expressed through the size of the QTUM core (§6.5).
+- **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays (and, from M13, the adjacent names).
+- **Concentration:** at most **9 names besides QTUM** (pure-plays + adjacent, amended 2026-10-08). The monthly review respects the cap: an add without a free slot must be paired with a remove, or is proposed as watch. Risk appetite is expressed through the size of the QTUM core (§6.5).
 - **Market:** US-listed stocks only. Listed companies only; no private or pre-IPO holdings.
 - **Base currency:** SGD. Holdings, trades and targets are in USD; the dashboard also shows value and performance in SGD (reporting only, §6.6).
 - **Horizon:** 12 years or more. A **100% drawdown** of the sleeve is accepted, so volatility and drawdown limits are shown, not enforced (§6.5). Risk control focuses on **permanent loss** (going concern, delisting, heavy dilution) through the research overlay (§6.6.1).
@@ -439,7 +447,7 @@ Rules:
 **Method (per event × affected ticker):**
 
 1. **Anchor day `t0`:** the first trading session whose close comes *after* `published_at`. Use US/Eastern time and the NYSE calendar (`exchange_calendars` or `pandas_market_calendars`).
-2. **Benchmark:** QTUM for the pure-plays; QQQ for QTUM's own events.
+2. **Benchmark:** QTUM for the pure-plays; QQQ for QTUM's own events and for adjacent names (M13), whose prices aren't driven by the quantum theme.
 3. **Expected return:** market model with β from 120 sessions ending at t0−1; β=1 fallback if there are fewer than 60 sessions. Store β and the residual σ.
 4. **Abnormal return:** `AR_t = r_stock,t − β·r_bench,t`. Compute CAR for **[t0, t0+1]**, **[t0, t0+5]** and **[t0, t0+20]**. A window stays `pending` until it's filled.
 5. **Standardize:** `z = CAR / (σ_resid · √n)`.
@@ -463,7 +471,7 @@ Rules:
 
 The system must show whether its own calls have been any good.
 
-- For every stored conclusion, compute the ticker's **forward excess return vs QTUM** at 1, 3, 6, 12, 24 and 36 months (the longer horizons match the 12-year+ mandate, §1.4) (vs QQQ for QTUM's own stance), filling each in as it matures.
+- For every stored conclusion, compute the ticker's **forward excess return vs QTUM** at 1, 3, 6, 12, 24 and 36 months (the longer horizons match the 12-year+ mandate, §1.4) (vs QQQ for QTUM's own stance and for adjacent names, M13), filling each in as it matures.
 - **Hit definitions** (configurable):
   - ACCUMULATE: excess return > 0.
   - AVOID/TRIM: excess return < 0.
@@ -481,7 +489,7 @@ The system must show whether its own calls have been any good.
 
 **Prices.** Backtests use **total-return** prices (split- *and* dividend-adjusted). M4 adds a `dividends` table (ex-date, cash amount, provider) filled from the price provider, and computes the total-return series in code, so yfinance and Massive can't mix adjustment conventions. `prices_daily` stays split-adjusted for everything else. Verify Massive's dividends endpoint and free-tier limits at implementation time.
 
-**Universe.** QTUM plus the five pure-plays. There is **no cash or T-bill sleeve**: a safer profile means **more QTUM**. QQQ and SOXX are benchmarks only (alpha, beta, capture). The risk-free rate is 0 for Sharpe/Sortino/alpha, and the UI says so. A name joins once it has ≥60 sessions.
+**Universe.** QTUM plus the five pure-plays; from M13 the sleeve also includes the active `adjacent` names, under the same per-name caps (`sleeve_types: [pure_play, adjacent]` in `config/strategies.yaml`, so the owner can drop adjacent names from the model strategies without untracking them). There is **no cash or T-bill sleeve**: a safer profile means **more QTUM**. QQQ and SOXX are benchmarks only (alpha, beta, capture). The risk-free rate is 0 for Sharpe/Sortino/alpha, and the UI says so. A name joins once it has ≥60 sessions.
 
 **Strategy families** (each = a QTUM core weight + a pure-play sleeve; parameters in `config/strategies.yaml`):
 
@@ -505,11 +513,14 @@ The system must show whether its own calls have been any good.
 | QTUM weight (fixed) | 75% | 45% | 15% |
 | Pure-play sleeve | 25% | 55% | 85% |
 | Max weight per pure-play | 10% | 20% | 35% |
+| **Min weight per name (floor, M13)** | 1.5% | 3% | 4% |
 | Volatility limit | none (shown) | none (shown) | none (shown) |
 | Max-drawdown limit | none (shown) | none (shown) | none (shown) |
 | Ranking metric | lowest CVaR95 | highest Sortino | highest Sortino |
 
 Sleeve weight the per-name caps can't place goes to QTUM (M4 decision 2). Each profile's sleeve fits within its caps whenever at least three pure-plays are eligible.
+
+**Every name gets a slice (minimum weight per name, M13; owner decision 2026-10-08).** Every eligible sleeve name (pure-play or adjacent, ≥ `min_sessions` of history) is given at least the profile's floor, `min_per_name` in `config/strategies.yaml`. The family's method (equal, inverse-vol, min-variance, momentum) then allocates only the **rest** of the sleeve, and each name's total stays within `max_per_name`. So momentum still favours its top 3, and min-variance or inverse-vol can still tilt toward steadier names, but no name is left at zero. If the floors don't fit (eligible names × floor > sleeve), the floor shrinks to `sleeve ÷ eligible names` and the page says so. With the 9-name cap the floors use at most 13.5% / 27% / 36% of the portfolio (safe / medium / aggressive). The floor applies to the **base** model strategy only: the research overlay (§6.6.1) still zeroes or halves a name on evidence (going concern, delisting, heavy dilution, short runway, stance), and the floor never overrides it.
 
 **Selection (deterministic).** Drop candidates that break the profile's limits; rank the rest by the profile's metric; tie-break on max drawdown, then strategy ID. If nothing qualifies, the profile shows "no qualifying strategy" with the reason (never a silent fallback). Each run stores an **input hash** (prices + config); the same hash must give byte-identical output.
 
@@ -601,6 +612,48 @@ The owner may set ACCUMULATE to × 1.0 so research can only reduce positions.
 
 **Cost control:** each run has its own cap, `UNIVERSE_REVIEW_BUDGET_USD` (default 10.00), separate from the daily soft budget so the review can't starve classification. If the cap is hit, the run stops, is marked `failed` with a reason, and sends nothing partial. Rough cost: $3–8 per run.
 
+### 6.7.1 Adjacent-industry track (M13)
+
+The same monthly run gets a second track that screens the **industries around quantum computing**. It reuses the §6.7 pipeline (discovery → deep research → deterministic checks → no-tools proposal with citation validator → delivery) with these differences.
+
+**Scope (`config/universe.yaml`, identifiers and numbers only):**
+
+- **Sectors** (fixed identifiers, with a `priority` number; near-term revenue first): `pqc_cyber` (1), `sensing_timing` (1), `test_measurement` (2), `photonics_lasers` (2), `cryogenics_gases` (2), `telecom_networking` (2), `specialty_materials` (3), `end_user` (3, long-horizon, diffuse exposure).
+- **Seed candidates per sector** (tickers only): the US-listed names from the owner's 2026-10-07 screen, e.g. NET, PANW, FTNT, ZS (pqc_cyber); FEIM, LMT, NOC, RTX, HON, HONA (sensing_timing); KEYS, EMR (test_measurement); COHR, LITE, IPGP, MKSI, LASR (photonics_lasers); LIN, BKR (cryogenics_gases); SKM (telecom_networking); JPM, HSBC (end_user). Seeds are inputs to discovery, not opinions; research and the rules decide.
+- **Hard exclusions, checked in code before any research:**
+  - hyperscalers and cloud platforms: `excluded_symbols` (initially AMZN, MSFT, GOOGL, ORCL, BABA), never proposed even if relevant;
+  - semiconductors: SEC SIC code 3674 from EDGAR `submissions` (they belong to QTUM/SOXX exposure, outside this track);
+  - pure-play quantum companies: handled by the §6.7 track;
+  - names already active on the watchlist: never `add` (shown as `keep` or flagged as overlap).
+- **Private or non-US companies** surfaced by research are listed in an info section as "not investable" (private) or "outside mandate" (not US exchange-listed), never as add/watch.
+
+**Eligibility for `add` (all must hold):**
+
+1. US exchange listing with a verified CIK (as §6.7 criterion 1).
+2. Not excluded (above).
+3. **Quantum-related evidence in the last 12 months:** at least one product, contract or partnership, backed by **one T1 source or two independent T2 sources** (S1 trust tiers).
+4. Size and liquidity floors as §6.7 criterion 3; history as criterion 4 (else `watch`).
+5. **A free slot** under `max_names_ex_qtum`. Without one, the add must be paired with a proposed `remove`; otherwise it's downgraded to `watch`.
+
+**Computed in code and shown with every candidate:**
+
+- **Market cap** with its date and provider, and the **bucket**: small < $2B (flagged: volatility, liquidity, dilution risk), mid $2–50B, large > $50B (quantum exposure likely diluted). The bucket is one input, never decisive on its own.
+- **Overlap:** QTUM weight from the latest holdings snapshot, and any active watchlist name it duplicates. Ownership links (e.g. a parent holding a stake in a pure-play) need cited evidence.
+
+**Proposed by the model, bounded by code:**
+
+- **Quantum exposure** `high` / `med` / `low`. `high` requires a T1 excerpt showing quantum-related products (e.g. atomic clocks, PQC products) are a principal product line; otherwise code caps it at `med`.
+- **Action** `add` / `watch` / `skip` (plus `remove` for current adjacent names), a ≤300-char description of what the company does, and reasons citing evidence IDs. One line must say how market cap influenced the ranking, if it did.
+
+**Removal triggers** for current adjacent names: delisted or acquired; no qualifying quantum evidence for 12 months; criterion 4 fails in 3 consecutive reviews; or reclassified into an excluded category.
+
+**Output** (Universe page tab "Adjacent industries" and a separate Telegram section, same S7 rules):
+
+- a table: company | ticker | sector | market cap (date, source, bucket) | exposure | evidence (linked, with trust tier) | overlap | action;
+- a ranked shortlist of **at most 5**, sector priority first, one line of reasoning each.
+
+**Cost:** the adjacent track has its own cap, `UNIVERSE_ADJACENT_BUDGET_USD` (default 10.00), on top of the §6.7 cap. Rough cost: $3–8 per run.
+
 ### 6.8 Options analytics (`options/`; snapshot from M5, analytics in M8; research only; no LLM)
 
 **Purpose:** the options market prices expected moves and downside fear that filings and news don't show. Aether reports this for the owner's decisions. **Options are never held, suggested as trades or used in sizing** (§1.4, §6.6.1).
@@ -631,6 +684,7 @@ On the 1st of each month at 10:30 SGT (after the universe review, §6.7), Aether
 - **M8:** catalysts and the options panel per name.
 - **M10:** stances with track record, and the overlay's value-added line (§6.6.1, layer 3).
 - **M12:** the universe review's proposals.
+- **M13:** the adjacent-industry proposals and the name-cap status (N of 9 used).
 
 **Delivery:** the dashboard **Review** page (full pack, archive) and a Telegram message (S7; plain text, no link previews, ≤4096 chars, overflow says "more on /review"). Holdings never leave the machine (§1.3), so the Telegram text carries target weights, flags, dates and the number of suggested trades only: no share counts, dollar values or account number. It's sent once per month (dedupe key); a failed publish is retried once the next day.
 
@@ -640,7 +694,7 @@ On the 1st of each month at 10:30 SGT (after the universe review, §6.7), Aether
 
 Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands of rows per year and a database in the tens of MB.
 
-- `tickers` (symbol TEXT PK, name, type CHECK IN ('etf','pure_play','benchmark','context'), cik TEXT, active INTEGER 0/1)
+- `tickers` (symbol TEXT PK, name, type CHECK IN ('etf','pure_play','adjacent','benchmark','context'), sector TEXT NULL CHECK IN (the §6.7.1 sector ids) and required when type = 'adjacent', cik TEXT, active INTEGER 0/1) (`adjacent` and `sector` from M13)
 - `prices_daily` (symbol, d TEXT, o/h/l/c REAL, volume INTEGER, provider TEXT, PK(symbol, d)) `WITHOUT ROWID`
 - `fundamentals_q` (symbol, period_end, concept, value_micros INTEGER, unit, source_accession; PK(symbol, period_end, concept)) `WITHOUT ROWID`
 - `capital_structure` (symbol, as_of, instrument CHECK IN ('convertible','warrant','earnout','atm','shelf'), amount_micros INTEGER NULL, shares_underlying INTEGER NULL, strike_micros INTEGER NULL, source_accession, PK(symbol, as_of, instrument, source_accession))
@@ -677,7 +731,7 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `commands` (id INTEGER PK, kind, args TEXT JSON, requested_at, requested_by, status, processed_at): writes requested by the dashboard, executed by the worker
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
 - `universe_reviews` (id INTEGER PK, as_of, status CHECK IN ('running','done','failed'), payload TEXT JSON, model, prompt_version, cost_micros INTEGER, error NULL) (M12)
-- `universe_candidates` (review_id FK, symbol, action CHECK IN ('add','remove','watch','keep'), cik NULL, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12)
+- `universe_candidates` (review_id FK, symbol, track CHECK IN ('pure_play','adjacent'), action CHECK IN ('add','remove','watch','keep','skip'), cik NULL, sector NULL, exposure NULL CHECK IN ('high','med','low'), market_cap_micros NULL, mcap_bucket NULL CHECK IN ('small','mid','large'), overlap TEXT JSON, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12; `track`, `sector`, `exposure`, market-cap fields and `skip` from M13)
 - `alerts` (id INTEGER PK, event_id FK NULL, kind (M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
 - `job_runs` (id INTEGER PK, job, started_at, finished_at, status, rows_written, provider, error)
 
@@ -716,7 +770,7 @@ Notes:
 9. **Holdings (M5):** an editable holdings + cash table (saved via the `update_holdings` command; in `tiger` mode the universe rows are read-only, with "Sync from Tiger", the last sync time and the masked account number), the profile picker, current vs target weights, the published targets with each overlay adjustment chain (§6.6.1), the rebalance plan (§6.6) with the publish dates, **Publish targets now**, value in USD and SGD, and the backtest banner.
 10. **Login (M5):** the password form (§2.2 S2).
 11. **Review (M5):** the monthly review packs (§6.9), latest first, with each month's targets, adjustment chains and plan.
-12. **Universe (M12):** the latest review and history: each proposed add/remove/watch with description, criteria pass/fail, reasons and cited sources (with trust tiers), plus run cost.
+12. **Universe (M12; "Adjacent industries" tab M13):** the latest review and history: each proposed add/remove/watch with description, criteria pass/fail, reasons and cited sources (with trust tiers), plus run cost.
 13. **Ops:**
    - last run per job and the provider used
    - **jobs failing for more than 24h** (also sent as an alert)
@@ -771,7 +825,7 @@ All jobs run in the single worker's APScheduler with `max_instances=1`. Network 
 - `CLASSIFIER_MODEL` (cheap tier) and `SYNTH_MODEL` (strongest tier) come from env. Look up current IDs in the Anthropic docs.
 - Tools: only `research/` gets the web-search tool, with capped `max_uses`, `allowed_domains` from `sources.yaml`, and a daily run cap. Classification and synthesis: **no tools**.
 - Escalations: `MAX_ESCALATIONS_PER_DAY` and a per-ticker cooldown (§5.2).
-- Monthly universe review (§6.7): `RESEARCH_DEEP_MODEL` (strongest Opus tier) for both the research and the no-tools proposal call, capped per run by `UNIVERSE_REVIEW_BUDGET_USD`.
+- Monthly universe review (§6.7): `RESEARCH_DEEP_MODEL` (strongest Opus tier) for both the research and the no-tools proposal call, capped per run by `UNIVERSE_REVIEW_BUDGET_USD` (plus `UNIVERSE_ADJACENT_BUDGET_USD` for the M13 track). Adjacent names (M13) add their own research sweeps and weekly conclusions, roughly +$0.3–0.7/day at the §10 assumptions.
 - Backfill uses the **Message Batches API**.
 - Options analytics may enter synthesis prompts as computed metrics (§6.8). The mandate (§1.4) never does.
 - Holdings (manual or Tiger-synced, and the deprecated `positions.yaml`), the broker account number, secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
@@ -819,6 +873,7 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M12** | Monthly universe review | `config/universe.yaml` (criteria), deterministic discovery (QTUM holdings, EDGAR full-text search, current pure-plays), deep research on `RESEARCH_DEEP_MODEL`, deterministic eligibility checks, no-tools proposal with citation validator, `universe_reviews` / `universe_candidates`, Telegram summary + Universe page, proposals also in the monthly review pack (§6.9), monthly job, per-run budget cap. Depends on M3 (Telegram), M6 (research runner, LLM wrapper) and M10 (citation validator). | On recorded fixtures: a candidate below the market-cap or liquidity floor is never proposed as `add`, even when the model says add; a candidate without a T1 business excerpt is never `add`; a synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove`; a recent listing with <60 sessions → `watch`; unknown evidence IDs are rejected; the Telegram text is plain, ≤4096 chars, and sent once per review; a month with no changes sends "No changes proposed"; hitting the budget cap marks the run `failed` and sends nothing; the job is registered for the 1st of the month at 10:00 SGT |
+| **M13** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, slot rule, shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; with no free slot an unpaired `add` becomes `watch`; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track |
 
 ---
 
