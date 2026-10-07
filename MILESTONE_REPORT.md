@@ -23,6 +23,8 @@ The 9-name cap, the market-cap-as-one-input rule and the slot rules (§6.7.2) ar
 2. **The runway thresholds differ:** the red-flag monitor uses 24 months, but the overlay's automatic haircut stays at 12 months. Align them if you want the overlay to act at 24.
 3. **"Missing expectations"** is checked only against the company's own recorded guidance; there's no free consensus-estimate source.
 
+**Deferred owner decision:** the **9th slot** is left open on purpose. The owner decides it after M13's first monthly review. It's tracked in cjiefeng/aether#29, and M13's close-out checklist must raise it.
+
 ## Fixes: config-change rerun (#13) and sleeve performance chart (#24) (2026-10-08)
 
 ### Built
