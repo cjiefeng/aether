@@ -15,7 +15,7 @@ There's a new **M13** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1
 
   - All three have a 20-session median dollar volume well above the $5M floor (yfinance, 2026-10-07): KEYS ~$355M, FEIM ~$30M, PANW ~$2.05B.
   - They get the full pipeline and can be held. They stay out of the pure-play theme basket. Reactions and the track record use QQQ as the benchmark.
-- **Name cap (mandate §1.4):** at most **9 names besides QTUM**. It's now 5 pure-plays + 3 adjacent = 8, so 1 slot is free.
+- **Name cap (mandate §1.4):** at most **9 names besides QTUM**. It's now 5 pure-plays + 3 adjacent = 8, so 1 slot is free. The owner or the monthly review fills it.
 - **The monthly review gets an adjacent-industry track (§6.7.1):**
   - **Sectors, in priority order:** PQC & cyber and sensing & timing first; test & measurement, photonics, cryogenics and telecom next; materials and end users last.
   - **Excluded in code:** hyperscalers and cloud platforms, semiconductors (SEC SIC 3674), pure-plays, and names already held.
@@ -24,7 +24,10 @@ There's a new **M13** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1
   - **Budget:** its own cap, `UNIVERSE_ADJACENT_BUDGET_USD` (default $10).
 
 **Owner decisions to review**
-1. Adjacent names are **in the strategy sleeve by default** (`sleeve_types: [pure_play, adjacent]`). Large, steady names like PANW may take a big share under the minimum-variance and inverse-volatility methods. Drop `adjacent` from `sleeve_types` to track them without modelling them.
+1. Adjacent names are **in the strategy sleeve by default** (`sleeve_types: [pure_play, adjacent]`). Drop `adjacent` from `sleeve_types` to track them without modelling them.
+   - **Every name gets a slice** (owner, 2026-10-08): each eligible name gets a minimum weight, `min_per_name` (safe 1.5%, medium 3%, aggressive 4% of the portfolio). Only the rest of the sleeve is allocated by the chosen method.
+   - So a steady name like PANW can't crowd the others out, and momentum no longer leaves non-top-3 names at zero.
+   - The research overlay can still zero or halve a name on evidence.
 2. **QQQ as the benchmark** for adjacent names' reactions and track record.
 3. **Sector priorities and seed lists** in `config/universe.yaml`.
 4. **Extra LLM cost:** about +$0.3–0.7 a day for sweeps and conclusions, plus up to $10 a month for the adjacent review track.
