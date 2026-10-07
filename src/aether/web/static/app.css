@@ -196,6 +196,10 @@ input.num { width: 9rem; text-align: right; font-variant-numeric: tabular-nums; 
 .chart { width: 100%; height: 360px; margin-top: var(--s2); }
 .chart.tall { height: 460px; }
 @media (max-width: 767px) { .chart { height: 280px; } .chart.tall { height: 360px; } }
+/* Holdings performance (issue #24). */
+.perf-mode { margin-top: var(--s2); }
+#perf-chart-stats { margin-top: var(--s3); }
+.chart-empty button { margin-left: var(--s2); }
 .chart-empty { display: flex; align-items: center; justify-content: center; color: var(--muted);
                border: 1px dashed var(--line); border-radius: var(--r-md); }
 

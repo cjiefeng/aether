@@ -318,12 +318,192 @@
       .catch(function (err) { message(el, "Chart unavailable (" + err.message + ")."); });
   }
 
+  // ------------------------------------------------------------------ holdings performance (#24)
+
+  function pct(v, signed) {
+    if (v == null) return "—";
+    var x = v * 100;
+    return (signed && x > 0 ? "+" : "") + x.toFixed(1) + "%";
+  }
+
+  function pp(v) {
+    return v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(1) + " pp";
+  }
+
+  function cell(tag, text) {
+    var c = document.createElement(tag);
+    c.textContent = text;
+    return c;
+  }
+
+  function renderPerfStats(table, stats) {
+    table.replaceChildren();
+    if (!stats) { table.hidden = true; return; }
+    var lines = stats.lines;
+    var head = document.createElement("tr");
+    head.appendChild(cell("th", ""));
+    lines.forEach(function (l) { head.appendChild(cell("th", l.name)); });
+    var thead = document.createElement("thead");
+    thead.appendChild(head);
+    var tbody = document.createElement("tbody");
+    var rows = [
+      ["Total return", function (l) { return pct(l.total_return, true); }],
+    ];
+    if (stats.annualized) {
+      rows.push(["Annualized return", function (l) { return pct(l.annualized_return, true); }]);
+    }
+    rows.push(
+      ["Volatility (annualized)", function (l) { return pct(l.volatility); }],
+      ["Max drawdown", function (l) { return l.max_drawdown == null ? "—" : pct(-l.max_drawdown); }],
+      ["Beta vs QQQ", function (l) { return l.beta_qqq == null ? "—" : l.beta_qqq.toFixed(2); }]
+    );
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      tr.appendChild(cell("td", r[0]));
+      lines.forEach(function (l) { tr.appendChild(cell("td", r[1](l))); });
+      tbody.appendChild(tr);
+    });
+    var ex = document.createElement("tr");
+    ex.appendChild(cell("td", "Sleeve excess return"));
+    lines.forEach(function (l, i) {
+      ex.appendChild(cell("td", i === 0 ? "—" : pp(stats.excess_pp[l.name])));
+    });
+    tbody.appendChild(ex);
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    table.hidden = false;
+  }
+
+  function setupPerformance(el) {
+    var state = { range: el.dataset.range || "1y", mode: el.dataset.mode || "actual", chart: null, seq: 0 };
+    var rangeGroup = document.querySelector('.perf-range[data-for="' + el.id + '"]');
+    var modeGroup = document.querySelector('.perf-mode[data-for="' + el.id + '"]');
+    var stale = document.getElementById(el.id + "-stale");
+    var note = document.getElementById(el.id + "-note");
+    var table = document.getElementById(el.id + "-stats");
+
+    function press(group, attr, value) {
+      if (!group) return;
+      group.querySelectorAll("button").forEach(function (b) {
+        var on = b.dataset[attr] === value;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+
+    function empty(text, offerHypothetical) {
+      if (state.chart) { state.chart.dispose(); charts.splice(charts.indexOf(state.chart), 1); state.chart = null; }
+      message(el, text);
+      if (offerHypothetical) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "range";
+        b.textContent = "Show current holdings (hypothetical)";
+        b.addEventListener("click", function () { select("mode", "current"); });
+        el.appendChild(b);
+      }
+      renderPerfStats(table, null);
+    }
+
+    function render() {
+      var url = el.dataset.src + "?range=" + encodeURIComponent(state.range) +
+        "&mode=" + encodeURIComponent(state.mode);
+      var seq = ++state.seq;
+      getJSON(url).then(function (body) {
+        if (seq !== state.seq) return;  // a newer range/mode was picked meanwhile
+        if (stale) {
+          stale.hidden = !body.stale_since;
+          stale.textContent = body.stale_since
+            ? "Prices stale since " + body.stale_since + ": later sessions are left out of every line."
+            : "";
+        }
+        var notes = [];
+        if (body.mode === "current") {
+          notes.push("Hypothetical: today's holdings and cash held unchanged over the whole range.");
+        } else if (body.tracking_started && body.start === body.tracking_started) {
+          notes.push("Tracking started " + body.tracking_started + ".");
+        }
+        if (note) { note.textContent = notes.join(" "); note.hidden = notes.length === 0; }
+        if (!body.enough) {
+          if (body.mode === "actual") empty("Not enough history yet.", true);
+          else empty("No price data for this range yet.", false);
+          return;
+        }
+        el.classList.remove("chart-empty");
+        if (!state.chart) { el.replaceChildren(); state.chart = init(el); }
+        var t = theme();
+        var opt = baseOption(t);
+        // The four-item legend wraps to two rows at phone width.
+        opt.grid = { left: 48, right: 16, top: el.clientWidth < 520 ? 60 : 36, bottom: 32 };
+        opt.xAxis = Object.assign({ type: "time" }, axisStyle(t), { splitLine: { show: false } });
+        opt.yAxis = Object.assign({
+          type: "log",
+          logBase: 10,
+          min: function (v) { return Math.floor(v.min * 0.95); },
+          max: function (v) { return Math.ceil(v.max * 1.05); },
+        }, axisStyle(t));
+        var sleeve = body.series[0];
+        var levelOn = {};
+        sleeve.data.forEach(function (p) { levelOn[p[0]] = p[1]; });
+        opt.series = body.series.map(function (s) {
+          return { name: s.name, type: "line", showSymbol: false, data: s.data };
+        });
+        var marks = (body.markers || []).filter(function (m) { return levelOn[m.date] != null; });
+        if (marks.length) {
+          opt.series.push({
+            name: "Holdings changed", type: "scatter", symbol: "diamond", symbolSize: 9, z: 5,
+            itemStyle: { color: t.fg },
+            data: marks.map(function (m) { return { value: [m.date, levelOn[m.date]], src: m.source }; }),
+          });
+        }
+        opt.tooltip.formatter = function (params) {
+          if (!params.length) return "";
+          var out = [params[0].axisValueLabel];
+          params.forEach(function (p) {
+            if (p.data && p.data.src) {
+              out.push("Holdings changed (" + p.data.src + ")");
+            } else {
+              var v = p.value[1];
+              out.push(p.seriesName + ": " + v.toFixed(1) + " (" + pct(v / 100 - 1, true) + ")");
+            }
+          });
+          return out.join("\n");
+        };
+        state.chart.setOption(opt, true);
+        renderPerfStats(table, body.stats);
+      }).catch(function (err) {
+        if (seq === state.seq) empty("Chart unavailable (" + err.message + ").", false);
+      });
+    }
+
+    function select(kind, value) {
+      if (kind === "range") { state.range = value; press(rangeGroup, "range", value); }
+      else { state.mode = value; press(modeGroup, "mode", value); }
+      render();
+    }
+
+    if (rangeGroup) {
+      rangeGroup.addEventListener("click", function (ev) {
+        var btn = ev.target.closest("button[data-range]");
+        if (btn) select("range", btn.dataset.range);
+      });
+    }
+    if (modeGroup) {
+      modeGroup.addEventListener("click", function (ev) {
+        var btn = ev.target.closest("button[data-mode]");
+        if (btn) select("mode", btn.dataset.mode);
+      });
+    }
+    render();
+  }
+
   function start() {
     if (typeof echarts === "undefined") return;
     document.querySelectorAll('[data-chart="overview"]').forEach(setupOverview);
     document.querySelectorAll('[data-chart="ticker"]').forEach(setupTicker);
     document.querySelectorAll('[data-chart="dilution"]').forEach(setupDilution);
     document.querySelectorAll('[data-chart="catalysts"]').forEach(setupCatalysts);
+    document.querySelectorAll('[data-chart="performance"]').forEach(setupPerformance);
     document.querySelectorAll('[data-chart="strategy-equity"]').forEach(function (el) {
       setupStrategy(el, "equity");
     });
