@@ -14,7 +14,7 @@ from aether.alerts import view as alerts_view
 from aether.catalysts import view as catalysts_view
 from aether.catalysts.mark import CatalystMark
 from aether.classify.prompt import prompt_version
-from aether.config import CATEGORY_CLASS, PROFILES, load_rubric, load_weights
+from aether.config import CATEGORY_CLASS, PROFILES, load_rubric, load_strategies, load_weights
 from aether.db import health
 from aether.db.commands import (
     active_command,
@@ -24,7 +24,7 @@ from aether.db.commands import (
     rate_limit_resets_at,
 )
 from aether.options.view import options_panel, options_stale
-from aether.portfolio import holdings_view
+from aether.portfolio import holdings_view, performance
 from aether.portfolio import view as strategies_view
 from aether.portfolio.holdings import (
     HoldingsUpdate,
@@ -356,11 +356,14 @@ def strategies_page(request: Request) -> HTMLResponse:
 @router.get("/holdings", response_class=HTMLResponse)
 def holdings_page(request: Request) -> HTMLResponse:
     engine = request.app.state.ro_engine
+    h = holdings_view.holdings_page(engine, _today())
     return _render(
         request,
         "holdings.html",
         {
-            "h": holdings_view.holdings_page(engine, _today()),
+            "h": h,
+            "perf_available": not h.holdings.empty or performance.has_history(engine),
+            "perf_ranges": [*market.RANGES, performance.SINCE],
             "overlay_value": synth_view.overlay_line(engine),
             "profiles": PROFILES,
             "banner": strategies_view.BANNER,
@@ -500,6 +503,19 @@ def api_strategy_curves(request: Request, profile: str = "safe") -> JSONResponse
     if profile not in PROFILES:
         raise HTTPException(404)
     return JSONResponse(strategies_view.curves_for(request.app.state.ro_engine, profile))
+
+
+@router.get("/api/holdings/performance")
+def api_holdings_performance(
+    request: Request, range: str = market.DEFAULT_RANGE, mode: str = "actual"
+) -> JSONResponse:
+    """Sleeve vs QTUM vs QQQ (issue #24): index levels and percentages only."""
+    if range not in performance.RANGE_KEYS or mode not in performance.MODES:
+        raise HTTPException(400, "unknown range or mode")
+    state = request.app.state
+    ann = load_strategies(state.settings.config_dir).backtest.annualization
+    body = performance.performance(state.ro_engine, range, mode, _today(), ann)
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
 # --------------------------------------------------------------------------- commands

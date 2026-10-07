@@ -63,7 +63,7 @@ from aether.portfolio.holdings import (
     apply_holdings_update,
     apply_settings_update,
 )
-from aether.portfolio.job import run_strategies
+from aether.portfolio.job import config_changed, run_strategies
 from aether.portfolio.publish import publish_targets, run_rebalance, sgt_today
 from aether.portfolio.tiger_sync import sync_holdings
 from aether.providers.dividends import FallbackDividends, MassiveDividends, YFinanceDividends
@@ -398,6 +398,15 @@ def _catch_up(engine: Engine, job: str, delay: timedelta = timedelta(0)) -> dict
     if last is None or datetime.now(UTC) - datetime.fromisoformat(last) > CATCH_UP_AFTER:
         return {"next_run_time": datetime.now(ZoneInfo(TZ)) + delay}
     return {}
+
+
+def strategies_catch_up(engine: Engine, settings: Settings) -> dict[str, Any]:
+    """`_catch_up` for the backtest, plus a rerun whenever `strategies.yaml` changed the backtest
+    config since the latest run, however recent that run is (issue #13). `run_rebalance` then
+    republishes the targets with trigger `config_change`."""
+    if config_changed(engine, load_strategies(settings.config_dir)):
+        return {"next_run_time": datetime.now(ZoneInfo(TZ)) + PORTFOLIO_CATCH_UP_DELAY}
+    return _catch_up(engine, "strategies", PORTFOLIO_CATCH_UP_DELAY)
 
 
 def short_interest_job(engine: Engine, settings: Settings) -> JobResult:
@@ -790,7 +799,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         minute=10,
         id="portfolio",
         # Startup catch-up waits for the prices catch-up (which starts at once) to land first.
-        **_catch_up(engine, "strategies", PORTFOLIO_CATCH_UP_DELAY),
+        **strategies_catch_up(engine, settings),
     )
     if tiger is not None:
         sched.add_job(run_tiger_sync, "cron", hour=7, minute=5, id="tiger_sync")

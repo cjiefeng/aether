@@ -130,3 +130,69 @@ def test_tiger_mode_page(rw_engine: Engine, client: TestClient) -> None:
 
 def test_sync_command_requires_csrf(rw_engine: Engine, client: TestClient) -> None:
     assert client.post("/commands/sync-holdings").status_code == 403
+
+
+# --------------------------------------------------------------------------- performance (#24)
+
+
+def _numbers(x: object) -> set[float]:
+    if isinstance(x, bool) or x is None or isinstance(x, str):
+        return set()
+    if isinstance(x, int | float):
+        return {float(x)}
+    if isinstance(x, dict):
+        return set().union(*(_numbers(v) for v in x.values()))
+    if isinstance(x, list):
+        return set().union(*(_numbers(v) for v in x))
+    return set()
+
+
+def test_performance_card_empty_state(rw_engine: Engine, client: TestClient) -> None:
+    seed_universe(rw_engine)
+    r = client.get("/holdings")
+    assert "Add holdings to see performance vs QTUM and QQQ." in r.text
+    assert 'data-chart="performance"' not in r.text
+
+
+def test_performance_endpoint_carries_no_position_sizes(
+    rw_engine: Engine, client: TestClient
+) -> None:
+    seed_prices(rw_engine)
+    apply_holdings_update(
+        rw_engine,
+        HoldingsUpdate(
+            positions=(
+                PositionIn(symbol="QTUM", shares=D("137.25"), cost_basis=D("61.17")),
+                PositionIn(symbol="ACME", shares=D("43"), cost_basis=D("9.83")),
+            ),
+            cash=D("4321.09"),
+        ),
+    )
+    page = client.get("/holdings")
+    assert 'data-chart="performance"' in page.text and "Since tracking" in page.text
+    no_inline(page.text)
+    for mode in ("actual", "current"):
+        for rng in ("1m", "1y", "since"):
+            r = client.get(f"/api/holdings/performance?range={rng}&mode={mode}")
+            assert r.status_code == 200
+            assert r.headers["cache-control"] == "no-store"
+            body = r.json()
+            assert set(body) == {
+                "range",
+                "mode",
+                "start",
+                "end",
+                "tracking_started",
+                "series",
+                "markers",
+                "stats",
+                "stale_since",
+                "enough",
+            }
+            for word in ("shares", "cash", "cost", "value", "account"):
+                assert word not in r.text, word
+            assert not _numbers(body) & {137.25, 43.0, 4321.09, 61.17, 9.83}
+    hyp = client.get("/api/holdings/performance?range=1y&mode=current").json()
+    assert hyp["enough"] and [s["name"] for s in hyp["series"]][1:] == ["QTUM", "QQQ"]
+    assert client.get("/api/holdings/performance?range=5y").status_code == 400
+    assert client.get("/api/holdings/performance?mode=x").status_code == 400

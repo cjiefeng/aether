@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from decimal import Decimal
 from pathlib import Path
 
@@ -207,3 +208,50 @@ def test_each_profile_uses_its_fixed_qtum_weight(rw_engine: Engine) -> None:
         "medium": 0.45,
         "aggressive": 0.15,
     }
+
+
+# --------------------------------------------------------------------------- issue #13
+
+
+def _config_dir(tmp_path: Path, aggressive_qtum: str = "0.15") -> Path:
+    """A copy of the repo config with aggressive's fixed QTUM weight replaced."""
+    out = tmp_path / "config"
+    shutil.copytree(CONFIG_DIR, out)
+    y = out / "strategies.yaml"
+    src = y.read_text()
+    assert src.count("qtum_weight: 0.15") == 1
+    y.write_text(src.replace("qtum_weight: 0.15", f"qtum_weight: {aggressive_qtum}"))
+    return out
+
+
+def test_config_change_reruns_at_startup_even_within_a_day(
+    seeded: Engine, migrated_db: Path, tmp_path: Path
+) -> None:
+    from aether.jobs import strategies_catch_up
+    from aether.runs import run_job
+    from tests.conftest import make_settings
+
+    assert run_job(seeded, "strategies", lambda: run_strategies(seeded, CONFIG)) is not None
+    unchanged = make_settings(migrated_db, config_dir=_config_dir(tmp_path / "a"))
+    assert not job.config_changed(seeded, load_strategies(unchanged.config_dir))
+    assert strategies_catch_up(seeded, unchanged) == {}  # last ok run < 24h, same config
+
+    changed = make_settings(migrated_db, config_dir=_config_dir(tmp_path / "b", "0.5"))
+    assert job.config_changed(seeded, load_strategies(changed.config_dir))
+    assert "next_run_time" in strategies_catch_up(seeded, changed)
+    # The rerun stores a run under the new config; then there is nothing left to catch up.
+    run_job(
+        seeded, "strategies", lambda: run_strategies(seeded, load_strategies(changed.config_dir))
+    )
+    assert _count(seeded, strategy_runs) == 2
+    assert strategies_catch_up(seeded, changed) == {}
+
+
+def test_config_digest_ignores_non_backtest_settings() -> None:
+    dumped = CONFIG.model_dump(mode="json")
+    stored = json.loads(job.canon(dumped))  # what `strategy_runs.config` holds
+    assert job.config_digest(stored) == job.config_digest(dumped)
+    other = CONFIG.model_copy(
+        update={"publish": CONFIG.publish.model_copy(update={"off_cycle_min_materiality": 5})}
+    )
+    assert job.config_digest(other.model_dump(mode="json")) == job.config_digest(dumped)

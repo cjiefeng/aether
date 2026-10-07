@@ -4,6 +4,10 @@
 {% macro money(x) -%}{% if x is none %}—{% else %}${{ "{:,.2f}".format(x|float) }}{% endif %}{%- endmacro %}
 {% set s = h.settings %}
 {% set tiger_mode = s.holdings_source == "tiger" %}
+{% block scripts %}
+  <script src="/static/echarts.min.js" defer></script>
+  <script src="/static/charts.js" defer></script>
+{% endblock %}
 {% block content %}
 <h1>Holdings</h1>
 
@@ -106,9 +110,37 @@
   </form>
 </section>
 
+<section class="card" id="performance">
+  <div class="card-head"><h2>My sleeve vs QTUM vs QQQ</h2>
+    {% if perf_available %}
+    <div class="range-group perf-range" data-for="perf-chart" role="group" aria-label="Range">
+      {% for r in perf_ranges %}
+      <button type="button" class="range{{ ' active' if r == '1y' }}" aria-pressed="{{ 'true' if r == '1y' else 'false' }}" data-range="{{ r }}">{{ "Since tracking" if r == "since" else r|upper }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% if not perf_available %}
+  <p class="muted">Add holdings to see performance vs QTUM and QQQ.</p>
+  {% else %}
+  <div class="range-group perf-mode" data-for="perf-chart" role="group" aria-label="Mode">
+    <button type="button" class="range active" aria-pressed="true" data-mode="actual">Actual</button>
+    <button type="button" class="range" aria-pressed="false" data-mode="current">Current holdings (hypothetical)</button>
+  </div>
+  <p class="banner stale" id="perf-chart-stale" hidden></p>
+  <p class="muted small" id="perf-chart-note" hidden></p>
+  <div id="perf-chart" class="chart" data-chart="performance" data-src="/api/holdings/performance" data-range="1y" data-mode="actual"></div>
+  <table class="num" id="perf-chart-stats" hidden></table>
+  <p class="muted small">Total return (dividends reinvested), rebased to 100 at the start of the range (log scale).
+    Actual is time-weighted: holdings changes reweight the sleeve but never create return, and a change counts from the last NYSE close before it was saved.
+    Sleeve cash is part of the sleeve and earns 0%. Markers show sessions where holdings changed.
+    Only index levels and percentages are sent to the browser.</p>
+  {% endif %}
+</section>
+
 <section class="card">
   <div class="card-head"><h2>Published targets: {{ s.selected_profile|capitalize }}</h2>
-    {% if h.targets %}<span class="muted small">Targets published {{ h.targets.as_of }}{% if h.targets.trigger == "off_cycle" %} (off-cycle{% if h.targets.trigger_event_id %}, event #{{ h.targets.trigger_event_id }}{% endif %}){% endif %}; next publish {{ h.next_publish }}</span>{% endif %}</div>
+    {% if h.targets %}<span class="muted small">Targets published {{ h.targets.as_of }}{% if h.targets.trigger == "off_cycle" %} (off-cycle{% if h.targets.trigger_event_id %}, event #{{ h.targets.trigger_event_id }}{% endif %}){% elif h.targets.trigger == "config_change" %} (republished after a config change){% endif %}; next publish {{ h.next_publish }}</span>{% endif %}</div>
   {% if not h.targets %}
   <p class="muted">No targets published yet. The first publish happens after the first backtest (daily 07:10 SGT), then on the 1st of each month.</p>
   {% else %}

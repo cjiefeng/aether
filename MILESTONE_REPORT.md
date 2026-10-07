@@ -1,5 +1,29 @@
 # Milestone report
 
+## Fixes: config-change rerun (#13) and sleeve performance chart (#24) (2026-10-08)
+
+### Built
+- **#13:** at worker start, `strategies` reruns whenever the `backtest`/`profiles` config differs from the latest run's stored config, even if that run is less than a day old. `run_rebalance` then republishes at once with the new trigger `config_change` (migration 0012). A data-only rerun keeps the monthly freeze. `/holdings` shows "republished after a config change".
+- **#24:** `portfolio/performance.py` (pure, plus a read-only loader), `GET /api/holdings/performance`, and a chart card with range/mode controls, holdings-change markers, tooltips, a stats table and empty states on `/holdings`. No new tables, jobs or writes.
+
+### Decisions
+- **Config digest:** derived from the stored `strategy_runs.config` JSON, so `strategy_runs` needs no schema change.
+- **Snapshot timing:** follows the issue's §2 rule literally. A snapshot applied at T is held from the last NYSE close before T, so an edit made *during* a session earns that session (it's the session after the previous close).
+- **Annualized return:** shown when the plotted data spans ≥ 358 days, not by range button. A 1Y range over 7 months of tracking isn't annualized.
+- **Unchanged Tiger re-syncs:** these write a history row every time, but add no marker and no reweighting.
+- **Hypothetical mode:** includes today's sleeve cash at 0%, like Actual.
+
+### Open questions
+- **#13 edge:** reverting `strategies.yaml` to an earlier config on the same price date doesn't store a new run, because `(as_of, input_hash)` already exists. It corrects itself with the next session's prices.
+- **#24:** historical share counts are multiplied by split-adjusted closes. A split inside the range would misweight the sleeve until the next holdings change.
+
+### Owner checklist
+- Deploy. About 5 minutes after the worker starts, `/strategies` should show aggressive at 15% QTUM, and `/holdings` should show the targets as republished after a config change.
+- On `/holdings`, check the performance card's ranges and both modes.
+
+### How to verify
+`make test` (647 passed), `make lint` and `make secrets-scan` are clean. Browser check against a throwaway synthetic DB: chart, markers, tooltips, mode/range switching, light and dark themes, and 375 px width (no horizontal page scroll). No console or CSP errors.
+
 ## Roadmap change: M13 adjacent industries (2026-10-08, owner-approved)
 
 There's a new **M13** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1.3, §1.4, §6.3, §6.4, §6.5, **new §6.7.1**, §6.9, §7, §8, §10, §11.

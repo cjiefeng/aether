@@ -288,6 +288,26 @@ def test_targets_change_only_on_publish(rw_engine: Engine) -> None:
     assert row["trigger"] == "off_cycle" and row["event"] == eid
 
 
+def test_config_change_republishes_with_its_own_trigger(rw_engine: Engine) -> None:
+    """Issue #13: a backtest under a new `strategies.yaml` republishes at once (no waiting for
+    the 1st); the next data-only backtest doesn't."""
+    days = seed_prices(rw_engine)
+    old_cfg = json.dumps({"profiles": {"safe": {"qtum_weight": 0.5}}})
+    new_cfg = json.dumps({"profiles": {"safe": {"qtum_weight": 0.75}}})
+    fake_run(rw_engine, days[-3], {"safe": {"QTUM": 0.5, "ACME": 0.5}}, config=old_cfg)
+    run_rebalance(rw_engine, CONFIG, today=date(2026, 9, 1))  # bootstrap publish
+    fake_run(rw_engine, days[-2], {"safe": {"QTUM": 0.75, "ACME": 0.25}}, tag="n", config=new_cfg)
+    run_rebalance(rw_engine, CONFIG, today=date(2026, 9, 8))
+    row = targets(rw_engine)["2026-09-08"]
+    assert row["w"] == {"ACME": 0.25, "QTUM": 0.75}
+    assert row["trigger"] == "config_change" and row["event"] is None
+    # Same config, new prices: frozen until the 1st again.
+    fake_run(rw_engine, days[-1], {"safe": {"QTUM": 0.75, "DEMO": 0.25}}, tag="d", config=new_cfg)
+    run_rebalance(rw_engine, CONFIG, today=date(2026, 9, 9))
+    assert list(targets(rw_engine)) == ["2026-09-01", "2026-09-08"]
+    assert targets(rw_engine)["2026-09-08"]["w"] == {"ACME": 0.25, "QTUM": 0.75}
+
+
 def test_next_publish() -> None:
     assert next_publish(date(2026, 9, 1)) == date(2026, 10, 1)
     assert next_publish(date(2026, 12, 15)) == date(2027, 1, 1)
