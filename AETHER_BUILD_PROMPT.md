@@ -980,7 +980,6 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 |---|---|---|---|
 | **M11** | Escalation, ops & deploy | Escalation flow with caps (§5.2.5), verification research, Ops page, structured logging, backup restore drill, optional Litestream, `pip-audit` in lint, **optional** K8s manifests (Docker on the Mac is the supported deploy): **one pod** with `worker` + `app` containers sharing a ReadWriteOnce PVC on local storage (`replicas: 1`, `strategy: Recreate`), Secret, NetworkPolicy (egress allow-list where feasible); runbook incl. "migrate to MySQL/Postgres" and "rotate API key" | Synthetic high-materiality T1 event → alert + re-synthesis within 5 min; 6th escalation in a day is refused; fresh clone → running stack in <10 min; restore from backup reproduces the dashboard |
 
-
 ### Phase 4 — Discovery & tuning
 
 | # | Milestone | Deliverables | Acceptance |
