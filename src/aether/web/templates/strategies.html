@@ -59,9 +59,10 @@
   <div class="card-head">
     <h2>{{ p.name|capitalize }}</h2>
     <span class="muted small">QTUM fixed at {{ ((p.selection.qtum_weight if p.selection.qtum_weight is defined else p.selection.min_qtum) * 100)|round|int }}%,
-      ≤ {{ (p.selection.max_per_name * 100)|round|int }}% per pure-play;
+      ≤ {{ (p.selection.max_per_name * 100)|round|int }}% per name{% if p.selection.min_per_name %}, ≥ {{ p.selection.min_per_name|pct(False) }} floor{% endif %};
       ranked by {{ "lowest CVaR95" if p.selection.rank_metric == "cvar95_low" else "highest Sortino" }}</span>
   </div>
+  {% if p.selection.floor and p.selection.floor.note %}<p class="warn small">{{ p.selection.floor.note }}</p>{% endif %}
   {% if p.recommended %}
   <p>Model strategy: <strong>{{ label(p.recommended) }}</strong> <span class="muted small">({{ p.recommended.strategy_id }})</span></p>
   <div class="grid2">
@@ -135,6 +136,8 @@
     Drawdown duration runs from the peak until it is regained (or to the end of the period).</p>
 </section>
 {% endif %}
+
+{% with show_holdings = false, profiles = thesis_profiles %}{% include "_thesis.html" %}{% endwith %}
 
 <section class="card">
   <h2>Recompute</h2>

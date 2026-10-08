@@ -35,7 +35,7 @@ from typing import Any
 import numpy as np
 from sqlalchemy import Connection, Engine, select
 
-from aether.config import Rubric, ScorecardParams, WeightsConfig
+from aether.config import SLEEVE_TYPES, Rubric, ScorecardParams, WeightsConfig
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import (
@@ -337,7 +337,7 @@ def compute_scorecard(
     look = f"{(as_of - timedelta(days=p.event_lookback_days)).isoformat()}T00:00:00Z"
     evs = _events(conn, sym, look, end)
     comps: dict[str, dict[str, Any]] = {}
-    if typ == "pure_play":
+    if typ in SLEEVE_TYPES:
         snap = fnd.snapshot(conn, sym, as_of)
         comps["fundamentals"] = fundamentals_component(snap, p)
         comps["dilution"] = dilution_component(snap, flags, p)
@@ -414,7 +414,7 @@ def run_scorecards(
     with engine.connect() as conn:
         syms = conn.execute(
             select(tickers.c.symbol, tickers.c.type)
-            .where(tickers.c.type.in_(("pure_play", "etf")), tickers.c.active == 1)
+            .where(tickers.c.type.in_((*SLEEVE_TYPES, "etf")), tickers.c.active == 1)
             .order_by(tickers.c.symbol)
         ).all()
         series = load_series(conn, [s for s, _ in syms] + ["QTUM"])
@@ -424,7 +424,7 @@ def run_scorecards(
             return JobResult(warning="no QTUM prices yet")
         as_of = date.fromisoformat(last)
     # Separate connections: read them before opening ours (rw connections begin IMMEDIATE).
-    pure = [s for s, t in syms if t == "pure_play"]
+    pure = [s for s, t in syms if t in SLEEVE_TYPES]
     all_flags = open_flags(engine, rubric.risk_flags, as_of, pure, rubric.short_interest)
     with engine.connect() as conn:
         rows = []

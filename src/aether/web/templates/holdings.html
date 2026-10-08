@@ -104,7 +104,7 @@
       </tbody>
     </table>
     <p><button type="submit">Save holdings</button><span id="holdings-result" class="result" role="status"></span></p>
-    <p class="muted small">Only QTUM, the pure-plays and USD cash. Saving queues an update for the worker (CSRF-protected, rate-limited);
+    <p class="muted small">Only QTUM, the pure-plays, the adjacent names and USD cash. Saving queues an update for the worker (CSRF-protected, rate-limited);
       {% if tiger_mode %}in Tiger mode only the cash is saved here.{% else %}an empty or zero row removes that position.{% endif %}
       Holdings stay on this machine and never go into an LLM prompt.</p>
   </form>
@@ -161,11 +161,11 @@
   {% endif %}
   <h3>Off-cycle review</h3>
   {% if h.off_cycle %}
-  <p>Material events on pure-plays since the last publish (targets are unchanged until you publish):</p>
+  <p>Material events on pure-plays and adjacent names since the last publish (targets are unchanged until you publish):</p>
   <ul class="small">
     {% for e in h.off_cycle %}<li>#{{ e.id }} {{ e.symbol }} · {{ e.category|replace("_", " ") }} (materiality {{ e.materiality }}) · {{ e.published_at[:10] }} · {{ e.title }}</li>{% endfor %}
   </ul>
-  {% else %}<p class="muted small">No material events on pure-plays since the last publish.</p>{% endif %}
+  {% else %}<p class="muted small">No material events on pure-plays or adjacent names since the last publish.</p>{% endif %}
   <form class="form-row" hx-disabled-elt="find button[type=submit]" hx-post="/commands/publish-targets" hx-target="#publish-result" hx-swap="innerHTML">
     {% if h.off_cycle %}<input type="hidden" name="trigger_event_id" value="{{ h.off_cycle[0].id }}">{% endif %}
     <div><button type="submit">Publish targets now</button><span id="publish-result" class="result" role="status"></span></div>
@@ -212,4 +212,6 @@
     SGD values are for reporting only; targets, trades and the plan are in USD. Uses last closes; plan built {{ h.plan_created_at }}.</p>
 </section>
 {% endif %}
+
+{% with show_holdings = true, profiles = thesis_profiles %}{% include "_thesis.html" %}{% endwith %}
 {% endblock %}

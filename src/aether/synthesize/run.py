@@ -20,7 +20,7 @@ from typing import Any
 
 from sqlalchemy import Engine, insert, select
 
-from aether.config import ConclusionParams, LlmConfig, TrackRecordParams
+from aether.config import SLEEVE_TYPES, ConclusionParams, LlmConfig, TrackRecordParams
 from aether.db.engine import write_tx
 from aether.db.models import conclusion_failures, conclusions, events, scorecards, tickers
 from aether.db.types import utcnow_iso
@@ -238,7 +238,7 @@ def synth_symbols(engine: Engine) -> list[str]:
         pure = list(
             conn.execute(
                 select(tickers.c.symbol)
-                .where(tickers.c.type == "pure_play", tickers.c.active == 1)
+                .where(tickers.c.type.in_(SLEEVE_TYPES), tickers.c.active == 1)
                 .order_by(tickers.c.symbol)
             ).scalars()
         )

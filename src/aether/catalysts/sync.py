@@ -41,6 +41,7 @@ DEFINITION_COLS = (
     "source_url",
     "keywords",
     "resolve_categories",
+    "tags",
 )
 
 
@@ -58,6 +59,7 @@ def _seed_rows(cfg: CatalystsConfig) -> list[dict[str, Any]]:
             "source_url": c.source_url,
             "keywords": json.dumps(list(c.keywords)),
             "resolve_categories": json.dumps(list(c.resolve_categories)),
+            "tags": json.dumps(list(c.tags)),
         }
         for c in cfg.catalysts
     ]
@@ -86,6 +88,7 @@ def _earnings_rows(conn: Connection) -> list[dict[str, Any]]:
                 "source_url": url,
                 "keywords": "[]",
                 "resolve_categories": "[]",
+                "tags": "[]",
             }
         )
     return out
@@ -123,6 +126,7 @@ def _lockup_rows(
                 "source_url": url,
                 "keywords": "[]",
                 "resolve_categories": "[]",
+                "tags": "[]",
             }
         )
     return out

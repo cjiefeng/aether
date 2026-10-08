@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import Engine, select
 
+from aether.config import SLEEVE_TYPES
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import dividends, tickers
@@ -23,7 +24,7 @@ from aether.runs import JobResult
 
 log = logging.getLogger(__name__)
 
-DIVIDEND_TYPES = ("etf", "pure_play", "benchmark")
+DIVIDEND_TYPES = ("etf", *SLEEVE_TYPES, "benchmark")
 
 
 def dividend_symbols(engine: Engine) -> list[str]:

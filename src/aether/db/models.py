@@ -54,6 +54,34 @@ def _bool_ck(col: str) -> CheckConstraint:
     return CheckConstraint(f"{col} IN (0, 1)", name=f"{col}_bool")
 
 
+TICKER_TYPES = ("etf", "pure_play", "adjacent", "benchmark", "context")  # M14 adds 'adjacent'
+# M14 (spec §6.10, §6.7.1). Required per type by the watchlist loader, not by a table CHECK: rows
+# synced before M14 have neither, and the worker's config sync fills them at startup.
+MODALITIES = (
+    "superconducting",
+    "trapped_ion",
+    "neutral_atom",
+    "photonic",
+    "annealing",
+    "spin_silicon",
+    "other",
+)
+SECTORS = (
+    "pqc_cyber",
+    "sensing_timing",
+    "test_measurement",
+    "photonics_lasers",
+    "cryogenics_gases",
+    "telecom_networking",
+    "specialty_materials",
+    "end_user",
+)
+
+
+def _enum_sql(values: tuple[str, ...]) -> str:
+    return "(" + ",".join(f"'{v}'" for v in values) + ")"
+
+
 tickers = Table(
     "tickers",
     metadata,
@@ -62,7 +90,11 @@ tickers = Table(
     Column("type", Text, nullable=False),
     Column("cik", Text),
     Column("active", Integer, nullable=False, server_default="1"),
-    CheckConstraint("type IN ('etf','pure_play','benchmark','context')", name="type"),
+    Column("modality", Text),  # M14: pure-plays
+    Column("sector", Text),  # M14: adjacent names
+    CheckConstraint(f"type IN {_enum_sql(TICKER_TYPES)}", name="type"),
+    CheckConstraint(f"modality IS NULL OR modality IN {_enum_sql(MODALITIES)}", name="modality"),
+    CheckConstraint(f"sector IS NULL OR sector IN {_enum_sql(SECTORS)}", name="sector"),
     _bool_ck("active"),
     sqlite_strict=True,
 )
@@ -166,6 +198,7 @@ ALERT_KINDS = (
     "escalation_result",  # M11
     "universe_review",  # M12
     "digest",  # M13
+    "universe_strong_candidate",  # M14
 )
 ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only", "digested")
 # M13 (spec §5.2.6): how an alert reaches the owner. `merged` rows were folded into the event's
@@ -964,6 +997,7 @@ catalysts = Table(
     Column("source_url", Text),
     Column("keywords", Text, nullable=False, server_default="[]"),
     Column("resolve_categories", Text, nullable=False, server_default="[]"),
+    Column("tags", Text, nullable=False, server_default="[]"),  # M14: e.g. error_correction
     Column("resolved_by_event_id", Integer, ForeignKey("events.id", ondelete="SET NULL")),
     Column("resolution", Text),
     Column("resolved_at", Text),
@@ -985,6 +1019,7 @@ catalysts = Table(
     CheckConstraint("note IS NULL OR length(note) <= 200", name="note_len"),
     _json_ck("keywords"),
     _json_ck("resolve_categories"),
+    _json_ck("tags"),
     Index(None, "status", "window_start"),
     Index(None, "symbol"),
     sqlite_strict=True,
@@ -1350,9 +1385,11 @@ escalations = Table(
 # what the model said). `universe_evidence` holds the review's own evidence: T1 business excerpts
 # from EDGAR and web-search results (untrusted text, excerpt ≤ 600 chars). Candidates aren't on the
 # watchlist, so this evidence never enters `events` (Feed, classifier, scorecards).
-UNIVERSE_REVIEW_KINDS = ("monthly", "manual")
+UNIVERSE_REVIEW_KINDS = ("monthly", "manual", "full")  # M14 adds the full re-evaluation
 UNIVERSE_REVIEW_STATUSES = ("running", "done", "failed")
-UNIVERSE_TRACKS = ("pure_play",)  # M14 adds 'adjacent'
+UNIVERSE_TRACKS = ("pure_play", "adjacent")  # M14 adds 'adjacent'
+UNIVERSE_EXPOSURES = ("high", "med", "low")  # M14
+MCAP_BUCKETS = ("small", "mid", "large")  # M14
 UNIVERSE_ACTIONS = ("add", "remove", "watch", "keep", "skip")
 UNIVERSE_EVIDENCE_KINDS = ("business_excerpt", "web")
 
@@ -1402,8 +1439,21 @@ universe_candidates = Table(
     Column("reasons", Text, nullable=False, server_default="[]"),
     Column("evidence_ids", Text, nullable=False, server_default="[]"),
     Column("gate_note", Text),
+    # M14 (spec §6.7.1): the adjacent track's sector, code-bounded exposure and market cap.
+    Column("sector", Text),
+    Column("exposure", Text),
+    Column("market_cap_micros", Micros),
+    Column("mcap_bucket", Text),
     PrimaryKeyConstraint("review_id", "symbol"),
     _in_ck("track", UNIVERSE_TRACKS),
+    CheckConstraint(f"sector IS NULL OR sector IN {_enum_sql(SECTORS)}", name="sector"),
+    CheckConstraint(
+        f"exposure IS NULL OR exposure IN {_enum_sql(UNIVERSE_EXPOSURES)}", name="exposure"
+    ),
+    CheckConstraint(
+        f"mcap_bucket IS NULL OR mcap_bucket IN {_enum_sql(MCAP_BUCKETS)}", name="mcap_bucket"
+    ),
+    CheckConstraint("market_cap_micros IS NULL OR market_cap_micros >= 0", name="market_cap"),
     _in_ck("action", UNIVERSE_ACTIONS),
     CheckConstraint(
         "proposed_action IS NULL OR proposed_action IN ("

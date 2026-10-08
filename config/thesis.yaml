@@ -1,0 +1,26 @@
+# Thesis checks (spec §6.10, M14). Numbers only (unknown keys are rejected); initial values for
+# owner review. These checks are shown and fed to the monthly review as computed metrics. They
+# never change a weight or write a trade: the research overlay (strategies.yaml) is the only
+# automatic weight adjustment. The thesis text itself lives in STRATEGY.md and never reaches
+# config or prompts.
+
+# Concentration flags, on the non-QTUM sleeve.
+max_modality_share: 0.50
+max_name_share: 0.25
+min_modalities: 3
+
+# Red flags per pure-play / adjacent name.
+financings_min: 2              # dilutive financings (424B1/2/4/5, 8-K Item 3.02) within the lookback
+financing_lookback_days: 365
+fd_yoy_max: 0.20               # or fully diluted shares up more than this year on year
+runway_min_months: 24          # monitor only; the overlay's automatic haircut stays at 12 months
+revenue_flat_max: 0.05         # TTM revenue growth at or below this...
+opex_growth_min: 0.25          # ...while TTM operating expenses grow more than this
+acquisitions_liquidity_max: 0.25  # TTM cash paid for acquisitions above this share of liquidity
+
+# Winner signals (pure-plays; shown only, never automatic).
+winner_revenue_quarters: 4     # TTM revenue up this many consecutive quarters
+winner_fd_yoy_max: 0.05        # and no financing in the lookback with FD shares up less than this
+
+# QTUM's combined weight in universe.yaml adjacent.excluded_symbols (hyperscalers).
+max_etf_hyperscaler_weight: 0.10

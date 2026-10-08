@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import Engine, delete, select
 
+from aether.config import SLEEVE_TYPES
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import earnings_calendar, filings, tickers
@@ -75,7 +76,9 @@ def ingest_earnings_calendar(
     with engine.connect() as conn:
         symbols = list(
             conn.execute(
-                select(tickers.c.symbol).where(tickers.c.active == 1, tickers.c.type == "pure_play")
+                select(tickers.c.symbol).where(
+                    tickers.c.active == 1, tickers.c.type.in_(SLEEVE_TYPES)
+                )
             ).scalars()
         )
 

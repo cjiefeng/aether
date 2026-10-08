@@ -8,6 +8,8 @@
 # ticker or on no ticker (a theme item). roadmap_hit → hit, roadmap_slip → slipped; for
 # qbi_stage_change the event's direction decides (+1 hit, -1 slipped). No end date = never slips
 # by the clock. The owner can mark any catalyst on the Catalysts page.
+# `tags` (M14): `error_correction` marks a roadmap milestone whose delivery counts as the thesis
+# "working error-corrected machine" winner signal (spec §6.10) for the catalyst's ticker.
 
 rules:
   min_materiality: 3
@@ -48,6 +50,7 @@ catalysts:
     source_url: https://ibm.com/quantum/blog/large-scale-ftqc
     keywords: [Starling]
     resolve_categories: [roadmap_hit, roadmap_slip]
+    tags: [error_correction]
 
   # DARPA QBI Stage C decision for the Stage B members on the watchlist. No end date (none stated).
   - id: qbi_stage_c_ionq

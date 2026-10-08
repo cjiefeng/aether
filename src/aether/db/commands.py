@@ -38,6 +38,8 @@ ALLOWED_KINDS = frozenset(
         "synthesize",
         # M12: run the universe review now (LLM spend under its own per-run cap).
         "universe_review",
+        # M14: the owner-triggered full re-evaluation (both review caps; once per 7 days).
+        "universe_full_review",
     }
 )
 

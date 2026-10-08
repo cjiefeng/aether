@@ -48,6 +48,7 @@ def run_backtest(
     qtum_weight: float,
     cap: float,
     params: BacktestParams,
+    floor: float = 0.0,
 ) -> BacktestResult:
     T, N = R.shape
     t0 = oos_start(params)
@@ -64,6 +65,7 @@ def run_backtest(
             qtum_weight=qtum_weight,
             cap=cap,
             params=params,
+            floor=floor,
         )
 
     cost_rate = params.cost_bps / 10_000.0

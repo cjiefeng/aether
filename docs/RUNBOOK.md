@@ -99,6 +99,14 @@ docker compose logs --no-log-prefix worker | jq -r 'select(.status == "failed") 
 - **Tuning:** `config/alerts.yaml` (`immediate_min_materiality`, `digest_time`, `immediate_reminder_days`). Then `./deploy.sh`.
 - The Ops page counts messages sent, merged and digested over 30 days.
 
+## Universe review, adjacent track and full re-evaluation (M12, M14)
+
+- **A review failed** (`/universe` history shows `failed` with the error): the 2nd of the month retries a failed monthly review once. A budget failure (`budget cap reached`) means `UNIVERSE_REVIEW_BUDGET_USD` was too low for the candidate count; raise it or lower `max_research_candidates` in `universe.yaml`.
+- **The adjacent track failed** but the review is `done`: the payload's `adjacent.status` is `failed` with the reason. Only that track stopped (its own cap, `UNIVERSE_ADJACENT_BUDGET_USD`). The pure-play proposals still stand.
+- **A full re-evaluation is refused:** it runs at most once per `full_review_cooldown_days` (7). A failed one doesn't count.
+- **The worker won't start after editing `watchlist.yaml`:** more than 9 active pure-play + adjacent names, a pure-play without `modality` / `modality_fact`, or a `modality_fact` missing from `facts.yaml`. The log names the cause.
+- **Applying a proposal:** edit `config/watchlist.yaml` (and `facts.yaml` for a new pure-play's modality) in a PR; after merge `./deploy.sh`. Holdings change only when you trade.
+
 ## Rotate keys and secrets
 
 After any change to `.env`: `chmod 600 .env && docker compose up -d --wait` (or `./deploy.sh`).

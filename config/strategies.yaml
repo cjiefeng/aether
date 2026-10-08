@@ -18,27 +18,38 @@ backtest:
   # Sessions per year for annualising.
   annualization: 252
 
-# Universe: QTUM + the pure-plays. No cash or T-bill sleeve (spec §1.4): the family-fund sleeve
+# Ticker types in the sleeve (M14): drop `adjacent` to keep adjacent names out of the model
+# strategies without untracking them.
+sleeve_types: [pure_play, adjacent]
+
+# Universe: QTUM + the pure-plays (and, from M14, the adjacent names). No cash or T-bill sleeve (spec §1.4): the family-fund sleeve
 # stays fully invested. Risk appetite is the FIXED QTUM weight per profile, set by the owner; the
 # backtest picks only the sleeve method. Sleeve weight the per-name caps can't place goes to QTUM.
 # The mandate accepts a 100% drawdown, so volatility/drawdown limits are null (shown, not
 # enforced). Set a number to enforce one, relative to QTUM's out-of-sample result.
+# M14 (spec §6.5, owner decision 2026-10-08): every eligible sleeve name gets at least
+# min_per_name; the family method allocates only the rest, each name within max_per_name. If the
+# floors don't fit (names x floor > sleeve) the floor shrinks to sleeve / names and the page says so.
+# The research overlay still zeroes or halves a name on evidence: the floor never overrides it.
 profiles:
   safe:
     qtum_weight: 0.75
     max_per_name: 0.10
+    min_per_name: 0.015
     vol_limit_x: null       # e.g. 1.15 = annualised volatility <= 1.15 x QTUM's
     max_dd_limit_pp: null   # e.g. 5 = max drawdown <= QTUM's + 5 percentage points
     rank_metric: cvar95_low
   medium:
     qtum_weight: 0.45
     max_per_name: 0.20
+    min_per_name: 0.03
     vol_limit_x: null
     max_dd_limit_pp: null
     rank_metric: sortino_high
   aggressive:
     qtum_weight: 0.15
     max_per_name: 0.35
+    min_per_name: 0.04
     vol_limit_x: null
     max_dd_limit_pp: null
     rank_metric: sortino_high

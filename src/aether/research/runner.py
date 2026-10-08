@@ -31,7 +31,7 @@ from typing import Any
 
 from sqlalchemy import Engine, delete, insert, select, update
 
-from aether.config import LlmConfig, Sources, Watchlist
+from aether.config import SLEEVE_TYPES, LlmConfig, Sources, Watchlist
 from aether.db.engine import write_tx
 from aether.db.models import llm_calls, research_runs, tickers
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
@@ -67,10 +67,10 @@ class Target:
 
 
 def targets(watchlist: Watchlist, known: set[str]) -> list[Target]:
-    """QTUM + the pure-plays (the names with conclusions), in watchlist order."""
+    """QTUM + the pure-plays and adjacent names (the names with conclusions), in watchlist order."""
     out = []
     for t in watchlist.tickers:
-        if t.active and t.type in ("etf", "pure_play") and t.symbol in known:
+        if t.active and t.type in ("etf", *SLEEVE_TYPES) and t.symbol in known:
             out.append(Target(t.symbol, t.aliases[0] if t.aliases else t.symbol))
     return out
 

@@ -30,7 +30,7 @@ def test_worker_startup_migrates_and_syncs(tmp_path: Path) -> None:
     startup(s).dispose()  # idempotent second start
     with engine.connect() as conn:
         symbols = conn.execute(select(tickers.c.symbol)).scalars().all()
-    assert len(symbols) == 13 and "QTUM" in symbols
+    assert len(symbols) == 16 and "QTUM" in symbols
     engine.dispose()
 
 

@@ -21,7 +21,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import Connection, Engine, delete, insert, select
 
-from aether.config import PROFILES, Profile
+from aether.config import PROFILES, SLEEVE_TYPES, Profile
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import CASH, holdings, holdings_history, portfolio_settings, tickers
@@ -146,10 +146,10 @@ class PortfolioSettings:
 
 
 def universe_symbols(conn_or_engine: Engine | Connection) -> list[str]:
-    """QTUM + active pure-plays: the only symbols holdings may contain."""
+    """QTUM + active pure-plays and adjacent names: the only symbols holdings may contain."""
     stmt = (
         select(tickers.c.symbol)
-        .where(tickers.c.type == "pure_play", tickers.c.active == 1)
+        .where(tickers.c.type.in_(SLEEVE_TYPES), tickers.c.active == 1)
         .order_by(tickers.c.symbol)
     )
     if isinstance(conn_or_engine, Engine):

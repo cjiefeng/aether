@@ -14,6 +14,8 @@ from aether.db.models import universe_candidates, universe_evidence, universe_re
 from aether.db.types import micros_to_decimal
 
 ACTION_ORDER = {"add": 0, "remove": 1, "watch": 2, "keep": 3, "skip": 4}
+# M14 page tabs: the two review tracks and the full re-evaluation.
+TABS = {"pure_play": "Pure-plays", "adjacent": "Adjacent industries", "full": "Full re-evaluation"}
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,12 @@ class CandidateRow:
     reasons: list[dict[str, Any]]
     gate_note: str | None
     evidence: list[dict[str, Any]] = field(default_factory=list)
+    # M14
+    track: str = "pure_play"
+    sector: str | None = None
+    exposure: str | None = None
+    market_cap: Decimal | None = None
+    mcap_bucket: str | None = None
 
     @property
     def overridden(self) -> bool:
@@ -79,8 +87,23 @@ def reviews(engine: Engine, limit: int = 24) -> list[ReviewRow]:
     return [_review(r) for r in rows]
 
 
+def default_review(history: list[ReviewRow], tab: str) -> ReviewRow | None:
+    """The latest done review for the tab: a full re-evaluation for "full", else the latest done
+    monthly/manual review (a full one if that's all there is)."""
+    done = [r for r in history if r.status == "done"]
+    if tab == "full":
+        return next((r for r in done if r.kind == "full"), None)
+    return next((r for r in done if r.kind != "full"), None) or next(iter(done), None)
+
+
+def last_full(history: list[ReviewRow]) -> ReviewRow | None:
+    return next((r for r in history if r.kind == "full" and r.status != "failed"), None)
+
+
 def latest_done(engine: Engine, month: str | None = None) -> ReviewRow | None:
-    q = select(universe_reviews).where(universe_reviews.c.status == "done")
+    q = select(universe_reviews).where(
+        universe_reviews.c.status == "done", universe_reviews.c.kind != "full"
+    )
     if month is not None:
         q = q.where(universe_reviews.c.month == month)
     with engine.connect() as conn:
@@ -123,10 +146,34 @@ def candidates(engine: Engine, review_id: int) -> list[CandidateRow]:
                 reasons=json.loads(r.reasons),
                 gate_note=r.gate_note,
                 evidence=[{"ref": f"U{i}", **ev[i]} for i in ids if i in ev],
+                track=r.track,
+                sector=r.sector,
+                exposure=r.exposure,
+                market_cap=r.market_cap_micros,
+                mcap_bucket=r.mcap_bucket,
             )
         )
     out.sort(key=lambda c: (ACTION_ORDER.get(c.action, 9), c.symbol))
     return out
+
+
+def full_section(engine: Engine, month: str) -> dict[str, Any] | None:
+    """The review pack's §6.7.3 section: this month's latest done full re-evaluation, if any."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            select(universe_reviews)
+            .where(
+                universe_reviews.c.month == month,
+                universe_reviews.c.kind == "full",
+                universe_reviews.c.status == "done",
+            )
+            .order_by(universe_reviews.c.id.desc())
+            .limit(1)
+        ).first()
+    if r is None:
+        return None
+    rv = _review(r)
+    return {"as_of": rv.as_of, "review_id": rv.id, "lines": rv.payload.get("full_lines") or []}
 
 
 def sweep_evidence(engine: Engine, review_id: int) -> dict[str, dict[str, Any]]:
@@ -138,7 +185,7 @@ def pack_section(engine: Engine, month: str) -> dict[str, Any]:
     with engine.connect() as conn:
         r = conn.execute(
             select(universe_reviews)
-            .where(universe_reviews.c.month == month)
+            .where(universe_reviews.c.month == month, universe_reviews.c.kind != "full")
             .order_by((universe_reviews.c.status == "done").desc(), universe_reviews.c.id.desc())
             .limit(1)
         ).first()
@@ -148,6 +195,7 @@ def pack_section(engine: Engine, month: str) -> dict[str, Any]:
     if rv.status != "done":
         return {"status": rv.status, "as_of": rv.as_of, "error": rv.error}
     rows = candidates(engine, rv.id)
+    pl = rv.payload
     return {
         "status": "done",
         "as_of": rv.as_of,
@@ -158,8 +206,16 @@ def pack_section(engine: Engine, month: str) -> dict[str, Any]:
                 "action": c.action,
                 "name": c.name,
                 "note": c.gate_note,
+                "track": c.track,
+                "sector": c.sector,
+                "bucket": c.mcap_bucket,
             }
             for c in rows
             if c.action in ("add", "remove", "watch")
         ],
+        # M14
+        "adjacent_status": (pl.get("adjacent") or {}).get("status"),
+        "shortlist": pl.get("shortlist") or [],
+        "strong": pl.get("strong") or [],
+        "slots": pl.get("slots"),
     }

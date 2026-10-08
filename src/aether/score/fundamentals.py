@@ -38,6 +38,9 @@ REVENUE = (
     "us-gaap:Revenues",
 )
 OCF = ("us-gaap:NetCashProvidedByUsedInOperatingActivities",)
+# M14 thesis red flags (spec §6.10). One concept per name, by priority, never summed.
+OPEX = ("us-gaap:OperatingExpenses", "us-gaap:CostsAndExpenses")
+ACQUISITIONS = ("us-gaap:PaymentsToAcquireBusinessesNetOfCashAcquired",)
 CASH = "us-gaap:CashAndCashEquivalentsAtCarryingValue"
 # Priority order within each bucket; one concept per bucket is used, never summed (filers tag the
 # same holding under several of them). `LongTermInvestments` is left out: it can hold strategic
@@ -214,6 +217,31 @@ def ttm_year_ago(facts: Sequence[Fact], cur: Ttm) -> Ttm | None:
             if t is not None:
                 return t
     return None
+
+
+def ttm_history(facts: Sequence[Fact], concepts: Sequence[str], n: int) -> list[Ttm]:
+    """Up to `n` consecutive quarterly TTMs of the first concept with a computable latest TTM,
+    newest first (each about 91 days before the previous). Stops at the first gap."""
+    cur = latest_ttm(facts, concepts)
+    if cur is None:
+        return []
+    fs = _of(facts, cur.concept)
+    out = [cur]
+    while len(out) < n:
+        prev_end = out[-1].end
+        ends = sorted(
+            {
+                f.period_end
+                for f in fs
+                if f.days > 0 and 80 <= (prev_end - f.period_end).days <= 100
+            },
+            reverse=True,
+        )
+        nxt = next((t for e in ends if (t := ttm_at(fs, e)) is not None), None)
+        if nxt is None:
+            break
+        out.append(nxt)
+    return out
 
 
 # --------------------------------------------------------------------------- fully diluted

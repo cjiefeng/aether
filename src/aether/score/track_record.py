@@ -6,8 +6,8 @@ calls), and each horizon (1, 3, 6, 12, 24, 36 months):
 - start = the last close on or before the conclusion's `as_of`; end = the last close on or before
   `as_of` + N calendar months; both on total-return levels (`score/prices.py`);
 - excess return = the ticker's return minus the benchmark's over that window. The benchmark is
-  QTUM, QQQ for QTUM's own stance. The theme tilt compares the equal-weight pure-play basket
-  (the names with a close at the start) with QTUM;
+  QTUM, QQQ for QTUM's own stance and for adjacent names (M14). The theme tilt compares the
+  equal-weight pure-play basket (the names with a close at the start) with QTUM;
 - the row stays `pending` until the benchmark has a session on or after the end date;
 - hits: ACCUMULATE > 0, TRIM/AVOID < 0, HOLD |excess| < the horizon's band (theme: PURE_PLAYS > 0,
   QTUM < 0, NEUTRAL inside the band);
@@ -31,7 +31,7 @@ import bisect
 import calendar
 import json
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import pairwise
@@ -109,8 +109,10 @@ class CallRef:
     stance: str
 
 
-def benchmark_for(c: CallRef) -> str:
-    return "QQQ" if c.symbol == CORE else CORE
+def benchmark_for(c: CallRef, qqq_symbols: Collection[str] = ()) -> str:
+    """QQQ for QTUM's own stance and for adjacent names (M14), whose prices aren't driven by the
+    quantum theme; QTUM for everything else."""
+    return "QQQ" if c.symbol == CORE or c.symbol in qqq_symbols else CORE
 
 
 def _subject_return(
@@ -127,12 +129,13 @@ def outcome_rows(
     series: Mapping[str, PriceSeries],
     basket: Sequence[str],
     p: TrackRecordParams,
+    qqq_symbols: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     """Pure: the outcome row of every (call, horizon)."""
     now = utcnow_iso()
     out = []
     for c in calls:
-        bench = benchmark_for(c)
+        bench = benchmark_for(c, qqq_symbols)
         b = series.get(bench)
         start_day = c.as_of
         start = level_on_or_before(b, start_day) if b is not None else None
@@ -199,6 +202,11 @@ def _calls(conn: Connection) -> list[CallRef]:
             .order_by(conclusions.c.id)
         )
     ]
+
+
+def adjacent_names(conn: Connection) -> set[str]:
+    """Adjacent names (M14): benchmarked against QQQ, never part of the theme basket."""
+    return set(conn.execute(select(tickers.c.symbol).where(tickers.c.type == "adjacent")).scalars())
 
 
 def pure_plays(conn: Connection) -> list[str]:
@@ -300,6 +308,7 @@ def run_track_record(engine: Engine, p: TrackRecordParams) -> JobResult:
             )
         ]
         basket = pure_plays(conn)
+        adjacent = adjacent_names(conn)
         syms = {CORE, "QQQ", *basket}
         syms |= {c.symbol for c in calls if c.symbol}
         for pub in pubs:
@@ -315,7 +324,7 @@ def run_track_record(engine: Engine, p: TrackRecordParams) -> JobResult:
         }
     c_rows = [
         r
-        for r in outcome_rows(calls, series, basket, p)
+        for r in outcome_rows(calls, series, basket, p, adjacent)
         if _changed(old_c.get((r["conclusion_id"], r["horizon"])), r, _COMPARE)
     ]
     o_rows = [

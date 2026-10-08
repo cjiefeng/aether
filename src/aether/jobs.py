@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,7 @@ from aether.config import (
     load_rubric,
     load_sources,
     load_strategies,
+    load_thesis_config,
     load_universe_config,
     load_watchlist,
     load_weights,
@@ -105,7 +106,8 @@ from aether.score.theme import run_theme
 from aether.score.track_record import run_track_record
 from aether.synthesize.brief import weekly_brief
 from aether.synthesize.run import SynthDeps, run_conclusions, synth_symbols, synthesize_one
-from aether.universe.run import UniverseDeps, run_universe_review
+from aether.universe.full import cooldown_ok as full_cooldown_ok
+from aether.universe.run import UniverseDeps, last_full_review, run_universe_review
 
 __all__ = ["JobResult", "build_scheduler", "process_commands", "run_job"]
 
@@ -405,6 +407,14 @@ def research_sweep_job(engine: Engine, settings: Settings, llm: LlmClient | None
     )
 
 
+def full_review_refusal(engine: Engine, settings: Settings, today: date) -> str | None:
+    """Why a `universe_full_review` command is refused (spec §6.7.3: once per 7 days), or None."""
+    days = load_universe_config(settings.config_dir).full_review_cooldown_days
+    if full_cooldown_ok(last_full_review(engine), today, days):
+        return None
+    return f"a full re-evaluation already ran in the last {days} days"
+
+
 def universe_review_job(
     engine: Engine,
     settings: Settings,
@@ -412,7 +422,8 @@ def universe_review_job(
     notify: Callable[[Sequence[AlertCandidate]], None],
     kind: str = "monthly",
 ) -> JobResult:
-    """M12 monthly universe review (spec §6.7). Needs the API key and SEC_USER_AGENT."""
+    """M12 monthly universe review (spec §6.7) with the M14 adjacent track; `kind = full` is the
+    owner-triggered full re-evaluation (§6.7.3). Needs the API key and SEC_USER_AGENT."""
     if llm is None:
         raise RuntimeError("ANTHROPIC_API_KEY is not set; the universe review is disabled")
     if settings.sec_user_agent is None:
@@ -432,6 +443,9 @@ def universe_review_job(
             budget_usd=settings.universe_review_budget_usd,
             notify=notify,
             shares_fallback=yfinance_shares,
+            adjacent_budget_usd=settings.universe_adjacent_budget_usd,
+            thesis=load_thesis_config(settings.config_dir),
+            strategies=load_strategies(settings.config_dir),
         )
         return run_universe_review(engine, deps, today=sgt_today(), kind=kind)
     finally:
@@ -894,9 +908,31 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             return {"ok": False, "error": "the review failed; see /universe"}
         return {"ok": True, "rows": result.rows_written}
 
+    # M14 (spec §6.7.3): the owner-triggered full re-evaluation, at most once per 7 days.
+    def universe_full_review_command(_args: dict[str, Any]) -> dict[str, Any]:
+        if llm is None:
+            return {"ok": False, "error": llm_off}
+        refused = full_review_refusal(engine, settings, sgt_today())
+        if refused:
+            return {"ok": False, "error": refused}
+        if not universe_lock.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        try:
+            result = run_job(
+                engine,
+                "universe_full_review",
+                lambda: universe_review_job(engine, settings, llm, notify, kind="full"),
+            )
+        finally:
+            universe_lock.release()
+        if result is None:
+            return {"ok": False, "error": "the full re-evaluation failed; see /universe"}
+        return {"ok": True, "rows": result.rows_written}
+
     handlers = {
         **COMMAND_HANDLERS,
         "universe_review": universe_review_command,
+        "universe_full_review": universe_full_review_command,
         "mark_catalyst": mark_catalyst,
         "research_sweep": research_sweep_command,
         "refresh_prices": refresh_prices,
@@ -1072,6 +1108,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
                     telegram=on,
                     short_rule=load_rubric(settings.config_dir).short_interest,
                     weights=load_weights(settings.config_dir),
+                    config_dir=settings.config_dir,
                 ),
             )
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 from sqlalchemy import Connection, Engine, delete, func, insert, select
 
-from aether.config import PROFILES, StrategiesConfig
+from aether.config import PROFILES, BacktestParams, ProfileParams, StrategiesConfig
 from aether.db.engine import write_tx
 from aether.db.models import (
     dividends,
@@ -39,12 +39,12 @@ from aether.db.types import utcnow_iso
 from aether.portfolio.backtest import oos_start, run_backtest
 from aether.portfolio.metrics import compute_metrics, equity
 from aether.portfolio.select import Candidate, choose, qualify
-from aether.portfolio.strategies import FAMILIES
+from aether.portfolio.strategies import FAMILIES, effective_floor, eligible
 from aether.portfolio.total_return import align, simple_returns, total_return_levels
 from aether.runs import JobResult
 
 # Bump when the computation changes, so identical prices still produce a fresh run.
-ALGO_VERSION = "m5.1"  # m5: fixed QTUM weight per profile
+ALGO_VERSION = "m14.1"  # m5: fixed QTUM weight per profile; m14: per-name floor + adjacent
 CORE = "QTUM"
 BENCHMARKS = ("QQQ", "SOXX")
 FLOAT_DP = 10
@@ -56,17 +56,17 @@ STORED_HISTORY_NOTE = (
 
 @dataclass(frozen=True)
 class Inputs:
-    sleeve: tuple[str, ...]  # pure-plays, sorted
+    sleeve: tuple[str, ...]  # active names of the configured sleeve types, sorted
     closes: Mapping[str, list[tuple[str, float]]]
     dividends: Mapping[str, dict[str, Decimal]] = field(default_factory=dict)
 
 
-def load_inputs(engine: Engine) -> Inputs:
+def load_inputs(engine: Engine, sleeve_types: Sequence[str] = ("pure_play", "adjacent")) -> Inputs:
     with engine.connect() as conn:
         sleeve = tuple(
             conn.execute(
                 select(tickers.c.symbol)
-                .where(tickers.c.type == "pure_play", tickers.c.active == 1)
+                .where(tickers.c.type.in_(list(sleeve_types)), tickers.c.active == 1)
                 .order_by(tickers.c.symbol)
             ).scalars()
         )
@@ -113,7 +113,7 @@ def canon(obj: Any) -> str:
 
 
 # Only what the backtest reads, so M5's rebalance/publish/overlay settings don't force a new run.
-BACKTEST_CONFIG_KEYS = ("backtest", "profiles")
+BACKTEST_CONFIG_KEYS = ("backtest", "profiles", "sleeve_types")
 
 
 def config_digest(config_json: Mapping[str, Any]) -> bytes:
@@ -159,6 +159,28 @@ class RunOutput:
     metrics: list[dict[str, Any]]  # strategy_metrics rows (JSON as Python objects)
     weights: dict[str, dict[str, float]]  # strategy_id -> symbol -> weight
     curves: dict[str, list[tuple[str, float]]]
+
+
+def floor_note(
+    R: Any, t: int, sleeve_idx: list[int], pp: ProfileParams, params: BacktestParams
+) -> dict[str, Any]:
+    """The current floor (spec §6.5): configured vs applied, and why it shrank, if it did."""
+    n = len(eligible(R, t, sleeve_idx, params.min_sessions))
+    sleeve = 1.0 - pp.qtum_weight
+    applied = effective_floor(n, sleeve, pp.min_per_name)
+    shrunk = n > 0 and applied < pp.min_per_name
+    return {
+        "configured": pp.min_per_name,
+        "applied": applied,
+        "eligible": n,
+        "note": (
+            f"The floor shrank from {pp.min_per_name:.1%} to {applied:.2%} per name: "
+            f"{n} eligible names x {pp.min_per_name:.1%} is more than the "
+            f"{sleeve:.0%} sleeve."
+        )
+        if shrunk
+        else None,
+    }
 
 
 def strategy_id(profile: str, family: str, q: float) -> str:
@@ -229,6 +251,7 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
                     qtum_weight=q,
                     cap=pp.max_per_name,
                     params=params,
+                    floor=pp.min_per_name,
                 )
                 m = compute_metrics(res.returns, oos_dates, vs, ann=ann, turnovers=res.turnovers)
                 qual = qualify(m, bench_metrics[CORE], pp)
@@ -261,6 +284,8 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
             },
             "qtum_weight": pp.qtum_weight,
             "max_per_name": pp.max_per_name,
+            "min_per_name": pp.min_per_name,
+            "floor": floor_note(R, len(calendar), sleeve_idx, pp, params),
         }
 
     base = calendar[t0 - 1]
@@ -368,7 +393,7 @@ def store_run(engine: Engine, out: RunOutput, digest: bytes, config: StrategiesC
 
 
 def run_strategies(engine: Engine, config: StrategiesConfig) -> JobResult:
-    inputs = load_inputs(engine)
+    inputs = load_inputs(engine, config.sleeve_types)
     calendar = inputs.closes.get(CORE, [])
     if not calendar:
         return JobResult(warning="no QTUM prices yet; backtest skipped")

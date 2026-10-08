@@ -1,5 +1,116 @@
 # Milestone report
 
+## M14: Adjacent industries, thesis checks, full re-evaluation (2026-10-09)
+
+Phase 4 ends. Three **adjacent-industry names** (KEYS, FEIM, PANW) now get the full per-name pipeline under a **9-name cap**. Every strategy family gives each name a **minimum weight**. Your Quantum Thesis is applied as **deterministic checks**: concentration by modality and sector, four red-flag monitors, winner signals, the QTUM hyperscaler check and gaps. The monthly review gains the **adjacent track**, the **slot rules** and a **strong-candidate** alert, and there's an owner-triggered **full re-evaluation** for issue #29. Everything stays a proposal: nothing edits the watchlist, a weight or a trade on its own.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| KEYS/FEIM/PANW on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards | ✅ | `watchlist.yaml`; EDGAR (`sleeve_ciks`), scorecards, research/news, conclusions, holdings and Tiger all use `SLEEVE_TYPES`. `tests/test_web_m14.py::test_thesis_panels_render` (ticker page and Overview "Adjacent industries"); live check below |
+| A 10th active name fails the watchlist loader with a clear error | ✅ | `test_config_and_facts.py::test_tenth_active_name_fails_the_loader` ("10 active pure_play + adjacent names … the cap is 9") |
+| The theme decomposition basket is unchanged | ✅ | `score/theme.py`, `market.py`, `track_record.pure_plays` and `synthesize/context.py` still select `pure_play` only; `tests/test_theme.py` unchanged and green |
+| A reaction for an adjacent name uses QQQ | ✅ | `score/reaction.py::reaction_universe` (adjacent → QQQ); the track record uses QQQ for adjacent names too (`benchmark_for`) |
+| Floors: every name ≥ `min_per_name` and ≤ `max_per_name`, sleeve sums; momentum's non-top names at the floor; floors that don't fit shrink with a page note; an overlay hard rule still zeroes a name | ✅ | `tests/test_floors.py` (12 family × profile cases, momentum, shrink to 2.5%, `floor.note` on `/strategies`, going concern → 0) |
+| Thesis: a pure-play without a modality fails the loader | ✅ | `test_pure_play_without_modality_fails_the_loader` (also an unknown modality, an adjacent name without a sector) |
+| One modality > 50% raises the concentration flag | ✅ | `test_thesis.py::test_one_modality_over_half_raises_the_concentration_flag` |
+| Each red flag fires on its trigger and not just below it | ✅ | 2 vs 1 financing, 23 vs 25 months, +4%/+30% vs +6%/+30%, 26% vs 24% of liquidity (`test_issuance…`, `test_runway…`, `test_flat_revenue…`, `test_acquisitions…`) |
+| Winner signals need all three | ✅ | `test_winner_signals_need_all_three` |
+| An 11% hyperscaler weight in QTUM is flagged | ✅ | `test_qtum_hyperscaler_weight_over_ten_percent_is_flagged` (the 2026-10-06 mix, ~5.6%, isn't) |
+| No thesis check changes a weight or writes a trade | ✅ | `test_thesis_report_is_read_only`: runs on a `mode=ro` engine; every table's row count unchanged; the module has no write calls |
+| Full re-evaluation: a current name with no trigger can be dropped, with cited reasons | ✅ | `test_universe_adjacent.py::test_full_reevaluation_proposes_a_complete_set` (DEMO and KEYZ dropped with cited reasons) |
+| The proposed set never exceeds 9 or includes an excluded name; a set breaking a concentration flag is marked | ✅ | `test_full_validator_rules` (cap, excluded, every current name kept or dropped, cited ids); the full test marks `few_modalities` + `name_concentration` |
+| The command is CSRF-protected and refused a second time within 7 days | ✅ | `test_web_m14.py::test_full_review_command_needs_csrf_and_is_refused_within_7_days`; `FullReviewCooldown` in the run itself |
+| `STRATEGY.md` text never appears in a prompt | ✅ | `test_strategy_md_never_reaches_a_prompt`: no 8-word phrase from STRATEGY.md in any `src/aether` file, any config file, or any request body of a full review |
+| Excluded hyperscaler / SIC-3674 company never researched or proposed | ✅ | `test_adjacent_track_end_to_end` (HYPR, SEMI: screened, absent from every prompt and candidate row) |
+| Only T3 evidence → never `add` | ✅ | CYBR in the end-to-end test; `test_t3_only_never_add_and_exposure_cap_gate` |
+| `high` exposure without a T1 principal-product excerpt → `med` | ✅ | LASE in the end-to-end test; the gate test |
+| An already-active name is never `add` | ✅ | KEYZ → `keep` |
+| A `remove` for any of the 9 needs a qualifying trigger, else `watch` | ✅ | `test_remove_needs_a_qualifying_trigger` (T1 RISK 4 → remove; quarantined → watch; adjacent remove without trigger → watch); `test_qualifying_triggers_cover_avoid_and_t2_pairs` (accepted vs held AVOID) |
+| All 9 slots full → no add | ✅ | `test_all_slots_full_no_add_and_one_strong_candidate` (cap 3 of 3) |
+| A strong candidate sends exactly one message naming the weakest current name, not re-sent within 3 reviews without new evidence; a near miss stays watch, no message | ✅ | same test: one `universe_strong_candidate` alert ("Compares least favourably with: DEMO"); next month not re-sent; re-sent after newer evidence; LASE stays watch; `test_strong_candidate_rules` |
+| Market cap, bucket and QTUM overlap computed in code | ✅ | CLCK $10B mid, LASE small, CYBR large, QTUM 1.50% (end-to-end test) |
+| A private company appears only as "not investable" | ✅ | "Private Quantum Labs" → info list only |
+| Shortlist ≤ 5 | ✅ | `test_shortlist_has_at_most_five` |
+| The adjacent budget cap stops only the adjacent track | ✅ | `test_adjacent_budget_cap_stops_only_the_adjacent_track` (review `done`, pure-play rows kept, "Track failed: budget cap reached") |
+| The scheduled monthly review applies the M14 rules | ✅ | `test_scheduled_monthly_review_gets_the_m14_rules`: the 1st-of-month job builds its deps with the cap, adjacent block, exclusions, removal/strong rules, the adjacent budget, thesis thresholds and `sleeve_types` |
+| Tests green, no network | ✅ | `make test`: 768 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint` clean |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0016_adjacent_thesis`** (hand-written, STRICT kept on every rebuilt table):
+  - `tickers.type` gains `adjacent`; new `tickers.modality` and `tickers.sector` (enum CHECKs);
+  - `universe_reviews.kind` gains `full`; `universe_candidates` gains track `adjacent`, `sector`, `exposure`, `market_cap_micros`, `mcap_bucket`;
+  - alert kind `universe_strong_candidate`; `catalysts.tags` (JSON).
+- **Config:**
+  - `watchlist.yaml`: KEYS, FEIM, PANW (`adjacent`, with sectors); every pure-play has `modality` + `modality_fact`. The loader enforces the cap and the per-type fields; the worker refuses a `modality_fact` missing from `facts.yaml`.
+  - `universe.yaml`: `max_names_ex_qtum: 9`, market-cap buckets, `removal`, `strong_candidate`, `full_review_cooldown_days`, and the `adjacent` block (sectors with priority and seeds, `excluded_symbols`, `excluded_sics: ["3674"]`).
+  - `strategies.yaml`: `sleeve_types`, `min_per_name` per profile. New `thesis.yaml`. `UNIVERSE_ADJACENT_BUDGET_USD` (compose, `.env.example`).
+  - `catalysts_seed.yaml`: `tags`; IBM Starling is tagged `error_correction`.
+- **Per-name pipeline:** one `SLEEVE_TYPES` constant replaces the hard-coded `pure_play` in EDGAR, earnings, short interest, dividends, RSS matching, research sweeps, catalyst resolution, scorecards, conclusions, off-cycle alerts, insider clusters, holdings and the web views. Reactions and track record use QQQ for adjacent names. The theme basket stays pure-play only.
+- **Floors** (`portfolio/strategies.py`): floor first, the family method on the rest with cap − floor. `ALGO_VERSION` m14.1, so the next daily run recomputes every strategy.
+- **Thesis checks** (`portfolio/thesis.py`): breakdowns and flags, red flags with evidence, winner signals, hyperscaler check, gaps, QTUM drawdown. XBRL gains `OperatingExpenses` / `CostsAndExpenses` and `PaymentsToAcquireBusinessesNetOfCashAcquired` (`PARSER_VERSION` m14.1: companyfacts is refetched once per name).
+- **Universe review** (`universe/`):
+  - `adjacent.py`: the adjacent track;
+  - `slots.py`: qualifying triggers (`X<n>` refs), slot allocation, strong candidates, shortlist;
+  - `full.py`: the full re-evaluation;
+  - `propose_adjacent.py`: the adjacent proposal schema and validator;
+  - `common.py`: helpers shared by the tracks.
+  - The pure-play proposal gains `X` refs, computed lines about the current names and an optional `weakest_current`.
+- **Commands and pages:**
+  - `universe_full_review` (allow-list, CSRF route, **Run full re-evaluation** button with a confirm, 7-day refusal in the worker);
+  - `/universe` tabs: Pure-plays / Adjacent industries / Full re-evaluation;
+  - thesis panels on `/holdings` (holdings + selected profile), `/strategies` (all profiles) and ticker pages;
+  - review pack: adjacent proposals, "N of 9", strong candidates, the full re-evaluation lines and the thesis check.
+- **Docs:** README (M14 section, dashboard, layout), RUNBOOK (universe review troubleshooting).
+
+### Decisions (deviations from the spec / plan)
+1. **"Required when pure_play/adjacent" is enforced by the watchlist loader, not a table CHECK.** Rows from before M14 have no modality until the worker's config sync fills them; a CHECK would break the migration.
+2. **Qualifying evidence must mention "quantum"** (title or excerpt) and be dated in the last 12 months, T1 or T2. Undated web results never qualify. The T1 item for adjacent names is the first "quantum" mention in the 10-K business section (searched up to 60,000 chars). Otherwise an unrelated 10-K opening would count as quantum evidence.
+3. **A tracked adjacent name with no qualifying evidence is a structural removal trigger only when its research ran.** A failed dossier doesn't remove KEYS.
+4. **A pure-play add counts as `high` exposure** for the strong-candidate check: its cited T1 excerpt already shows quantum is the principal business.
+5. **The pure-play track skips adjacent seeds and excluded hyperscalers** found in QTUM holdings. One company is reviewed by one track, and hyperscalers are excluded from every review (§6.7.3).
+6. **Slot order:** fills a gap first, then sector priority (pure-plays rank with priority 1), exposure, evidence, symbol. The shortlist puts sector priority first, as the spec says.
+7. **"Repeated issuance" counts 424B1/2/4/5 supplements and 8-K Item 3.02.** 424B3/B7 are resale prospectuses and don't count. **"Large acquisitions"** uses the XBRL TTM cash figure. An 8-K 2.01's stated consideration isn't parsed: those filings are listed as evidence and the check says "unknown" when XBRL has no figure.
+8. **Unknown is never a pass:** an untagged input makes a red flag `unknown`, shown with the reason.
+9. **The Telegram thesis lines use the published targets only.** The holdings breakdown stays on the dashboard, because holdings never leave the machine (§1.3).
+10. **A full re-evaluation doesn't count as the month's review** (monthly runs still happen), isn't in the c3/strong-candidate history, and sends one summary with no strong-candidate messages. Its 7-day cooldown counts done or running runs, not failed ones. The illustrative weights use an equal-weight sleeve under your selected profile's QTUM weight and caps. A new pure-play's modality is model-proposed and labelled so until a fact is added.
+11. **The weakest-current comparison** must name an active symbol and cite ids from the same request. If the model gives none, the message says "not given".
+
+### Facts
+- Added 8 facts, each checked on 2026-10-09 against the company's own SEC filing and set to `verified_by_claude`:
+  - modalities: `ionq_modality`, `qnt_modality` (from the 424B4: no 10-K yet), `rgti_modality`, `qbts_modality` (annealing; the 10-K also describes a superconducting gate-model programme), `infq_modality`;
+  - adjacent evidence: `keys_quantum_evidence`, `feim_quantum_evidence`, `panw_quantum_evidence`.
+- FACTS.md regenerated.
+
+### Open questions
+- **Keysight's quantum evidence is thin in its 10-K:** quantum appears only as a customer research area and a "new communications technology", with no product line or revenue. The first adjacent review will show whether research finds a T1/T2 product source. If not, KEYS will show "no quantum-related evidence" and be proposed for removal.
+- **No pure-play roadmap catalyst is tagged `error_correction` yet**, so the first winner signal can't fire for any pure-play until you add one in `catalysts_seed.yaml` with a fact. Only IBM Starling (a context ticker) is tagged.
+- **The opex and acquisition concepts are new:** until the one-time companyfacts refetch runs, "Revenue flat while spending rises" and "Large acquisitions" show `unknown`.
+- **Adjacent research cost:** about +$0.3–0.7/day for the three names' sweeps and conclusions (spec §10), plus up to $10/month for the adjacent track.
+
+### Live check (throwaway synthetic DB in a dev container on 127.0.0.1:8091, torn down afterwards; your stack wasn't touched)
+- `/universe` (all three tabs), `/holdings`, `/strategies` and `/t/KEYS` render in dark and light themes. At 375 px there's no horizontal page scroll. No console errors. Untrusted text is escaped.
+- With the M14 config every safe-profile base weight was ≥ the 1.5% floor, and the Strategies page showed the floor per profile.
+
+### Owner checklist
+- [ ] **Issue #29 (deferred full holdings review):** after merging and deploying, press **Run full re-evaluation** on `/universe`. It re-ranks all 8 current names plus candidates and may propose a different set. I can run it with you and walk through the result. Once you've decided, #29 gets an outcome comment (decision, watchlist PR, review id) and is closed. This PR only references it and won't auto-close it.
+- [ ] Review `config/thesis.yaml` thresholds, the floors in `strategies.yaml` (1.5% / 3% / 4%) and the slot rules in `universe.yaml`.
+- [ ] Sign off (or correct) the 8 new facts in `facts.yaml`, especially `keys_quantum_evidence` and the QBTS `annealing` tag.
+- [ ] Optionally set `UNIVERSE_ADJACENT_BUDGET_USD` in `.env` (default 10.00).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0016_adjacent_thesis`, syncs the three new names and backfills their prices and filings on the next runs.
+- [ ] Decisions 2, 5, 7 and 10 above.
+
+### How to verify
+```bash
+make test            # 768 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then /universe, /holdings, /strategies, /t/KEYS
+```
+
 ## M13: Escalation & alert-noise tuning (2026-10-08)
 
 Escalation is now reserved for **serious RISK events**, and Telegram is quieter: **one message per event**, escalation results **only when something changed**, and non-urgent alerts in **one daily digest at 08:00 SGT**. Escalations also get their own **$1.50/day sub-budget**, so they can't starve classification, sweeps or conclusions. Built before M14 so the three adjacent names don't add noise under the old rules.

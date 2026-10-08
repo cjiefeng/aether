@@ -166,7 +166,7 @@ def test_month_windows() -> None:
 
 def _targets() -> list[str]:
     wl = load_watchlist(CONFIG_DIR)
-    return [t.symbol for t in wl.tickers if t.type in ("etf", "pure_play")]
+    return [t.symbol for t in wl.tickers if t.type in ("etf", "pure_play", "adjacent")]
 
 
 def test_sweep_writes_events_and_runs(engine: Engine, migrated_db: Path) -> None:

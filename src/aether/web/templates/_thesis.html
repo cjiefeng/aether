@@ -1,0 +1,38 @@
+{# Thesis checks (spec §6.10, M14). `th`: portfolio.thesis.thesis_report(); `profiles`: which published
+   targets to show; `show_holdings`: the actual-holdings breakdown. Computed in code; never changes a weight. #}
+{% macro breakdown(b) -%}
+<table class="small num compact">
+  <thead><tr><th>Modality / sector</th><th>Names</th><th>% ex-QTUM</th><th>% sleeve</th></tr></thead>
+  <tbody>{% for r in b.rows %}<tr><td>{{ r.category|replace("_", " ") }}{% if r.kind == "sector" %} <span class="muted">(supplier)</span>{% endif %}</td>
+    <td>{{ r.symbols|join(", ") }}</td><td>{{ r.pct_ex_qtum|pct(False) }}</td><td>{{ r.pct_whole|pct(False) }}</td></tr>{% endfor %}
+  <tr><td>QTUM</td><td></td><td></td><td>{{ b.qtum|pct(False) }}</td></tr></tbody>
+</table>
+{% for f in b.flags %}<p class="warn small">Concentration: {{ f.text }}.</p>{% else %}<p class="muted small">No concentration flag.</p>{% endfor %}
+{%- endmacro %}
+<section class="card" id="thesis">
+  <div class="card-head"><h2>Thesis checks</h2>
+    <span class="muted small">{{ th.cap.used }} of {{ th.cap.max }} names used (QTUM excluded) · thresholds in <code>config/thesis.yaml</code></span></div>
+  <p class="muted small">Deterministic checks on stored data. They are shown for your review and never change a weight or a trade:
+    the research overlay stays the only automatic adjustment.</p>
+  <div class="grid2">
+    {% if show_holdings and th.holdings %}<div><h3>Your holdings</h3>{{ breakdown(th.holdings) }}</div>{% endif %}
+    {% for p in profiles %}{% if th.targets[p] is defined %}<div><h3>{{ p|capitalize }} published targets</h3>{{ breakdown(th.targets[p]) }}</div>{% endif %}{% endfor %}
+  </div>
+  <h3>Red flags per holding</h3>
+  <table class="small">
+    <thead><tr><th>Name</th><th>Tag</th>{% for k, lbl in red_flag_labels.items() %}<th>{{ lbl }}</th>{% endfor %}<th>Winner signals</th></tr></thead>
+    <tbody>
+    {% for sym, v in th.per_name.items() %}<tr><td><a href="/t/{{ sym }}#thesis">{{ sym }}</a></td><td>{{ v.category|replace("_", " ") }}</td>
+      {% for f in v.red_flags %}<td class="{{ 'bad' if f.status == 'flag' else ('muted' if f.status == 'unknown' else '') }}" title="{{ f.text }}">{{ f.status }}</td>{% endfor %}
+      <td>{% if v.winner %}{{ "present" if v.winner.present else (v.winner.signals|selectattr("status", "equalto", "flag")|list|length ~ " of 3") }}{% else %}—{% endif %}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">"unknown" means an input isn't tagged in XBRL or not computable; it's never read as a pass. Details on each ticker page.</p>
+  {% set g = th.gaps %}
+  <p class="small"><strong>Gaps:</strong> {% if g.modalities %}modalities with no name: {{ g.modalities|join(", ")|replace("_", " ") }}{% endif %}{% if g.modalities and g.sectors %}; {% endif %}{% if g.sectors %}supplier sectors with no name: {{ g.sectors|join(", ")|replace("_", " ") }}{% endif %}{% if not g.modalities and not g.sectors %}none{% endif %}.</p>
+  {% set hy = th.hyperscaler %}
+  <p class="small"><strong>QTUM hyperscaler weight:</strong> {% if hy.weight is not none %}{{ hy.weight|pct(False) }} ({% for s, w in hy.parts.items() %}{{ s }} {{ "%.2f"|format(w) }}%{% if not loop.last %}, {% endif %}{% endfor %}; snapshot {{ hy.snapshot }}){% if hy.flag %} <span class="bad">above the {{ hy.limit|pct(False) }} limit</span>{% endif %}{% else %}no holdings snapshot yet{% endif %}.</p>
+  {% if show_holdings and th.qtum_drawdown %}<p class="small"><strong>Stepwise building:</strong> QTUM is {{ th.qtum_drawdown.drawdown|pct }} from its 52-week high
+    ({{ th.qtum_drawdown.high_d }}); {{ th.red_flag_total }} red flag(s) across the names. The new-cash-only mode above builds positions stepwise.
+    Information only, never a trade instruction.</p>{% endif %}
+</section>
