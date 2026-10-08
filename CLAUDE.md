@@ -2,6 +2,8 @@
 
 Start every session by reading this file, `AETHER_BUILD_PROMPT.md` (the spec), `FACTS.md` and `MILESTONE_REPORT.md`. Work **one milestone per session**: plan in plan mode → build → stop for review.
 
+**Portfolio reviews and portfolio features:** also read `STRATEGY.md` (the owner's **Quantum Thesis**) and follow it in every portfolio review. It's owner guidance. It's **never** copied into LLM prompts or config: Aether applies it only as the deterministic checks in spec §6.10.
+
 ## Hard rules
 - **Nothing is installed on the owner's Mac.** All tooling runs in Docker through `make` (`make test`, `make lint`, `make fmt`, `make lock`, `make secrets-scan`).
 - **Single writer.** Only the `worker` writes SQLite (`make_rw_engine`, `write_tx`). The dashboard uses `make_ro_engine` (`mode=ro`). Its one exception is `db/commands.py::enqueue_command` on `make_command_engine`, where an SQLite authorizer allows only `INSERT INTO commands`. Never use `make_rw_engine` from `aether/web`.

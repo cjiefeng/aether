@@ -96,6 +96,31 @@ make secrets-scan    # gitleaks: no leaks
 make backup && make restore-drill
 ```
 
+## Roadmap change: Quantum Thesis applied as M13 thesis checks (2026-10-08, owner-approved)
+
+The owner's investment thesis is now in **`STRATEGY.md`**, and `CLAUDE.md` points to it. It's guidance for every portfolio review. Under the no-opinions rule it never goes into prompts or config.
+
+M13 gains **§6.10 thesis checks** (deterministic, no LLM, shown only, never trading):
+- **Modality tags** per pure-play, each a T1-sourced fact.
+- **Weights by modality and sector,** with concentration flags: one modality over 50%, one name over 25%, or fewer than 3 modalities.
+- **Four red-flag monitors:**
+  - dilution: ≥2 financings in 12 months, or fully diluted shares up >20% YoY
+  - runway under 24 months
+  - revenue growth ≤5% while opex grows >25%
+  - acquisition cash over 25% of liquidity
+- **Winner signals:** error correction, 4 quarters of revenue growth, and an end to dilution.
+- **QTUM hyperscaler weight**, flagged above 10% (about 5.6% on 2026-10-06).
+- **Gaps** that feed the monthly review's `fills_gap` input.
+
+The 9-name cap, the market-cap-as-one-input rule and the slot rules (§6.7.2) are unchanged.
+
+**Owner decisions to review**
+1. All thresholds in `config/thesis.yaml`.
+2. **The runway thresholds differ:** the red-flag monitor uses 24 months, but the overlay's automatic haircut stays at 12 months. Align them if you want the overlay to act at 24.
+3. **"Missing expectations"** is checked only against the company's own recorded guidance; there's no free consensus-estimate source.
+
+**Deferred owner decision:** after M13, the owner will review **all holdings**, not just the open 9th slot, and may repopulate the whole set. M13 adds an owner-triggered **full re-evaluation** (§6.7.3) for this. It re-ranks current names and candidates together, with no protection for current names, and proposes a complete set of up to 9. It's tracked in cjiefeng/aether#29, and M13's close-out checklist must raise it. **#29 is resolved** (outcome comment, then closed) once that review is done and the owner has decided. The M13 PR doesn't close it.
+
 ## Fixes: config-change rerun (#13) and sleeve performance chart (#24) (2026-10-08)
 
 ### Built
