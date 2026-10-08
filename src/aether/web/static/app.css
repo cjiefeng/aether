@@ -139,6 +139,16 @@ tr.quarantined td { background: var(--warn-bg); }
 .badge.alert-pending, .badge.fact-verified_by_claude, .badge.tier-t3 {
   color: var(--warn-fg); border-color: color-mix(in srgb, var(--warn-fg) 55%, transparent); }
 .badge.noise { color: var(--muted); }
+/* M12 universe review actions */
+.badge.action-add { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.badge.action-remove { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.badge.action-watch { color: var(--warn-fg); border-color: color-mix(in srgb, var(--warn-fg) 55%, transparent); }
+.badge.action-keep { color: var(--fg); }
+.badge.action-skip { color: var(--muted); }
+.criteria td.pass { color: var(--ok); }
+.criteria td.fail { color: var(--bad); }
+.uv-evidence { margin: var(--s2) 0 0; padding-left: var(--s4); }
+.uv-evidence li { margin-bottom: var(--s1); overflow-wrap: anywhere; }
 .stats { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); align-items: center; margin-bottom: var(--s3); }
 
 /* ---------------------------------------------------------------- buttons */

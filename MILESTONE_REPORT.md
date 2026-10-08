@@ -1,5 +1,105 @@
 # Milestone report
 
+## M12: Monthly universe review (2026-10-08)
+
+Phase 4 "Discovery" starts. On the 1st of each month Aether reviews which **pure-plays** to add, remove or watch. It applies the same test to current names and new candidates, with sources, and sends one Telegram summary. It **only proposes**: the watchlist changes only through your PR to `watchlist.yaml`.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Below the market-cap or liquidity floor → never `add`, even when the model says add | ✅ | `tests/test_universe.py::test_review_gates_the_model_and_sends_one_message`: TINY (model `add`, $100M cap, $4M volume) is stored as `watch` with the gate note "add blocked: market cap $100,000,000 < $500,000,000; 20-session median dollar volume …" |
+| No T1 business excerpt → never `add` | ✅ | `test_gates` (`excerpt_ref=None` → `watch`, "no T1 business excerpt"; and an uncited excerpt blocks too). End to end, a new company with no findable business section is screened out before research (NOBZ). |
+| Synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove` | ✅ | DEMO with an 8-K reporting Items 2.01 + 5.01 is forced to `remove` although the model said keep. See decision 2 for why 2.01 alone isn't used. |
+| Recent listing with < 60 sessions → `watch` | ✅ | YNGQ (30 sessions, model `add`) → `watch`, "history 30 < 60 sessions"; an announced IPO (S-1, not listed) → `watch` |
+| Unknown evidence IDs are rejected | ✅ | `test_unknown_evidence_ids_are_rejected`: retried once with only our own validator text, then the run is `failed`, with no candidates and no alert. `test_validator` covers unknown symbols, missing answers, reasons citing nothing, `injection_suspected` and the wrong `as_of`. |
+| Telegram text plain, ≤ 4096 chars, sent once per review | ✅ | One `universe_review` alert (dedupe `universe_review:YYYY-MM`). A second run that month does nothing. No markup. `test_telegram_text_fits_and_says_more_on_universe` checks the overflow pointer. |
+| A month with no changes sends "No changes proposed" | ✅ | `test_no_changes_sends_no_changes_proposed` |
+| Hitting the budget cap → `failed`, nothing sent | ✅ | `test_budget_cap_fails_the_run_and_sends_nothing`: a `budget_refused` call row, the run `failed` with "budget cap reached", cost ≤ the cap, no candidates, no alert |
+| Job registered for the 1st at 10:00 SGT | ✅ | `test_job_registered_for_the_first_at_ten` (`day="1,2"`: the 2nd retries a failed month) |
+| Tests green, no network | ✅ | `make test`: 693 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint` clean |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0014_universe`** (hand-written, STRICT):
+  - `universe_reviews`: one row per run, `running` → `done`/`failed`, with payload, model, prompt version, cost, Telegram text and error.
+  - `universe_candidates`: the gated action, the model's `proposed_action`, criteria and overlap JSON, description, cited reasons, evidence ids and the gate note. `track` is `pure_play` only, ready for M13's `adjacent`.
+  - `universe_evidence`: T1 business excerpts and web-search results, tiered, excerpt ≤ 600.
+  - Alert kind `universe_review`.
+- **`universe/` package:**
+  - `discover.py`: EDGAR full-text search, QTUM holdings via SEC's ticker/exchange map, and the current pure-plays.
+  - `business.py`: the business section of the latest 10-K / 20-F / prospectus, skipping table-of-contents entries.
+  - `criteria.py`: criteria 1, 3 and 4 in code.
+  - `research.py`: one dossier per candidate plus the IPO/SPAC sweep. Evidence comes only from search-result blocks, reusing `research/runner.py::extract_items`.
+  - `propose.py`: the no-tools proposal with a strict schema and the validator.
+  - `gates.py`: the pure rules.
+  - `triggers.py`: structural removal triggers, reusing `overlay.layer1_findings`.
+  - `run.py`: orchestration. Writes happen only in short transactions between the network and LLM steps.
+  - `view.py`: the page and the review-pack section.
+- **LLM wrapper:** a per-run `RunBudget` for the own-budget purposes `research_universe` and `universe_proposal`. These calls skip the daily soft-budget guard and are excluded from "spent today" (wrapper, `/news`, `/ops` and the 80% alert).
+- **EDGAR client:** `efts.sec.gov` full-text search (paged) and `company_tickers_exchange.json`. Both are SEC hosts, so the User-Agent never leaves SEC.
+- **Settings:**
+  - `RESEARCH_DEEP_MODEL` (default `claude-opus-5-5`; ID checked: it's the current Opus tier and already priced in `llm.yaml`).
+  - `UNIVERSE_REVIEW_BUDGET_USD` (default 10.00).
+  - `config/universe.yaml`: floors, discovery queries and forms, lookbacks, research caps.
+- **Jobs and commands:**
+  - The cron job runs on the 1st and 2nd at 10:00 SGT; it does nothing once the month is done.
+  - **Run review now** on `/universe` is a CSRF'd `universe_review` command. It's on the command allow-list, dedupes while one is pending, and refuses while a review is running. A `running` row older than 3 h is marked failed.
+- **Dashboard:**
+  - `/universe` (in the nav): run history with cost; per company the action (and what code overrode), criteria table, reasons, sources with tiers ("date unknown" for undated web results), and QTUM overlap.
+  - Also announced listings ("from web search, unverified") and the screened-out list.
+  - The Review page and the pack's Telegram text gain the M12 section.
+  - `/ops` notes that universe spend sits outside the daily budget.
+
+### Decisions (deviations from the spec / plan)
+1. **Evidence goes to `universe_evidence`, not `events`.** Candidates aren't on the watchlist (`events`/`research_runs` reference `tickers`), and their news mustn't reach the Feed, the classifier or the scorecards. The S1 handling is the same: trust tiers, untrusted wrapping, excerpt cap, and evidence only from search results.
+2. **An acquisition needs 8-K Items 2.01 and 5.01** (change in control of the registrant), or the overlay's delisting / deficiency-notice findings. Item 2.01 alone also appears when the company is the *acquirer*: IonQ's own SkyWater-closing 8-K would have been read as IonQ being acquired.
+3. **Keyword pre-filter before any LLM spend:** a new company whose business section doesn't mention "quantum" (or that has none we can find) is screened out with the reason shown. Current pure-plays are never screened. On live data this cut the 68 discovered companies to 12 researched.
+4. **Market-cap share count:** the SEC cover-page count, else the balance-sheet count, else the price provider's (yfinance). Placeholder counts (< 1,000 shares) are ignored. The live check showed QNT, PSQL and IQMX have no usable XBRL count, and HQ/XNDU report 1 share pre-IPO. yfinance may count only one share class (QNT shows 39M shares, about $1.7B), so it can understate but never overstate. That's safe for a floor; the source is shown per company.
+5. **Only measured criterion-3 failures count** toward the 3-review removal. An "unknown" market cap breaks the streak, so a data gap can't remove a current name.
+6. **`skip` is allowed in M12** for a researched company that isn't a pure-play. The spec lists it from M13; it's needed now so every researched candidate gets an answer.
+7. **Manual "Run review now"** (not in the spec) so you can see a real review before 1 November. It spends against the same per-run cap.
+8. **Synthetic fixtures instead of a recorded cassette** for EDGAR full-text search and the exchange file. Their real shapes were checked live today (below), and the parsers are tested against the same shapes.
+
+### Facts
+- No facts changed or added. Discovery uses SEC data only. Company descriptions on `/universe` are model text from cited evidence and are shown as such.
+
+### Open questions
+- **No paid live run yet.** Research and proposal were tested on the fake transport. Rough cost from the estimates: 12 dossiers + 1 sweep + 1 proposal ≈ $2–4 per run, under the $10 cap.
+- **The full-text search phrase is narrow:** `"quantum computing company"` (33 filings). It found QUBT, XNDU, IQM and Pasqal plus the current names. Add phrases in `config/universe.yaml` → `fts_queries` if you want a wider net (more research spend).
+- **Business sections that couldn't be found** (screened with that reason): AMD (10-K/A), ASML (20-F), HON, INTC, NET, NBIS. They're all QTUM holdings with diversified businesses, so they wouldn't qualify anyway. Pasqal's 20-F refers to its proxy statement, so its excerpt is thin.
+- **IQMX price history** from yfinance shows 276 sessions, although the F-1 is from Aug 2026 (likely a predecessor listing under the same ticker). It fails the liquidity floor regardless. Worth a look if it comes up as `watch`.
+- QNT's scorecard EV has the same missing-XBRL-shares problem (existing behaviour, not changed here).
+
+### Live check (read-only, 2026-10-08)
+- **SEC:** the full-text search returned 33 hits / 20 entities. The ticker/exchange file has fields `cik, name, ticker, exchange` and exchanges `NYSE / Nasdaq / CBOE / OTC`.
+- **Dry run of discovery + excerpts + criteria** (SEC + yfinance, no LLM, no DB writes):
+  - 68 candidates, 23 QTUM lines outside the mandate, 12 researched.
+  - All 5 pure-plays pass criteria 1/3/4 (QNT via the yfinance share count).
+  - QUBT, XNDU and LSCC pass.
+  - IQMX, PSQL and HQ fail the $5M liquidity floor; ARQQ is under $500M.
+  - Blank checks (BRKH, IBAC) and unlisted S-4 targets are dropped.
+- **Browser** (`/universe` on a throwaway synthetic DB):
+  - Dark and light themes render; 375 px has no horizontal scroll; no console errors; no inline styles.
+  - Hostile evidence text (`<script>`, `<b>`) is escaped.
+  - Fixed during the check: history dates wrapped mid-date on mobile (now `nowrap`), and a missing overlap key crashed the page.
+
+### Owner checklist
+- [ ] Review `config/universe.yaml`: the floors ($500M, $5M over 20 sessions, 60 sessions), the full-text phrase(s), `max_research_candidates: 12`.
+- [ ] Set `UNIVERSE_REVIEW_BUDGET_USD` in `.env` if $10 isn't right (`RESEARCH_DEEP_MODEL` defaults to `claude-opus-5-5`).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0014_universe`.
+- [ ] Optional: press **Run review now** on `/universe` once (about $2–4) to see a real review and its Telegram message before 1 November.
+- [ ] Still open from earlier milestones: `DAILY_LLM_BUDGET_USD`, `MASSIVE_API_KEY`, Telegram setup, unsigned facts, M9/M10 decisions.
+
+### How to verify
+```bash
+make test            # 693 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open /universe
+```
+
 ## M11: Escalation, ops & deploy (2026-10-08)
 
 High-materiality events now **escalate**: an alert, then one verification search, then a re-synthesis of the ticker, under a daily cap and a per-ticker cooldown. Also new: an **Ops page**, **JSON logs** with secret redaction, a weekly **backup restore drill** plus `make restore`, `make init` for a fresh clone, and `docs/RUNBOOK.md`. Phase 3 is complete.

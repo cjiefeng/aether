@@ -96,6 +96,17 @@
     </tbody>
   </table>
   {% endif %}
+  {% if pk.universe is defined %}
+  <h3>Universe review (pure-plays)</h3>
+  {% set u = pk.universe %}
+  {% if u.status == "done" %}
+  {% set changes = u.proposals|selectattr("action", "in", ["add", "remove"])|list %}
+  {% if not changes %}<p class="small">No changes proposed.</p>{% endif %}
+  {% if u.proposals %}<ul class="small">{% for x in u.proposals %}<li><span class="badge action-{{ x.action }}">{{ x.action }}</span> {{ x.symbol }}{% if x.name %} ({{ x.name }}){% endif %}{% if x.note %} <span class="muted">{{ x.note }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  <p class="small"><a href="/universe">Sources and criteria on the Universe page</a>.</p>
+  {% elif u.status == "none" %}<p class="muted small">Not run yet this month.</p>
+  {% else %}<p class="muted small">Review {{ u.status }}{% if u.error %}: {{ u.error }}{% endif %}. See <a href="/universe">Universe</a>.</p>{% endif %}
+  {% endif %}
   {% if p.telegram_text %}
   <details><summary class="small">Telegram text (no share counts, dollar values or account number)</summary><pre class="alert-text">{{ p.telegram_text }}</pre></details>
   {% endif %}

@@ -47,6 +47,7 @@ from aether.risk.flags import open_flags
 from aether.score import view as score_view
 from aether.security import auth, csrf
 from aether.synthesize import view as synth_view
+from aether.universe import view as universe_view
 from aether.web import command_view
 from aether.web.command_view import CommandStatus
 
@@ -395,6 +396,29 @@ def review_page(request: Request) -> HTMLResponse:
     )
 
 
+@router.get("/universe", response_class=HTMLResponse)
+def universe_page(request: Request, review: int | None = None) -> HTMLResponse:
+    """M12: the latest universe review (or `?review=<id>`) and the run history."""
+    state = request.app.state
+    engine = state.ro_engine
+    history = universe_view.reviews(engine)
+    shown = next((r for r in history if r.id == review), None) if review else None
+    if shown is None:
+        shown = next((r for r in history if r.status == "done"), None)
+    return _render(
+        request,
+        "universe.html",
+        {
+            "history": history,
+            "review": shown,
+            "rows": universe_view.candidates(engine, shown.id) if shown else [],
+            "sweep": universe_view.sweep_evidence(engine, shown.id) if shown else {},
+            "budget": state.settings.universe_review_budget_usd,
+            "model": state.settings.research_deep_model,
+        },
+    )
+
+
 # --------------------------------------------------------------------------- login (S2, M5)
 
 
@@ -633,6 +657,11 @@ async def command_synthesize(request: Request) -> Response:
 @router.post("/commands/research-sweep")
 def command_research_sweep(request: Request) -> Response:
     return _enqueue(request, "research_sweep")
+
+
+@router.post("/commands/universe-review")
+def command_universe_review(request: Request) -> Response:
+    return _enqueue(request, "universe_review")
 
 
 @router.post("/commands/test-alert")

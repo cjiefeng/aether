@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 
@@ -23,7 +23,13 @@ from aether.providers.prices import ProviderError
 
 log = logging.getLogger(__name__)
 
-SEC_HOSTS = frozenset({"www.sec.gov", "data.sec.gov"})
+SEC_HOSTS = frozenset({"www.sec.gov", "data.sec.gov", "efts.sec.gov"})
+# M12: EDGAR full-text search (the endpoint behind efts.sec.gov/LATEST/search-index, checked
+# 2026-10-08) and the ticker → CIK/exchange map.
+FTS_URL = "https://efts.sec.gov/LATEST/search-index"
+TICKERS_EXCHANGE_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
+FTS_PAGE_SIZE = 100
+FTS_MAX_PAGES = 5
 ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 MIN_INTERVAL_S = 0.2
 MAX_ATTEMPTS = 4
@@ -141,6 +147,37 @@ class EdgarClient:
 
     def document(self, cik: str, accession: str, primary_doc: str, *, raw: bool = False) -> str:
         return self.get(document_url(cik, accession, primary_doc, raw=raw)).text
+
+    def full_text_search(
+        self, query: str, forms: tuple[str, ...], start: str, end: str
+    ) -> list[dict[str, Any]]:
+        """Every hit (`_id`, `_source`) for an exact-phrase query in `forms` filed `start..end`
+        (YYYY-MM-DD), up to FTS_MAX_PAGES pages of FTS_PAGE_SIZE."""
+        hits: list[dict[str, Any]] = []
+        for page in range(FTS_MAX_PAGES):
+            params = {
+                "q": query,
+                "forms": ",".join(forms),
+                "dateRange": "custom",
+                "startdt": start,
+                "enddt": end,
+            }
+            if page:
+                params["from"] = str(page * FTS_PAGE_SIZE)
+            data = self.get_json(f"{FTS_URL}?{urlencode(params)}")
+            block = data.get("hits")
+            if not isinstance(block, dict) or not isinstance(block.get("hits"), list):
+                raise ProviderError("EDGAR full-text search: unexpected response shape")
+            batch = [h for h in block["hits"] if isinstance(h, dict)]
+            hits += batch
+            total = block.get("total", {})
+            n = total.get("value") if isinstance(total, dict) else None
+            if len(batch) < FTS_PAGE_SIZE or not isinstance(n, int) or len(hits) >= n:
+                break
+        return hits
+
+    def company_tickers_exchange(self) -> dict[str, Any]:
+        return self.get_json(TICKERS_EXCHANGE_URL)
 
     def close(self) -> None:
         self.client.close()

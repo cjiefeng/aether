@@ -21,6 +21,10 @@ from aether.config import LlmConfig, ModelPrice
 MTOK = Decimal(1_000_000)
 SGT = ZoneInfo("Asia/Singapore")
 
+# Purposes with their own per-run cap (M12 universe review, spec §6.7 "Cost control"). They're
+# excluded from the daily soft budget so the monthly review can't starve classification.
+OWN_BUDGET_PURPOSES = ("research_universe", "universe_proposal")
+
 
 def sgt_day_start(now: datetime) -> datetime:
     """Start of the current Singapore day, in UTC: the soft budget resets at SGT midnight."""

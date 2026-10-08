@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     # M6: the one-time 12-month backfill (Message Batches) runs automatically once an API key is
     # set; this switch exists so an isolated test stack can turn it off.
     research_backfill: bool = Field(default=True, validation_alias="RESEARCH_BACKFILL")
+    # M12: the monthly universe review's deep research and no-tools proposal (spec §6.7, §10),
+    # capped per run by UNIVERSE_REVIEW_BUDGET_USD, outside the daily soft budget.
+    research_deep_model: str = Field(
+        default="claude-opus-5-5", validation_alias="RESEARCH_DEEP_MODEL"
+    )
+    universe_review_budget_usd: Decimal = Field(
+        default=Decimal("10.00"), ge=0, validation_alias="UNIVERSE_REVIEW_BUDGET_USD"
+    )
     daily_llm_budget_usd: Decimal = Field(
         default=Decimal("5.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
@@ -107,6 +115,8 @@ class Settings(BaseSettings):
         "research_model",
         "classifier_model",
         "synth_model",
+        "research_deep_model",
+        "universe_review_budget_usd",
         "research_backfill",
         "max_escalations_per_day",
         "log_format",
@@ -120,7 +130,9 @@ class Settings(BaseSettings):
             return cls.model_fields[info.field_name].default
         return v
 
-    @field_validator("research_model", "classifier_model", "synth_model", mode="after")
+    @field_validator(
+        "research_model", "classifier_model", "synth_model", "research_deep_model", mode="after"
+    )
     @classmethod
     def _model_id(cls, v: str, info: ValidationInfo) -> str:
         if not re.fullmatch(r"claude-[a-z0-9\-]{1,60}", v):
@@ -918,3 +930,58 @@ def load_llm_config(config_dir: Path) -> LlmConfig:
 
 def get_settings() -> Settings:
     return Settings()
+
+
+# --------------------------------------------------------------------------- universe (M12)
+
+FtsQuery = Annotated[str, Field(pattern=r'^"?[A-Za-z][A-Za-z \-]{2,60}"?$')]
+FtsForm = Literal[
+    "10-K", "20-F", "S-1", "F-1", "S-4", "424B4", "10-K/A", "20-F/A", "S-1/A", "F-1/A"
+]
+
+
+class UniverseConfig(_Strict):
+    """`config/universe.yaml`: the monthly universe review's criteria (spec §6.7, M12). Numbers
+    and identifiers only; initial values for owner review."""
+
+    # Criterion 1: US listing (exchange names as SEC's company_tickers_exchange.json spells them;
+    # NYSE American is listed there as NYSE).
+    exchanges: tuple[Literal["NYSE", "Nasdaq"], ...] = Field(min_length=1)
+    # Criterion 3: size and liquidity, computed in code from provider prices + XBRL shares.
+    min_market_cap_usd: Annotated[Decimal, Field(gt=0)]
+    min_median_dollar_volume_usd: Annotated[Decimal, Field(gt=0)]
+    liquidity_sessions: int = Field(ge=5, le=250)
+    # Criterion 4: history.
+    min_sessions: int = Field(ge=1, le=500)
+    # Removal: criterion 3 failing in this many consecutive reviews.
+    remove_after_failed_reviews: int = Field(ge=1, le=12)
+    # Discovery: SEC EDGAR full-text search (phrases), forms and lookback.
+    fts_queries: tuple[FtsQuery, ...] = Field(min_length=1)
+    fts_forms: tuple[FtsForm, ...] = Field(min_length=1)
+    fts_lookback_months: int = Field(ge=1, le=36)
+    # SEC SIC codes never treated as candidates (6770 = blank checks: a SPAC's target is the
+    # business, and it's found through its own filings).
+    excluded_sics: tuple[Annotated[str, Field(pattern=r"^\d{4}$")], ...] = ()
+    # Business excerpt: how far into the business section the "quantum" keyword is looked for
+    # (pre-filter before any LLM spend) and the stored excerpt length.
+    business_scan_chars: int = Field(ge=600, le=20_000)
+    business_excerpt_chars: int = Field(ge=200, le=600)
+    business_keyword: str = Field(pattern=r"^[a-z]{3,20}$")
+    max_business_fetches: int = Field(ge=1, le=500)
+    # Deep research (RESEARCH_DEEP_MODEL, web search) and the no-tools proposal.
+    max_research_candidates: int = Field(ge=1, le=50)
+    research_max_uses: int = Field(ge=1, le=20)
+    sweep_max_uses: int = Field(ge=1, le=20)
+    research_lookback_days: int = Field(ge=7, le=730)
+    research_max_tokens: int = Field(ge=256, le=64_000)
+    research_effort: Literal["low", "medium", "high"]
+    proposal_max_tokens: int = Field(ge=1024, le=64_000)
+    proposal_effort: Literal["low", "medium", "high"]
+    proposal_max_attempts: int = Field(ge=1, le=3)
+    max_evidence_per_candidate: int = Field(ge=1, le=50)
+    # A `running` review older than this is treated as crashed and marked failed.
+    stale_running_hours: int = Field(ge=1, le=48)
+
+
+def load_universe_config(config_dir: Path) -> UniverseConfig:
+    return UniverseConfig.model_validate(_load_yaml(config_dir / "universe.yaml"))
