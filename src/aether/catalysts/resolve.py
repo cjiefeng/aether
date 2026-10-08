@@ -27,7 +27,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import Connection, func, select
 
-from aether.config import CatalystRules
+from aether.config import SLEEVE_TYPES, CatalystRules
 from aether.db.models import catalysts, event_classifications, event_tickers, events, tickers
 
 EVENT_KINDS = ("roadmap", "program", "regulatory")
@@ -152,7 +152,7 @@ def resolve_upcoming(conn: Connection, rules: CatalystRules, today: date) -> lis
     out: list[Resolution] = []
     scoped_symbols = set(
         conn.execute(
-            select(tickers.c.symbol).where(tickers.c.type.in_(("etf", "pure_play")))
+            select(tickers.c.symbol).where(tickers.c.type.in_(("etf", *SLEEVE_TYPES)))
         ).scalars()
     )
     rows = conn.execute(

@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     universe_review_budget_usd: Decimal = Field(
         default=Decimal("10.00"), ge=0, validation_alias="UNIVERSE_REVIEW_BUDGET_USD"
     )
+    # M14: the adjacent-industry track's own per-run cap (spec §6.7.1), on top of the M12 cap.
+    universe_adjacent_budget_usd: Decimal = Field(
+        default=Decimal("10.00"), ge=0, validation_alias="UNIVERSE_ADJACENT_BUDGET_USD"
+    )
     daily_llm_budget_usd: Decimal = Field(
         default=Decimal("5.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
@@ -129,6 +133,7 @@ class Settings(BaseSettings):
         "synth_model",
         "research_deep_model",
         "universe_review_budget_usd",
+        "universe_adjacent_budget_usd",
         "research_backfill",
         "max_escalations_per_day",
         "escalation_daily_budget_usd",
@@ -169,7 +174,33 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-TickerType = Literal["etf", "pure_play", "benchmark", "context"]
+TickerType = Literal["etf", "pure_play", "adjacent", "benchmark", "context"]
+# M14: the per-name pipeline (EDGAR, news, classification, scorecards, conclusions, holdings, the
+# strategy sleeve) covers both. The theme basket (§6.1 decomposition) stays pure-play only.
+SLEEVE_TYPES: tuple[TickerType, ...] = ("pure_play", "adjacent")
+# Spec §6.10 / §6.7.1 identifiers (the DB CHECKs in db/models.py list the same names).
+Modality = Literal[
+    "superconducting",
+    "trapped_ion",
+    "neutral_atom",
+    "photonic",
+    "annealing",
+    "spin_silicon",
+    "other",
+]
+Sector = Literal[
+    "pqc_cyber",
+    "sensing_timing",
+    "test_measurement",
+    "photonics_lasers",
+    "cryogenics_gases",
+    "telecom_networking",
+    "specialty_materials",
+    "end_user",
+]
+MODALITY_IDS: tuple[str, ...] = Modality.__args__  # type: ignore[attr-defined]
+SECTOR_IDS: tuple[str, ...] = Sector.__args__  # type: ignore[attr-defined]
+FACT_ID = r"^[a-z0-9_]{3,64}$"
 
 
 Alias = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 .&\-]{1,40}$")]
@@ -182,6 +213,29 @@ class TickerConfig(_Strict):
     active: bool = True
     # M6: company names used only to match news items to tickers (identifiers, not commentary).
     aliases: tuple[Alias, ...] = ()
+    # M14 (spec §6.10): a pure-play's modality, backed by a fact id in facts.yaml (T1 source);
+    # an adjacent name's sector (spec §6.7.1).
+    modality: Modality | None = None
+    modality_fact: str | None = Field(default=None, pattern=FACT_ID)
+    sector: Sector | None = None
+
+    @model_validator(mode="after")
+    def _per_type(self) -> TickerConfig:
+        if self.type == "pure_play":
+            if self.modality is None or self.modality_fact is None:
+                raise ValueError(
+                    f"{self.symbol}: a pure_play needs a modality and a modality_fact (spec §6.10)"
+                )
+        elif self.modality is not None or self.modality_fact is not None:
+            raise ValueError(f"{self.symbol}: only a pure_play has a modality")
+        if self.type == "adjacent":
+            if self.sector is None or self.cik is None:
+                raise ValueError(f"{self.symbol}: an adjacent name needs a sector and a cik")
+        elif self.sector is not None:
+            raise ValueError(f"{self.symbol}: only an adjacent name has a sector")
+        if self.type == "pure_play" and self.cik is None:
+            raise ValueError(f"{self.symbol}: a pure_play needs a cik")
+        return self
 
 
 class Watchlist(_Strict):
@@ -198,6 +252,19 @@ class Watchlist(_Strict):
 
     def by_type(self, t: TickerType) -> tuple[TickerConfig, ...]:
         return tuple(x for x in self.tickers if x.type == t)
+
+    def sleeve(self) -> tuple[TickerConfig, ...]:
+        """Active pure-play + adjacent names: the ones the 9-name cap counts (QTUM excluded)."""
+        return tuple(x for x in self.tickers if x.type in SLEEVE_TYPES and x.active)
+
+    def check_cap(self, cap: int) -> None:
+        names = [t.symbol for t in self.sleeve()]
+        if len(names) > cap:
+            raise ValueError(
+                f"watchlist has {len(names)} active pure_play + adjacent names "
+                f"({', '.join(names)}); the cap is {cap} (max_names_ex_qtum in universe.yaml, "
+                "spec §1.4). Deactivate or remove a name first."
+            )
 
 
 TrustTier = Literal["T1", "T2", "T3"]
@@ -495,6 +562,15 @@ class ProfileParams(_Strict):
     vol_limit_x: Annotated[float, Field(gt=0)] | None  # x QTUM's OOS volatility; None = shown only
     max_dd_limit_pp: Annotated[float, Field(ge=0)] | None  # QTUM's OOS max DD + N pp; None = shown
     rank_metric: Literal["cvar95_low", "sortino_high"]
+    # M14 (spec §6.5, owner decision 2026-10-08): every eligible sleeve name gets at least this
+    # base weight; the family allocates only the rest. The overlay can still cut a name to 0.
+    min_per_name: Annotated[float, Field(ge=0, le=1)] = 0.0
+
+    @model_validator(mode="after")
+    def _floor_below_cap(self) -> ProfileParams:
+        if self.min_per_name > self.max_per_name:
+            raise ValueError("min_per_name must not exceed max_per_name")
+        return self
 
 
 class RebalanceParams(_Strict):
@@ -569,6 +645,16 @@ class StrategiesConfig(_Strict):
     rebalance: RebalanceParams
     publish: PublishParams
     overlay: OverlayParams
+    # M14 (spec §6.5): ticker types in the strategy sleeve; drop `adjacent` to keep adjacent
+    # names out of the model strategies without untracking them.
+    sleeve_types: tuple[Literal["pure_play", "adjacent"], ...] = ("pure_play", "adjacent")
+
+    @field_validator("sleeve_types")
+    @classmethod
+    def _sleeve_types(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if not v or len(set(v)) != len(v):
+            raise ValueError("sleeve_types must be non-empty and unique")
+        return v
 
     @field_validator("profiles")
     @classmethod
@@ -578,13 +664,50 @@ class StrategiesConfig(_Strict):
         return {p: v[p] for p in PROFILES}
 
 
+class ThesisConfig(_Strict):
+    """`config/thesis.yaml` (spec §6.10, M14): thresholds for the deterministic thesis checks.
+    Numbers only; initial values for owner review. The checks never change a weight."""
+
+    # Concentration flags (non-QTUM sleeve).
+    max_modality_share: Annotated[float, Field(gt=0, le=1)] = 0.50
+    max_name_share: Annotated[float, Field(gt=0, le=1)] = 0.25
+    min_modalities: int = Field(default=3, ge=1, le=7)
+    # Red flags.
+    financings_min: int = Field(default=2, ge=1, le=20)
+    financing_lookback_days: int = Field(default=365, ge=30, le=730)
+    fd_yoy_max: Annotated[float, Field(gt=0)] = 0.20
+    runway_min_months: Annotated[float, Field(gt=0)] = 24.0
+    revenue_flat_max: float = 0.05
+    opex_growth_min: float = 0.25
+    acquisitions_liquidity_max: Annotated[float, Field(gt=0)] = 0.25
+    # Winner signals.
+    winner_revenue_quarters: int = Field(default=4, ge=2, le=12)
+    winner_fd_yoy_max: Annotated[float, Field(ge=0)] = 0.05
+    # ETF check: QTUM's combined weight in the excluded hyperscalers.
+    max_etf_hyperscaler_weight: Annotated[float, Field(gt=0, le=1)] = 0.10
+
+
+def load_thesis_config(config_dir: Path) -> ThesisConfig:
+    path = config_dir / "thesis.yaml"
+    return ThesisConfig.model_validate(_load_yaml(path)) if path.exists() else ThesisConfig()
+
+
 def _load_yaml(path: Path) -> object:
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
 
+DEFAULT_MAX_NAMES = 9
+
+
 def load_watchlist(config_dir: Path) -> Watchlist:
-    return Watchlist.model_validate(_load_yaml(config_dir / "watchlist.yaml"))
+    """The watchlist, refused when it has more active pure_play + adjacent names than
+    `max_names_ex_qtum` in universe.yaml (spec §1.2, M14)."""
+    wl = Watchlist.model_validate(_load_yaml(config_dir / "watchlist.yaml"))
+    uni = config_dir / "universe.yaml"
+    cap = load_universe_config(config_dir).max_names_ex_qtum if uni.exists() else DEFAULT_MAX_NAMES
+    wl.check_cap(cap)
+    return wl
 
 
 def load_sources(config_dir: Path) -> Sources:
@@ -818,6 +941,8 @@ class SeedCatalyst(_Strict):
     source_url: str = Field(pattern=r"^https://\S+$")
     keywords: tuple[Keyword, ...] = ()  # product/program names that tie an event to it
     resolve_categories: tuple[ResolveCategory, ...] = ()
+    # M14 (spec §6.10 winner signals): a resolved `roadmap` catalyst tagged `error_correction`.
+    tags: tuple[Literal["error_correction"], ...] = ()
 
     @field_validator("window_end")
     @classmethod
@@ -980,6 +1105,69 @@ FtsForm = Literal[
 ]
 
 
+class McapBuckets(_Strict):
+    """Spec §6.7.1: small < $2B (flagged), mid $2-50B, large > $50B. One input, never decisive."""
+
+    small_below_usd: Annotated[Decimal, Field(gt=0)] = Decimal("2000000000")
+    large_above_usd: Annotated[Decimal, Field(gt=0)] = Decimal("50000000000")
+
+    def bucket(self, mcap: Decimal | None) -> Literal["small", "mid", "large"] | None:
+        if mcap is None:
+            return None
+        if mcap < self.small_below_usd:
+            return "small"
+        return "large" if mcap > self.large_above_usd else "mid"
+
+
+class RemovalRule(_Strict):
+    """Spec §6.7.2: a `remove` for any active name needs a qualifying trigger since the previous
+    review: a RISK event at or above `min_materiality` backed by a T1 source or
+    `min_independent_t2` independent T2 sources, an overlay hard rule, or an accepted AVOID."""
+
+    min_materiality: int = Field(default=4, ge=1, le=5)
+    min_independent_t2: int = Field(default=2, ge=1, le=10)
+
+
+class StrongCandidateRule(_Strict):
+    min_independent_sources: int = Field(default=2, ge=1, le=10)
+    min_t1_sources: int = Field(default=1, ge=0, le=10)
+    cooldown_reviews: int = Field(default=3, ge=0, le=24)
+
+
+class AdjacentSector(_Strict):
+    priority: int = Field(ge=1, le=9)
+    seeds: tuple[Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9.\-]{0,9}$")], ...] = ()
+
+
+class AdjacentTrack(_Strict):
+    """Spec §6.7.1: the adjacent-industry track. Identifiers and numbers only."""
+
+    sectors: dict[Sector, AdjacentSector]
+    # Hard exclusions, checked in code before any research.
+    excluded_symbols: tuple[Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9.\-]{0,9}$")], ...]
+    excluded_sics: tuple[Annotated[str, Field(pattern=r"^\d{4}$")], ...] = ()
+    evidence_lookback_days: int = Field(default=365, ge=30, le=730)
+    # How far into the business section the first "quantum" mention is looked for (a diversified
+    # company mentions it deep in the section, if at all).
+    business_scan_chars: int = Field(default=60_000, ge=600, le=400_000)
+    max_research_candidates: int = Field(default=12, ge=1, le=50)
+    shortlist_size: int = Field(default=5, ge=1, le=5)
+
+    @field_validator("sectors")
+    @classmethod
+    def _all_sectors(cls, v: dict[str, AdjacentSector]) -> dict[str, AdjacentSector]:
+        missing = set(SECTOR_IDS) - set(v)
+        if missing:
+            raise ValueError(f"adjacent.sectors is missing: {sorted(missing)}")
+        return v
+
+    def sector_of_seed(self, symbol: str) -> str | None:
+        for sid, sec in self.sectors.items():
+            if symbol in sec.seeds:
+                return sid
+        return None
+
+
 class UniverseConfig(_Strict):
     """`config/universe.yaml`: the monthly universe review's criteria (spec §6.7, M12). Numbers
     and identifiers only; initial values for owner review."""
@@ -1021,6 +1209,15 @@ class UniverseConfig(_Strict):
     max_evidence_per_candidate: int = Field(ge=1, le=50)
     # A `running` review older than this is treated as crashed and marked failed.
     stale_running_hours: int = Field(ge=1, le=48)
+    # ---- M14 (spec §1.2, §6.7.1-§6.7.3)
+    # At most this many active pure_play + adjacent names (QTUM excluded); the watchlist loader,
+    # holdings and the review enforce it.
+    max_names_ex_qtum: int = Field(default=DEFAULT_MAX_NAMES, ge=1, le=30)
+    mcap_buckets: McapBuckets = Field(default_factory=lambda: McapBuckets())
+    removal: RemovalRule = Field(default_factory=lambda: RemovalRule())
+    strong_candidate: StrongCandidateRule = Field(default_factory=lambda: StrongCandidateRule())
+    full_review_cooldown_days: int = Field(default=7, ge=1, le=90)
+    adjacent: AdjacentTrack | None = None
 
 
 def load_universe_config(config_dir: Path) -> UniverseConfig:

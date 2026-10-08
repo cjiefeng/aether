@@ -60,7 +60,8 @@ from tests.llm_fakes import (
 
 TODAY = date(2026, 11, 1)
 NOW = datetime(2026, 11, 1, 2, 0, tzinfo=UTC)
-CFG = load_universe_config(CONFIG_DIR)
+# The M12 tests cover the pure-play track only; tests/test_universe_adjacent.py covers M14's.
+CFG = load_universe_config(CONFIG_DIR).model_copy(update={"adjacent": None})
 SOURCES = Sources(domains=(SourceDomain(domain="example.test", tier="T2"),))
 
 # Synthetic companies: (cik, ticker, exchange or None, sessions, close, volume, shares, business)
@@ -103,8 +104,20 @@ COMPANIES = {
 WATCHLIST = Watchlist(
     tickers=(
         TickerConfig(symbol="QTUM", type="etf"),
-        TickerConfig(symbol="ACME", type="pure_play", cik="0000000101"),
-        TickerConfig(symbol="DEMO", type="pure_play", cik="0000000102"),
+        TickerConfig(
+            symbol="ACME",
+            type="pure_play",
+            cik="0000000101",
+            modality="trapped_ion",
+            modality_fact="acme_modality",
+        ),
+        TickerConfig(
+            symbol="DEMO",
+            type="pure_play",
+            cik="0000000102",
+            modality="trapped_ion",
+            modality_fact="acme_modality",
+        ),
     )
 )
 

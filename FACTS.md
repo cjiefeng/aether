@@ -17,6 +17,14 @@ Only `signed_off` facts reach LLM prompts as facts; the rest are labelled UNCONF
 | `darpa_qbi_stage_b_duration` | DARPA describes QBI Stage B (selections as of 2025-11-06) as 'yearlong'; companies that succeed are invited to the final stage (Stage C). DARPA states no date for Stage C invitations | https://darpa.mil/research/programs/quantum-benchmarking-initiative/stage-b-selection | 2026-10-05 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
 | `ibm_roadmap_ftqc` | IBM roadmap (blog, 2025-06-10): Kookaburra 2026, Cockatoo 2027, Starling 2029 (200 logical qubits, 100 million gates) | https://ibm.com/quantum/blog/large-scale-ftqc | 2026-10-04 | SIGNED OFF |
 | `pqc_deadlines` | NIST IR 8547 (initial public draft, Nov 2024): quantum-vulnerable RSA/ECDSA/ECDH/DH at 112-bit strength deprecated after 2030, all quantum-vulnerable public-key algorithms disallowed after 2035. EU coordinated PQC roadmap (v1.1, June 2025): high-risk use cases transitioned no later than end-2030; as many systems as feasible (medium-risk) by end-2035 | https://nvlpubs.nist.gov/nistpubs/ir/2024/NIST.IR.8547.ipd.pdf<br>https://digital-strategy.ec.europa.eu/en/library/coordinated-implementation-roadmap-transition-post-quantum-cryptography<br>https://insidedeeptech.com/how-many-qubits-to-break-rsa-2048/ | 2026-10-04 | SIGNED OFF |
+| `ionq_modality` | IonQ's FY2025 10-K (filed 2026-02-25) says it uses trapped atomic ions as the foundational qubits for its quantum computers (modality: trapped_ion) | https://www.sec.gov/Archives/edgar/data/1824920/000119312526071562/ionq-20251231.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `qnt_modality` | Quantinuum's final IPO prospectus (424B4, 2026-06-03) describes its systems as trapped-ion quantum computers with a multi-zone QCCD architecture (modality: trapped_ion) | https://www.sec.gov/Archives/edgar/data/2110105/000162828026041003/quantinuum-424b4.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `rgti_modality` | Rigetti's FY2025 10-K (filed 2026-03-04) says its quantum computers are based on superconducting qubits (modality: superconducting) | https://www.sec.gov/Archives/edgar/data/1838359/000110465926023454/rgti-20251231x10k.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `qbts_modality` | D-Wave's FY2025 10-K (filed 2026-02-26) describes annealing and gate-model quantum computers, both built on superconducting qubits (modality tag: annealing) | https://www.sec.gov/Archives/edgar/data/1907982/000190798226000026/qbts-20251231.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `infq_modality` | Infleqtion's FY2025 10-K (filed 2026-03-31) says its quantum computers, clocks and RF sensors are built on neutral atoms (modality: neutral_atom) | https://www.sec.gov/Archives/edgar/data/2007825/000119312526134544/d94946d10k.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `keys_quantum_evidence` | Keysight's FY2025 10-K (filed 2025-12-17) lists quantum communications and computing among its aerospace, defense and government customers' research applications, and quantum among the new communications technologies its Communications Solutions Group serves (sector: test_measurement) | https://www.sec.gov/Archives/edgar/data/1601046/000160104625000127/keys-20251031.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `feim_quantum_evidence` | Frequency Electronics' FY2026 10-K (filed 2026-07-17) says its FEI-NY segment makes precision time and frequency products and, more recently, quantum sensing products (magnetometers and Rydberg sensors) (sector: sensing_timing) | https://www.sec.gov/Archives/edgar/data/39020/000118518526002997/feim10k043026.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
+| `panw_quantum_evidence` | Palo Alto Networks' FY2026 10-K (filed 2026-09-10) lists 'Quantum Security' among the add-on security services of its platform (sector: pqc_cyber) | https://www.sec.gov/Archives/edgar/data/1327567/000132756726000023/panw-20260731.htm | 2026-10-09 | VERIFIED BY CLAUDE (awaiting owner sign-off) |
 
 ## Notes
 
@@ -29,6 +37,14 @@ Only `signed_off` facts reach LLM prompts as facts; the rest are labelled UNCONF
 - `darpa_qbi_stage_b_duration`: Added in M8 for the QBI Stage C catalysts (IONQ, QNT). The catalyst window starts 2026-11-06 (one year after the Stage B list) and has no end date, because DARPA gives none; the start is a day count from DARPA's wording, not an announced date.
 - `ibm_roadmap_ftqc`: Matches the blog post. It also places a Starling magic-state-injection demonstration in 2028. These are roadmap targets, not delivered milestones.
 - `pqc_deadlines`: Refined from the seed: the NIST 2030 'deprecated' date applies only to 112-bit security strength (>=128-bit goes straight to 'disallowed after 2035'), and NIST IR 8547 is still a draft on the CSRC page. EU wording checked in the roadmap PDF linked from the Commission page.
+- `ionq_modality`: Business section, 'Our Approach to Quantum Computing: Trapped Ions'.
+- `qnt_modality`: Glossary and business description in the 424B4. Quantinuum has not filed a 10-K yet.
+- `rgti_modality`: Item 1, Business: 'Our quantum computers are based on superconducting qubits'.
+- `qbts_modality`: The spec tags QBTS `annealing`; the 10-K also describes a superconducting gate-model programme (including the Quantum Circuits acquisition). One tag per name, so the gate-model work isn't counted as superconducting exposure.
+- `infq_modality`: Business section and glossary ('neutral atoms' modality; Sqale neutral-atom computer).
+- `keys_quantum_evidence`: The 10-K mentions quantum twice, both as application areas; it names no quantum product line or quantum revenue.
+- `feim_quantum_evidence`: Item 1, Business (FEI-NY segment). The 10-K calls the quantum sensor market 'a new growing market' for the segment.
+- `panw_quantum_evidence`: Item 1, Business: one of several add-on services; no separate revenue is disclosed for it.
 
 ## Open questions
 
@@ -36,3 +52,4 @@ Only `signed_off` facts reach LLM prompts as facts; the rest are labelled UNCONF
 - `qnt_lockup_expiry`: Exact first trading day locked-up QNT shares can be sold (2026-11-30 or 2026-12-01), and any early release announced by the underwriters.
 - `infq_listing`: Infleqtion earn-out shares (if any): read the S-4 / proxy statement/prospectus for the Churchill Capital Corp X merger.
 - `darpa_qbi_stage_b_duration`: When DARPA will announce Stage C invitations, and whether Stage B runs past one year.
+- `keys_quantum_evidence`: Keysight quantum product lines or contracts (e.g. quantum control/test systems): find a T1 IR page or filing that names them.

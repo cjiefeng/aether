@@ -26,7 +26,7 @@ from typing import Any
 from sqlalchemy import Connection, Engine, select
 
 from aether.classify.rules import RuleHit, short_interest_spike
-from aether.config import ShortInterestRule
+from aether.config import SLEEVE_TYPES, ShortInterestRule
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import (
@@ -198,7 +198,7 @@ def evaluate_spikes(
 ) -> int:
     """Spike rule for the given (symbol, settlement) pure-play reports; returns events written."""
     pure = set(
-        conn.execute(select(tickers.c.symbol).where(tickers.c.type == "pure_play")).scalars()
+        conn.execute(select(tickers.c.symbol).where(tickers.c.type.in_(SLEEVE_TYPES))).scalars()
     )
     n = 0
     for sym, settled in sorted(keys):

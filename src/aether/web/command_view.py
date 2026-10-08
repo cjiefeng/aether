@@ -33,6 +33,7 @@ DEDUPE_KINDS = frozenset(
         "sync_holdings",
         "test_alert",
         "universe_review",
+        "universe_full_review",
     }
 )
 
@@ -50,6 +51,7 @@ LABELS = {
     "mark_catalyst": "Catalyst update",
     "synthesize": "Conclusion run",
     "universe_review": "Universe review",
+    "universe_full_review": "Full re-evaluation",
 }
 
 # States the template knows. queued/running keep polling; the rest are final for this view.
@@ -109,6 +111,9 @@ def _done_message(kind: str, result: dict[str, Any]) -> tuple[str, bool]:
         case "universe_review":
             n = result.get("rows") if isinstance(result.get("rows"), int) else 0
             return f"Universe review done: {n} companies reviewed.", True
+        case "universe_full_review":
+            n = result.get("rows") if isinstance(result.get("rows"), int) else 0
+            return f"Full re-evaluation done: {n} companies reviewed.", True
         case "synthesize":
             n = result.get("rows") if isinstance(result.get("rows"), int) else 0
             return (

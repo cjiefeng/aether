@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import Connection, Engine, select, update
 
 from aether.classify.rules import RuleHit, classify_filing
-from aether.config import Rubric
+from aether.config import SLEEVE_TYPES, Rubric
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import (
@@ -178,9 +178,9 @@ def parse_document(symbol: str, f: FilingMeta, body: str) -> ParsedDoc:
 # --------------------------------------------------------------------------- reads
 
 
-def pure_play_ciks(engine: Engine, symbols: Sequence[str] | None = None) -> list[tuple[str, str]]:
+def sleeve_ciks(engine: Engine, symbols: Sequence[str] | None = None) -> list[tuple[str, str]]:
     q = select(tickers.c.symbol, tickers.c.cik).where(
-        tickers.c.active == 1, tickers.c.type == "pure_play", tickers.c.cik.is_not(None)
+        tickers.c.active == 1, tickers.c.type.in_(SLEEVE_TYPES), tickers.c.cik.is_not(None)
     )
     if symbols is not None:
         q = q.where(tickers.c.symbol.in_(list(symbols)))
@@ -397,7 +397,7 @@ def ingest_edgar(
     since: date = SINCE,
     max_docs: int = MAX_DOCS_PER_RUN,
 ) -> JobResult:
-    targets = pure_play_ciks(engine, symbols)
+    targets = sleeve_ciks(engine, symbols)
     done = parsed_accessions(engine)
     known = known_accessions(engine)
     have_fundamentals = symbols_with_current_xbrl(engine)

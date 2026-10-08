@@ -35,6 +35,10 @@ MONEY_CONCEPTS = (
     "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterestNoncurrent",
     "us-gaap:MarketableSecuritiesNoncurrent",
     "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+    # M14 thesis red flags (spec §6.10): spending growth and cash paid for acquisitions.
+    "us-gaap:OperatingExpenses",
+    "us-gaap:CostsAndExpenses",
+    "us-gaap:PaymentsToAcquireBusinessesNetOfCashAcquired",
 )
 # Flow concepts whose 6- and 9-month year-to-date values are kept too: 10-Qs report Q2/Q3 cash
 # flows only as YTD, so trailing-twelve-month figures need them (M9).
@@ -43,6 +47,9 @@ YTD_CONCEPTS = (
     "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
     "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
     "us-gaap:NetCashProvidedByUsedInOperatingActivities",
+    "us-gaap:OperatingExpenses",
+    "us-gaap:CostsAndExpenses",
+    "us-gaap:PaymentsToAcquireBusinessesNetOfCashAcquired",
 )
 SHARE_CONCEPTS = (
     "dei:EntityCommonStockSharesOutstanding",
@@ -66,7 +73,7 @@ FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A", "S-1", "S-1/A", "S-4", "S-4/A", "8-
 
 
 # Bump when the stored concepts or durations change: every symbol's companyfacts is refetched once.
-PARSER_VERSION = "m9.2"
+PARSER_VERSION = "m14.1"  # m14: opex + acquisitions concepts
 
 
 def _keep_duration(days: int, ytd: bool = False) -> bool:

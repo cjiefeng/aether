@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, Engine, select
 
-from aether.config import AlertsConfig, RiskFlagParams
+from aether.config import SLEEVE_TYPES, AlertsConfig, RiskFlagParams
 from aether.db.models import (
     alerts,
     earnings_calendar,
@@ -175,7 +175,7 @@ def off_cycle_reviews(
         .join(event_tickers, event_tickers.c.event_id == events.c.id)
         .join(tickers, tickers.c.symbol == event_tickers.c.symbol)
         .where(
-            tickers.c.type == "pure_play",
+            tickers.c.type.in_(SLEEVE_TYPES),
             event_classifications.c.materiality >= min_materiality,
             events.c.quarantined == 0,
             events.c.injection_suspected == 0,
@@ -219,7 +219,9 @@ def insider_clusters(engine: Engine, params: RiskFlagParams, now: datetime) -> l
     with engine.connect() as conn:
         syms = list(
             conn.execute(
-                select(tickers.c.symbol).where(tickers.c.type == "pure_play", tickers.c.active == 1)
+                select(tickers.c.symbol).where(
+                    tickers.c.type.in_(SLEEVE_TYPES), tickers.c.active == 1
+                )
             ).scalars()
         )
         cooling = {

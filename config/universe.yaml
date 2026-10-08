@@ -51,3 +51,51 @@ proposal_max_attempts: 2
 max_evidence_per_candidate: 12
 
 stale_running_hours: 3
+
+# ---- M14 (spec §1.2, §6.7.1-§6.7.3)
+# At most this many active pure_play + adjacent names besides QTUM (the watchlist loader refuses
+# more; the review never proposes an add without a free slot).
+max_names_ex_qtum: 9
+
+# Market-cap buckets: one input, never decisive. small (< $2B) is flagged for volatility,
+# liquidity and dilution risk; large (> $50B) for diluted quantum exposure.
+mcap_buckets:
+  small_below_usd: "2000000000"
+  large_above_usd: "50000000000"
+
+# §6.7.2: a `remove` for any active name needs, since the previous review, a RISK event at or above
+# min_materiality backed by a T1 source or min_independent_t2 independent T2 sources, an overlay
+# hard rule zeroing the name, or an AVOID stance accepted by hysteresis.
+removal:
+  min_materiality: 4
+  min_independent_t2: 2
+
+# §6.7.2: with every slot full, a candidate passing every add criterion is notified as a strong
+# candidate only with high (code-validated) exposure and these evidence counts, at most once per
+# cooldown_reviews reviews unless there's newer qualifying evidence.
+strong_candidate:
+  min_independent_sources: 2
+  min_t1_sources: 1
+  cooldown_reviews: 3
+
+# §6.7.3: the owner-triggered full re-evaluation runs at most once per this many days.
+full_review_cooldown_days: 7
+
+# §6.7.1: the adjacent-industry track. Seeds are tickers from the owner's 2026-10-07 screen: inputs
+# to discovery, not opinions. Exclusions are checked in code before any research: hyperscalers and
+# cloud platforms, SIC 3674 (semiconductors), pure-plays and names already active.
+adjacent:
+  sectors:
+    pqc_cyber:          {priority: 1, seeds: [NET, PANW, FTNT, ZS]}
+    sensing_timing:     {priority: 1, seeds: [FEIM, LMT, NOC, RTX, HON, HONA]}
+    test_measurement:   {priority: 2, seeds: [KEYS, EMR]}
+    photonics_lasers:   {priority: 2, seeds: [COHR, LITE, IPGP, MKSI, LASR]}
+    cryogenics_gases:   {priority: 2, seeds: [LIN, BKR]}
+    telecom_networking: {priority: 2, seeds: [SKM]}
+    specialty_materials: {priority: 3, seeds: []}
+    end_user:           {priority: 3, seeds: [JPM, HSBC]}
+  excluded_symbols: [AMZN, MSFT, GOOGL, ORCL, BABA]
+  excluded_sics: ["3674"]
+  evidence_lookback_days: 365
+  max_research_candidates: 12
+  shortlist_size: 5

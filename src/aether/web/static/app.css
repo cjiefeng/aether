@@ -169,6 +169,11 @@ button.range { min-height: 30px; padding: 0 var(--s3); font-size: var(--fs-sm); 
 button.range:hover { color: var(--fg); filter: none; }
 button.range.active { color: var(--fg); border-color: var(--vision); background: color-mix(in srgb, var(--vision) 16%, transparent); }
 .range-group { display: flex; flex-wrap: wrap; gap: var(--s1); }
+/* M14: page tabs as links (no script). */
+a.tab { display: inline-flex; align-items: center; min-height: 30px; padding: 0 var(--s3); font-size: var(--fs-sm);
+        font-weight: 500; color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-sm); text-decoration: none; }
+a.tab:hover { color: var(--fg); }
+a.tab.active { color: var(--fg); border-color: var(--vision); background: color-mix(in srgb, var(--vision) 16%, transparent); }
 
 .top button.link { margin-left: auto; min-height: 32px; padding: 0 var(--s3); font-weight: 500;
                    background: transparent; color: var(--muted); border-color: var(--line); }
@@ -176,7 +181,7 @@ button.range.active { color: var(--fg); border-color: var(--vision); background:
 
 @media (pointer: coarse) {
   button, .top nav a { min-height: 44px; }
-  button.range, .top button.link { min-height: 40px; }
+  button.range, a.tab, .top button.link { min-height: 40px; }
 }
 
 /* ---------------------------------------------------------------- forms */

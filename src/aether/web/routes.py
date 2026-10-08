@@ -17,6 +17,7 @@ from aether.classify.prompt import prompt_version
 from aether.config import (
     CATEGORY_CLASS,
     PROFILES,
+    SLEEVE_TYPES,
     load_alerts_config,
     load_llm_config,
     load_rubric,
@@ -33,7 +34,7 @@ from aether.db.commands import (
 )
 from aether.ops import view as ops_view
 from aether.options.view import options_panel, options_stale
-from aether.portfolio import holdings_view, performance
+from aether.portfolio import holdings_view, performance, thesis
 from aether.portfolio import view as strategies_view
 from aether.portfolio.holdings import (
     HoldingsUpdate,
@@ -55,10 +56,13 @@ router = APIRouter()
 
 DISCLAIMER = "Personal research tool, not financial advice."
 SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
-TYPE_ORDER = ("etf", "pure_play", "benchmark", "context")
+TYPE_ORDER = ("etf", "pure_play", "adjacent", "benchmark", "context")
+# Types with the full per-name pipeline (news, scorecard, reactions, conclusions, options).
+PER_NAME_TYPES = ("etf", *SLEEVE_TYPES)
 TYPE_LABELS = {
     "etf": "Theme ETF",
     "pure_play": "Pure-plays",
+    "adjacent": "Adjacent industries",
     "benchmark": "Benchmarks",
     "context": "Context",
 }
@@ -104,7 +108,9 @@ def overview(request: Request) -> HTMLResponse:
         for t in TYPE_ORDER
         if any(x.type == t for x in summaries)
     ]
+    # The theme basket (chart, QTUM cross-check) stays pure-play only; flags cover the sleeve.
     pure = [s for s, t in ticker_types if t == "pure_play"]
+    sleeve = [s for s, t in ticker_types if t in SLEEVE_TYPES]
     rubric = load_rubric(request.app.state.settings.config_dir)
     return _render(
         request,
@@ -116,7 +122,7 @@ def overview(request: Request) -> HTMLResponse:
             "pure": pure,
             "ranges": list(market.RANGES),
             "default_range": market.DEFAULT_RANGE,
-            "flags": open_flags(engine, rubric.risk_flags, today, pure, rubric.short_interest),
+            "flags": open_flags(engine, rubric.risk_flags, today, sleeve, rubric.short_interest),
             "risk_events": sec_view.recent_events(engine, days=30),
             "sec_fresh": sec_view.sec_freshness(engine),
             "alerts": alerts_view.recent_alerts(engine, limit=5),
@@ -147,7 +153,7 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
         symbol, type_, series, market.latest_providers(engine).get(symbol), _today()
     )
     sec: dict[str, object] = {}
-    if type_ == "pure_play":
+    if type_ in SLEEVE_TYPES:
         rubric = load_rubric(request.app.state.settings.config_dir)
         today = _today()
         sec = {
@@ -165,7 +171,7 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
         }
     today = _today()
     options: dict[str, object] = {}
-    if type_ in ("etf", "pure_play"):
+    if type_ in PER_NAME_TYPES:
         last, stale = options_stale(engine)
         options = {"panel": options_panel(engine, [symbol])[0], "last_ok": last, "stale": stale}
     return _render(
@@ -175,7 +181,7 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             "catalysts": catalysts_view.upcoming(engine, today, days=730, symbol=symbol),
             "catalysts_done": catalysts_view.resolved(engine, limit=10, symbol=symbol),
             "short_interest": catalysts_view.short_interest_rows(engine, symbol)
-            if type_ in ("etf", "pure_play")
+            if type_ in PER_NAME_TYPES
             else [],
             "options": options,
             "s": summary,
@@ -184,22 +190,28 @@ def ticker_page(request: Request, symbol: str) -> HTMLResponse:
             "sec": sec,
             "code_labels": sec_view.CODE_LABELS,
             "news": news_view.news_rows(engine, symbol=symbol, limit=10)
-            if type_ in ("etf", "pure_play")
+            if type_ in PER_NAME_TYPES
             else [],
             "origin_labels": news_view.ORIGIN_LABELS,
             "score": score_view.latest_scorecard(engine, symbol)
-            if type_ in ("etf", "pure_play")
+            if type_ in PER_NAME_TYPES
             else None,
             "reactions": score_view.reactions_for(engine, symbol)
-            if type_ in ("etf", "pure_play")
+            if type_ in PER_NAME_TYPES
             else [],
             "score_fresh": score_view.freshness(engine),
             "fd_labels": score_view.FD_LABELS,
             "conclusion": synth_view.ticker_conclusions(engine, symbol)
-            if type_ in ("etf", "pure_play")
+            if type_ in PER_NAME_TYPES
             else None,
             "stance": _stances(request, today).get(symbol),
             "cite": synth_view.citation,
+            # M14 (spec §6.10): red flags and winner signals for a pure-play / adjacent name.
+            "thesis": thesis.ticker_checks(
+                engine, symbol, today, request.app.state.settings.config_dir
+            )
+            if type_ in SLEEVE_TYPES
+            else None,
         },
     )
 
@@ -257,7 +269,7 @@ def catalysts_page(request: Request) -> HTMLResponse:
 @router.get("/news", response_class=HTMLResponse)
 def news_page(request: Request, symbol: str = "", origin: str = "") -> HTMLResponse:
     engine = request.app.state.ro_engine
-    known = [s for s, t in market.load_tickers(engine) if t in ("etf", "pure_play")]
+    known = [s for s, t in market.load_tickers(engine) if t in PER_NAME_TYPES]
     sym = symbol if symbol in known else None
     org = origin if origin in news_view.NEWS_ORIGINS else None
     return _render(
@@ -290,7 +302,7 @@ def feed_page(
     event: str = "",
 ) -> HTMLResponse:
     engine = request.app.state.ro_engine
-    known = [s for s, t in market.load_tickers(engine) if t in ("etf", "pure_play")]
+    known = [s for s, t in market.load_tickers(engine) if t in PER_NAME_TYPES]
     f = feed_view.FeedFilters.parse(
         event=event,
         klass=cls,
@@ -358,6 +370,12 @@ def strategies_page(request: Request) -> HTMLResponse:
         {
             "v": strategies_view.strategies_view(engine),
             "fresh": strategies_view.freshness(engine),
+            # M14 (spec §6.10): thesis checks on every profile's published targets.
+            "th": thesis.page_report(
+                engine, _today(), request.app.state.settings.config_dir, with_holdings=False
+            ),
+            "thesis_profiles": PROFILES,
+            "red_flag_labels": thesis.RED_FLAG_LABELS,
             "banner": strategies_view.BANNER,
             "family_labels": strategies_view.FAMILY_LABELS,
             "columns": strategies_view.METRIC_COLUMNS,
@@ -375,6 +393,10 @@ def holdings_page(request: Request) -> HTMLResponse:
         "holdings.html",
         {
             "h": h,
+            # M14 (spec §6.10): thesis checks on the holdings and the selected profile's targets.
+            "th": thesis.page_report(engine, _today(), request.app.state.settings.config_dir),
+            "thesis_profiles": [h.settings.selected_profile],
+            "red_flag_labels": thesis.RED_FLAG_LABELS,
             "perf_available": not h.holdings.empty or performance.has_history(engine),
             "perf_ranges": [*market.RANGES, performance.SINCE],
             "overlay_value": synth_view.overlay_line(engine),
@@ -400,24 +422,33 @@ def review_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/universe", response_class=HTMLResponse)
-def universe_page(request: Request, review: int | None = None) -> HTMLResponse:
-    """M12: the latest universe review (or `?review=<id>`) and the run history."""
+def universe_page(
+    request: Request, review: int | None = None, tab: str = "pure_play"
+) -> HTMLResponse:
+    """M12: the latest universe review (or `?review=<id>`) and the run history. M14: tabs for
+    the pure-play track, the adjacent-industry track and the full re-evaluation."""
     state = request.app.state
     engine = state.ro_engine
+    tab = tab if tab in universe_view.TABS else "pure_play"
     history = universe_view.reviews(engine)
     shown = next((r for r in history if r.id == review), None) if review else None
     if shown is None:
-        shown = next((r for r in history if r.status == "done"), None)
+        shown = universe_view.default_review(history, tab)
+    rows = universe_view.candidates(engine, shown.id) if shown else []
     return _render(
         request,
         "universe.html",
         {
             "history": history,
             "review": shown,
-            "rows": universe_view.candidates(engine, shown.id) if shown else [],
+            "tab": tab,
+            "tabs": universe_view.TABS,
+            "rows": [r for r in rows if r.track == tab] if tab != "full" else rows,
             "sweep": universe_view.sweep_evidence(engine, shown.id) if shown else {},
             "budget": state.settings.universe_review_budget_usd,
+            "adjacent_budget": state.settings.universe_adjacent_budget_usd,
             "model": state.settings.research_deep_model,
+            "last_full": universe_view.last_full(history),
         },
     )
 
@@ -670,6 +701,11 @@ def command_research_sweep(request: Request) -> Response:
 @router.post("/commands/universe-review")
 def command_universe_review(request: Request) -> Response:
     return _enqueue(request, "universe_review")
+
+
+@router.post("/commands/universe-full-review")
+def command_universe_full_review(request: Request) -> Response:
+    return _enqueue(request, "universe_full_review")
 
 
 @router.post("/commands/test-alert")

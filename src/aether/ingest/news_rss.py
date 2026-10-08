@@ -14,7 +14,7 @@ from typing import Any
 
 from sqlalchemy import Engine, select
 
-from aether.config import Feed, Sources, Watchlist
+from aether.config import SLEEVE_TYPES, Feed, Sources, Watchlist
 from aether.db.dialect import upsert
 from aether.db.engine import write_tx
 from aether.db.models import feed_state, tickers
@@ -42,7 +42,7 @@ def build_matcher(engine: Engine, watchlist: Watchlist, sources: Sources) -> Mat
     rows = [
         (t.symbol, t.aliases)
         for t in watchlist.tickers
-        if t.active and t.type in ("etf", "pure_play") and t.symbol in known
+        if t.active and t.type in ("etf", *SLEEVE_TYPES) and t.symbol in known
     ]
     return Matcher.build(rows, sources.theme_keywords)
 

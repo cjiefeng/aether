@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Universe · Aether{% endblock %}
 {% macro usd(v) -%}{% if v %}${{ "{:,}".format(v|int) }}{% else %}unknown{% endif %}{%- endmacro %}
+{% macro breakdown(b) -%}
+<table class="small num compact">
+  <thead><tr><th>Modality / sector</th><th>Names</th><th>% ex-QTUM</th><th>% sleeve</th></tr></thead>
+  <tbody>{% for r in b.rows %}<tr><td>{{ r.category|replace("_", " ") }}{% if r.kind == "sector" %} <span class="muted">(supplier)</span>{% endif %}</td>
+    <td>{{ r.symbols|join(", ") }}</td><td>{{ r.pct_ex_qtum|pct(False) }}</td><td>{{ r.pct_whole|pct(False) }}</td></tr>{% endfor %}
+  <tr><td>QTUM</td><td></td><td></td><td>{{ b.qtum|pct(False) }}</td></tr></tbody>
+</table>
+{% for f in b.flags %}<p class="warn small">Concentration: {{ f.text }}.</p>{% endfor %}
+{%- endmacro %}
 {% macro ev(e, ref) -%}
 <li><span class="badge tier-{{ e.trust_tier|lower }}">{{ e.trust_tier }}</span>
   {% if e.kind == "business_excerpt" %}{{ e.url|extlink(e.form ~ " filed " ~ e.published_at ~ ", business section") }}
@@ -16,12 +25,20 @@
   (thresholds in <code>config/universe.yaml</code>). The model proposes; code overrides anything the criteria don't support.
   These are <strong>proposals only</strong>: apply one by editing <code>watchlist.yaml</code> in a PR.
   Evidence text is untrusted (from filings and web search).</p>
+<p class="muted small">The same run screens the <strong>industries around quantum computing</strong> (adjacent track): hyperscalers,
+  semiconductors (SIC 3674) and pure-plays are excluded in code before any research; an add needs a US listing, quantum-related
+  evidence in the last 12 months (one T1 or two independent T2 sources) and the same floors. At most
+  {{ (review.payload.slots.cap if review and review.payload.slots else 9) }} names besides QTUM: a removal needs a cited qualifying event,
+  and when every slot is full a candidate is shown as watch, with a separate strong-candidate message for an exceptional one.</p>
 
 <section class="card">
   <div class="card-head"><h2>Run</h2>
     <span class="muted small">{{ model }}, cap ${{ "%.2f"|format(budget) }} per run (outside the daily soft budget)</span></div>
+  <p class="muted small">Adjacent track: its own cap ${{ "%.2f"|format(adjacent_budget) }}. A full re-evaluation uses both caps and runs at most once per 7 days{% if last_full %} (last requested {{ last_full.created_at[:10] }}){% endif %}.</p>
   <button hx-disabled-elt="this" hx-post="/commands/universe-review" hx-target="#uv-result" hx-swap="innerHTML">Run review now</button>
-  <span id="uv-result" class="result" role="status">{% with status = active_command_status(request, "universe_review") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span>
+  <button hx-disabled-elt="this" hx-post="/commands/universe-full-review" hx-target="#uv-result" hx-swap="innerHTML"
+          hx-confirm="Run a full re-evaluation of every name? It re-ranks current names and candidates together and spends against both review caps.">Run full re-evaluation</button>
+  <span id="uv-result" class="result" role="status">{% with status = active_command_status(request, "universe_review") or active_command_status(request, "universe_full_review") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span>
   {% if history %}
   <table class="small">
     <thead><tr><th>Date</th><th>Kind</th><th>Status</th><th class="num">Cost</th><th>Changes</th></tr></thead>
@@ -37,7 +54,14 @@
   {% else %}<p class="muted small">No review yet.</p>{% endif %}
 </section>
 
-{% if review %}
+<nav class="range-group" aria-label="Universe tabs">
+  {% for key, label in tabs.items() %}<a class="tab{{ ' active' if key == tab }}" href="/universe?tab={{ key }}{% if review and key != 'full' and review.kind != 'full' %}&amp;review={{ review.id }}{% endif %}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+</nav>
+
+{% if tab == "full" and (not review or review.kind != "full") %}
+<section class="card"><p class="muted">No full re-evaluation yet. It's owner-triggered: <strong>Run full re-evaluation</strong> above
+  re-ranks every current name and every candidate together and proposes a complete set (proposals only).</p></section>
+{% elif review %}
 {% set pl = review.payload %}
 <section class="card">
   <div class="card-head"><h2>Review {{ review.as_of }}</h2>
@@ -46,15 +70,77 @@
     {{ pl.counts.qtum_lines or 0 }} QTUM holdings ({{ pl.counts.outside_mandate or 0 }} outside the US-listed mandate), and the current pure-plays.
     {{ pl.counts.screened or 0 }} screened out before research.</p>{% endif %}
   {% if pl.changes == 0 %}<p><strong>No changes proposed.</strong></p>{% endif %}
+  {% if pl.slots %}<p class="small">Names: {{ pl.slots.active }} of {{ pl.slots.cap }} used; {{ pl.slots.free }} slot(s) free after
+    {{ pl.slots.removals }} proposed removal(s).{% if pl.slots.blocked %} Blocked for lack of a slot: {{ pl.slots.blocked|join(", ") }}.{% endif %}
+    {% if pl.strong %}Strong candidates notified: <strong>{{ pl.strong|join(", ") }}</strong>.{% endif %}</p>{% endif %}
+  {% if pl.triggers %}<details><summary class="small">Qualifying events since {{ pl.triggers_since }} ({{ pl.triggers|length }} name(s))</summary>
+    <ul class="small">{% for sym, lines in pl.triggers.items() %}{% for l in lines %}<li>{{ sym }}: {{ l }}</li>{% endfor %}{% endfor %}</ul></details>{% endif %}
   {% for n in pl.notes or [] %}<p class="banner stale small">{{ n }}</p>{% endfor %}
 </section>
 
-{% for c in rows %}
+{% if tab == "full" and pl.full %}
+{% set f = pl.full %}
+<section class="card">
+  <h2>Proposed set ({{ f.members|length }} of {{ f.cap }})</h2>
+  <p class="muted small">Every current name competed as a candidate; nothing is applied automatically. {{ f.weights_note }}</p>
+  {% for x in f.flags %}<p class="warn small">The proposed set breaks a concentration flag: {{ x.text }}.</p>{% endfor %}
+  <table class="small">
+    <thead><tr><th>Name</th><th>Decision</th><th>Modality / sector</th><th>Reasons</th></tr></thead>
+    <tbody>
+    {% for m in f.members %}<tr><td>{{ m.symbol }}</td><td><span class="badge action-{{ 'keep' if m.decision == 'keep' else 'add' }}">{{ m.decision }}</span></td>
+      <td>{{ (m.category or "not tagged")|replace("_", " ") }}{% if m.category_label %} <span class="muted">({{ m.category_label }})</span>{% endif %}</td>
+      <td>{% for r in m.reasons %}{{ r.text }} <span class="muted">({{ r.evidence_ids|join(", ") }})</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</td></tr>{% endfor %}
+    {% for d in f.drops %}<tr><td>{{ d.symbol }}</td><td><span class="badge action-remove">drop</span></td><td></td>
+      <td>{% for r in d.reasons %}{{ r.text }} <span class="muted">({{ r.evidence_ids|join(", ") }})</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <div class="grid2">
+    <div><h3>Before (current set)</h3>{{ breakdown(f.before) }}</div>
+    <div><h3>After (proposed set)</h3>{{ breakdown(f.after) }}</div>
+  </div>
+  {% if f.not_chosen %}<h3>Candidates not chosen</h3>
+  <ul class="small">{% for n in f.not_chosen %}<li>{{ n.symbol }}: {{ n.reason.text }}{% if n.reason.evidence_ids %} <span class="muted">({{ n.reason.evidence_ids|join(", ") }})</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+</section>
+{% endif %}
+
+{% if tab == "adjacent" %}
+{% set a = pl.adjacent or {} %}
+<section class="card">
+  <h2>Adjacent industries</h2>
+  {% if not a %}<p class="muted small">This review predates the adjacent track (M14).</p>
+  {% elif a.status != "done" %}<p class="banner stale small">Adjacent track {{ a.status }}{% if a.error %}: {{ a.error }}{% endif %}</p>{% endif %}
+  {% if pl.shortlist %}<p class="small">Shortlist (sector priority first): <strong>{{ pl.shortlist|join(", ") }}</strong></p>{% endif %}
+  {% if rows %}
+  <table class="small">
+    <thead><tr><th>Company</th><th>Sector</th><th>Market cap</th><th>Exposure</th><th>Evidence (12 mo.)</th><th>Overlap</th><th>Action</th></tr></thead>
+    <tbody>{% for c in rows %}<tr><td><a href="#uv-{{ c.symbol }}">{{ c.symbol }}</a> {{ c.name or "" }}</td>
+      <td>{{ (c.sector or "")|replace("_", " ") }}{% if c.criteria.fills_gap %} <span class="muted">(fills a gap)</span>{% endif %}</td>
+      <td class="nowrap">{{ usd(c.market_cap) }}{% if c.mcap_bucket %} · {{ c.mcap_bucket }}{% if c.mcap_bucket == "small" %} <span class="warn">(volatility, liquidity, dilution risk)</span>{% elif c.mcap_bucket == "large" %} <span class="muted">(exposure likely diluted)</span>{% endif %}{% endif %}
+        {% if c.criteria.close_date %}<br><span class="muted">{{ c.criteria.close_date }}, {{ c.criteria.price_provider }}</span>{% endif %}</td>
+      <td>{{ c.exposure or "—" }}</td>
+      <td>{{ c.criteria.evidence_t1 or 0 }} T1, {{ c.criteria.evidence_t2 or 0 }} T2</td>
+      <td>{% if c.overlap.get("qtum_weight_pct") is not none %}QTUM {{ "%.2f"|format(c.overlap.qtum_weight_pct) }}%{% else %}—{% endif %}</td>
+      <td><span class="badge action-{{ c.action }}">{{ c.action }}</span></td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% if a.info %}<h3>Not investable / outside mandate</h3>
+  <ul class="small">{% for i in a.info %}<li>{{ i.name or i.symbol }}: <strong>{{ i.status }}</strong>{% if i.description %}. {{ i.description }}{% endif %}{% if i.reason %} ({{ i.reason }}){% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if a.screened %}<details><summary class="small">Excluded or screened before research ({{ a.screened|length }})</summary>
+    <ul class="small">{% for x in a.screened %}<li>{{ x.symbol }}{% if x.sector %} ({{ x.sector|replace("_", " ") }}){% endif %}: {{ x.reason }}</li>{% endfor %}</ul></details>{% endif %}
+  {% for n in a.notes or [] %}<p class="banner stale small">{{ n }}</p>{% endfor %}
+</section>
+{% endif %}
+
+{% for c in (rows if tab != "full" else []) %}
 <section class="card" id="uv-{{ c.symbol }}">
   <div class="card-head"><h2><span class="badge action-{{ c.action }}">{{ c.action }}</span> {{ c.symbol }}{% if c.name %} · {{ c.name }}{% endif %}</h2>
     <span class="muted small">{% if c.cik %}CIK {{ c.cik }}{% endif %}{% if c.overlap.get("qtum_weight_pct") is not none %} · QTUM weight {{ "%.2f"|format(c.overlap.qtum_weight_pct) }}%{% else %} · not in QTUM{% endif %}</span></div>
   {% if c.overridden %}<p class="small">Model proposed <strong>{{ c.proposed_action }}</strong>; code set <strong>{{ c.action }}</strong>.</p>{% endif %}
   {% if c.gate_note %}<p class="banner stale small">{{ c.gate_note }}</p>{% endif %}
+  {% if c.criteria.exposure_note %}<p class="small warn">{{ c.criteria.exposure_note }}</p>{% endif %}
+  {% if c.criteria.strong is defined and c.criteria.strong_note %}<p class="small">Strong candidate: {{ "yes" if c.criteria.strong else "no" }} ({{ c.criteria.strong_note }}).</p>{% endif %}
+  {% if c.criteria.weakest_current %}<p class="small">Compares least favourably with <strong>{{ c.criteria.weakest_current.symbol }}</strong>: {{ c.criteria.weakest_current.text }} <span class="muted">({{ c.criteria.weakest_current.evidence_ids|join(", ") }})</span></p>{% endif %}
+  {% if c.criteria.market_cap_note %}<p class="small muted">Market cap: {{ c.criteria.market_cap_note }}</p>{% endif %}
   {% if c.description %}<p>{{ c.description }}</p>{% endif %}
   {% set k = c.criteria %}
   <table class="small criteria">
@@ -62,8 +148,13 @@
     <tbody>
       <tr><td>1. US listing</td><td class="{{ 'pass' if k.c1 else 'fail' }}">{{ "met" if k.c1 else "not met" }}</td>
         <td>{{ k.exchange or ("IPO registration on EDGAR, not listed" if k.announced else "not listed") }}{% if k.ticker %} ({{ k.ticker }}){% endif %}</td></tr>
+      {% if c.track == "adjacent" %}
+      <tr><td>2. Quantum-related evidence</td><td class="{{ 'pass' if (k.evidence_t1 or 0) >= 1 or (k.evidence_t2 or 0) >= 2 else 'fail' }}">{{ k.evidence_t1 or 0 }} T1, {{ k.evidence_t2 or 0 }} T2</td>
+        <td>{% if k.c2_excerpt %}T1 10-K excerpt {{ k.c2_excerpt }}{% else %}{{ k.c2_note or "no T1 excerpt mentions quantum" }}{% endif %}; last 12 months, one T1 or two independent T2 sources</td></tr>
+      {% else %}
       <tr><td>2. Principal business</td><td>{% if k.c2_excerpt %}T1 excerpt {{ k.c2_excerpt }}{% else %}<span class="bad">no T1 excerpt</span>{% endif %}</td>
         <td>{{ k.c2_note or "judged by the model from the excerpt" }}</td></tr>
+      {% endif %}
       <tr><td>3. Size and liquidity</td><td class="{{ 'pass' if k.c3 else 'fail' }}">{{ "met" if k.c3 else "not met" }}</td>
         <td>market cap {{ usd(k.market_cap) }}{% if k.close_date %} ({{ k.close_date }}, {{ k.price_provider }}{% if k.shares_as_of %}; shares as of {{ k.shares_as_of }}{% endif %}){% endif %};
           median dollar volume {{ usd(k.median_dollar_volume) }}</td></tr>
@@ -71,6 +162,7 @@
     </tbody>
   </table>
   {% if k.structural %}<p class="small bad">Filing triggers: {{ k.structural|join("; ") }}</p>{% endif %}
+  {% if k.qualifying %}<p class="small bad">Qualifying events: {% for ref, t in k.qualifying.items() %}{{ ref }} {{ t }}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
   {% if c.reasons %}
   <h3>Reasons</h3>
   <ul class="small">{% for r in c.reasons %}<li>{{ r.text }} <span class="muted">({{ r.evidence_ids|join(", ") }})</span></li>{% endfor %}</ul>
@@ -83,7 +175,7 @@
 </section>
 {% endfor %}
 
-{% if pl.announcements %}
+{% if tab == "pure_play" and pl.announcements %}
 <section class="card">
   <h2>Announced listings (from web search, unverified)</h2>
   <ul class="small">{% for a in pl.announcements %}<li><strong>{{ a.name }}</strong>: {{ a.description }}
@@ -91,7 +183,7 @@
 </section>
 {% endif %}
 
-{% if pl.screened %}
+{% if tab == "pure_play" and pl.screened %}
 <section class="card">
   <details><summary>Screened out before research ({{ pl.screened|length }})</summary>
     <table class="small"><thead><tr><th>Company</th><th>Reason</th></tr></thead><tbody>

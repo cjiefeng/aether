@@ -100,12 +100,33 @@
   <h3>Universe review (pure-plays)</h3>
   {% set u = pk.universe %}
   {% if u.status == "done" %}
-  {% set changes = u.proposals|selectattr("action", "in", ["add", "remove"])|list %}
+  {% set pure = u.proposals|rejectattr("track", "equalto", "adjacent")|list %}
+  {% set adj = u.proposals|selectattr("track", "equalto", "adjacent")|list %}
+  {% set changes = pure|selectattr("action", "in", ["add", "remove"])|list %}
   {% if not changes %}<p class="small">No changes proposed.</p>{% endif %}
-  {% if u.proposals %}<ul class="small">{% for x in u.proposals %}<li><span class="badge action-{{ x.action }}">{{ x.action }}</span> {{ x.symbol }}{% if x.name %} ({{ x.name }}){% endif %}{% if x.note %} <span class="muted">{{ x.note }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if pure %}<ul class="small">{% for x in pure %}<li><span class="badge action-{{ x.action }}">{{ x.action }}</span> {{ x.symbol }}{% if x.name %} ({{ x.name }}){% endif %}{% if x.note %} <span class="muted">{{ x.note }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if u.adjacent_status or adj %}
+  <h3>Adjacent industries</h3>
+  {% if u.adjacent_status and u.adjacent_status != "done" %}<p class="muted small">Track {{ u.adjacent_status }}. See <a href="/universe?tab=adjacent">Universe</a>.</p>{% endif %}
+  {% if adj %}<ul class="small">{% for x in adj %}<li><span class="badge action-{{ x.action }}">{{ x.action }}</span> {{ x.symbol }}{% if x.sector %} ({{ x.sector|replace("_", " ") }}{% if x.bucket %}, {{ x.bucket }} cap{% endif %}){% endif %}{% if x.note %} <span class="muted">{{ x.note }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if u.shortlist %}<p class="small">Shortlist: {{ u.shortlist|join(", ") }}</p>{% endif %}
+  {% endif %}
+  {% if u.slots %}<p class="small">Names: {{ u.slots.active }} of {{ u.slots.cap }} used.{% if u.strong %} Strong candidates (need a slot): {{ u.strong|join(", ") }}.{% endif %}</p>{% endif %}
   <p class="small"><a href="/universe">Sources and criteria on the Universe page</a>.</p>
   {% elif u.status == "none" %}<p class="muted small">Not run yet this month.</p>
   {% else %}<p class="muted small">Review {{ u.status }}{% if u.error %}: {{ u.error }}{% endif %}. See <a href="/universe">Universe</a>.</p>{% endif %}
+  {% endif %}
+  {% if pk.full_review %}
+  <h3>Full re-evaluation ({{ pk.full_review.as_of }})</h3>
+  <ul class="small">{% for l in pk.full_review.lines %}<li>{{ l }}</li>{% endfor %}</ul>
+  <p class="small"><a href="/universe?tab=full">Proposed set, reasons and weights on the Universe page</a>.</p>
+  {% endif %}
+  {% if pk.thesis %}
+  <h3>Thesis check</h3>
+  <ul class="small">{% for l in pk.thesis.lines %}<li>{{ l }}</li>{% endfor %}</ul>
+  {% if pk.thesis.report.holdings %}{% set hb = pk.thesis.report.holdings %}
+  <p class="small">Your holdings by modality / sector (ex-QTUM): {% for r in hb.rows %}{{ r.category|replace("_", " ") }} {{ w(r.pct_ex_qtum) }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  {% for f in hb.flags %}<p class="warn small">Holdings concentration: {{ f.text }}.</p>{% endfor %}{% endif %}
   {% endif %}
   {% if p.telegram_text %}
   <details><summary class="small">Telegram text (no share counts, dollar values or account number)</summary><pre class="alert-text">{{ p.telegram_text }}</pre></details>

@@ -30,14 +30,33 @@
 {% with symbol = s.symbol, rerun = true %}{% include "_conclusion.html" %}{% endwith %}
 {% endif %}
 
+{% if thesis %}
+<section class="card" id="thesis">
+  <div class="card-head"><h2>Thesis checks</h2>
+    <span class="muted small">{{ thesis.category|replace("_", " ") }} · thresholds in <code>config/thesis.yaml</code></span></div>
+  <p class="muted small">Deterministic monitors for review. They never change a weight; removal still needs a qualifying event.</p>
+  <table class="small">
+    <thead><tr><th>Red flag</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>{% for f in thesis.red_flags %}<tr><td>{{ f.label }}</td>
+      <td class="{{ 'bad' if f.status == 'flag' else ('muted' if f.status == 'unknown' else 'pass') }}">{{ f.status }}</td>
+      <td>{{ f.text }}{% for e in f.evidence if e.url is defined %}{% if loop.first %}<br>{% endif %}{{ e.url|extlink(e.form ~ " " ~ e.filed_at) }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% if thesis.winner %}
+  <h3>Winner signals {% if thesis.winner.present %}<span class="badge signal">present</span>{% endif %}</h3>
+  <ul class="small">{% for w in thesis.winner.signals %}<li><strong>{{ w.label }}:</strong> {{ "yes" if w.status == "flag" else "no" }}. {{ w.text }}</li>{% endfor %}</ul>
+  <p class="muted small">Shown only. The stance overlay stays the only path to a higher weight.</p>
+  {% endif %}
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Price and volume</h2>
-  <div class="chart tall" data-chart="ticker" data-src="/api/prices/{{ s.symbol }}"{% if s.type in ("etf", "pure_play") %} data-markers="/api/reactions/{{ s.symbol }}"{% endif %}></div>
-  <p class="muted small">Daily close, split-adjusted.{% if s.type in ("etf", "pure_play") %} Markers: classified events at their
+  <div class="chart tall" data-chart="ticker" data-src="/api/prices/{{ s.symbol }}"{% if s.type in ("etf", "pure_play", "adjacent") %} data-markers="/api/reactions/{{ s.symbol }}"{% endif %}></div>
+  <p class="muted small">Daily close, split-adjusted.{% if s.type in ("etf", "pure_play", "adjacent") %} Markers: classified events at their
     anchor session t0, coloured by class (SIGNAL / RISK / NOISE); hover for the abnormal-return z-score over [t0, t0+5].{% endif %}</p>
 </section>
 
-{% if s.type in ("etf", "pure_play") %}
+{% if s.type in ("etf", "pure_play", "adjacent") %}
 <section class="card" id="scorecard">
   <h2>Scorecard</h2>
   {% if score_fresh.scorecards.stale and score_fresh.scorecards.last_ok %}<p class="banner stale">Scorecards stale since {{ score_fresh.scorecards.last_ok }}.</p>{% endif %}
@@ -73,7 +92,7 @@
 </section>
 {% endif %}
 
-{% if s.type == "pure_play" %}
+{% if s.type in ("pure_play", "adjacent") %}
 <section class="card" id="fundamentals">
   <h2>Valuation and dilution (SEC XBRL)</h2>
   {% set f = score.fundamentals if score else none %}
@@ -129,7 +148,7 @@
 </section>
 {% endif %}
 
-{% if s.type in ("etf", "pure_play") %}
+{% if s.type in ("etf", "pure_play", "adjacent") %}
 <section class="card" id="reactions">
   <div class="card-head"><h2>Market reactions to events</h2><a href="/calibration">Calibration</a></div>
   {% if score_fresh.reactions.stale and score_fresh.reactions.last_ok %}<p class="banner stale">Reactions stale since {{ score_fresh.reactions.last_ok }}.</p>{% endif %}
@@ -165,7 +184,7 @@
 </section>
 {% endif %}
 
-{% if s.type in ("etf", "pure_play") %}
+{% if s.type in ("etf", "pure_play", "adjacent") %}
 <section class="card">
   <h2>Recent news</h2>
   {% with rows = news %}{% include "_news_rows.html" %}{% endwith %}
@@ -184,7 +203,7 @@
 
 {% if options %}{% include "_options_panel.html" %}{% endif %}
 
-{% if s.type in ("etf", "pure_play") %}
+{% if s.type in ("etf", "pure_play", "adjacent") %}
 <section class="card">
   <h2>Short interest (FINRA)</h2>
   {% if short_interest %}

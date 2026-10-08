@@ -3,6 +3,7 @@ counts, dollar values or account number, and is sent once per month."""
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -117,3 +118,46 @@ def test_review_page(ready: Engine, client: TestClient) -> None:
     page = client.get("/review").text
     assert "2026-10" in page and "going concern" in page and "S$" in page
     assert "<style" not in page and " style=" not in page
+
+
+def test_m14_thesis_check_and_cap_in_the_pack(ready: Engine) -> None:
+    """M14 (spec §6.9): the thesis check and the name-cap status. The Telegram text uses the
+    published targets only; the holdings breakdown stays in the dashboard pack."""
+    monthly_review(
+        ready, CONFIG, FLAGS, today=date(2026, 10, 1), telegram=True, now=NOW, config_dir=CONFIG_DIR
+    )
+    with ready.connect() as conn:
+        text = conn.execute(select(review_packs.c.telegram_text)).scalar_one()
+        payload = json.loads(conn.execute(select(review_packs.c.payload)).scalar_one())
+    assert "Thesis check:" in text and "Names:" in text and "of 9 used (QTUM excluded)." in text
+    assert "Holdings by modality" not in text and "safe targets by modality/sector" in text
+    assert "QTUM hyperscaler weight" not in text or "limit 10%" in text
+    th = payload["thesis"]
+    assert th["report"]["holdings"] is not None  # dashboard only
+    assert len(text) <= 4096 and "$" not in text
+
+
+def test_m14_universe_lines() -> None:
+    from aether.review.pack import universe_lines
+
+    u = {
+        "status": "done",
+        "proposals": [
+            {"symbol": "ACME", "action": "watch", "name": "ACME Corp", "track": "pure_play"},
+            {
+                "symbol": "CLCK",
+                "action": "add",
+                "name": "CLCK Corp",
+                "track": "adjacent",
+                "sector": "sensing_timing",
+            },
+        ],
+        "adjacent_status": "done",
+        "shortlist": ["CLCK"],
+        "slots": {"cap": 9, "active": 8},
+        "strong": [],
+    }
+    lines = universe_lines(u)
+    assert "- No changes proposed." in lines  # pure-play track
+    assert "Adjacent industries:" in lines and "- add CLCK (sensing timing)" in lines
+    assert "- shortlist: CLCK" in lines and "Names: 8 of 9 used." in lines

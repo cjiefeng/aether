@@ -28,8 +28,24 @@ def sync_config(engine: Engine, settings: Settings) -> None:
     load_catalysts_config(
         settings.config_dir, {f.id for f in facts}, {t.symbol for t in watchlist.tickers}
     )
+    # M14: every pure-play's modality must be backed by a fact in facts.yaml (spec §6.10).
+    fact_ids = {f.id for f in facts}
+    missing = sorted(
+        f"{t.symbol}: {t.modality_fact}"
+        for t in watchlist.tickers
+        if t.modality_fact and t.modality_fact not in fact_ids
+    )
+    if missing:
+        raise ValueError(f"watchlist modality_fact ids not in facts.yaml: {', '.join(missing)}")
     rows = [
-        {"symbol": t.symbol, "type": t.type, "cik": t.cik, "active": int(t.active)}
+        {
+            "symbol": t.symbol,
+            "type": t.type,
+            "cik": t.cik,
+            "active": int(t.active),
+            "modality": t.modality,
+            "sector": t.sector,
+        }
         for t in watchlist.tickers
     ]
     with write_tx(engine) as conn:

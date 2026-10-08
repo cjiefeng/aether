@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import Engine, func, select
 
+from aether.config import SLEEVE_TYPES
 from aether.db.models import (
     commands,
     event_classifications,
@@ -99,7 +100,7 @@ def off_cycle_events(engine: Engine, since: str, min_materiality: int = 4) -> li
             .join(tickers, tickers.c.symbol == event_tickers.c.symbol)
             .join(event_classifications, event_classifications.c.event_id == events.c.id)
             .where(
-                tickers.c.type == "pure_play",
+                tickers.c.type.in_(SLEEVE_TYPES),
                 events.c.quarantined == 0,
                 event_classifications.c.materiality >= min_materiality,
                 events.c.published_at >= since,

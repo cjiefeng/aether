@@ -1,16 +1,27 @@
 # Identifiers only — no opinions or commentary (spec §1.2). Descriptive claims belong in facts.yaml.
 # CIKs verified 2026-10-04 against https://www.sec.gov/files/company_tickers_exchange.json.
 # aliases (M6): company names used only to match news items to tickers.
-# QTUM is an ETF series (no operating-company CIK); EDGAR ingest covers pure-plays only.
+# QTUM is an ETF series (no operating-company CIK); EDGAR ingest covers pure-plays and adjacent names.
+# M14: each pure-play has a `modality` backed by a fact id (T1 filing); each adjacent name has a
+# `sector` (spec §6.7.1). At most `max_names_ex_qtum` (universe.yaml) active pure_play + adjacent.
 tickers:
   # theme ETF
   - {symbol: QTUM, type: etf, aliases: [Defiance Quantum]}
   # pure-plays
-  - {symbol: IONQ, type: pure_play, cik: "0001824920", aliases: [IonQ]}
-  - {symbol: QNT, type: pure_play, cik: "0002110105", aliases: [Quantinuum]}
-  - {symbol: RGTI, type: pure_play, cik: "0001838359", aliases: [Rigetti]}
-  - {symbol: QBTS, type: pure_play, cik: "0001907982", aliases: [D-Wave]}
-  - {symbol: INFQ, type: pure_play, cik: "0002007825", aliases: [Infleqtion]}
+  - {symbol: IONQ, type: pure_play, cik: "0001824920", aliases: [IonQ],
+     modality: trapped_ion, modality_fact: ionq_modality}
+  - {symbol: QNT, type: pure_play, cik: "0002110105", aliases: [Quantinuum],
+     modality: trapped_ion, modality_fact: qnt_modality}
+  - {symbol: RGTI, type: pure_play, cik: "0001838359", aliases: [Rigetti],
+     modality: superconducting, modality_fact: rgti_modality}
+  - {symbol: QBTS, type: pure_play, cik: "0001907982", aliases: [D-Wave],
+     modality: annealing, modality_fact: qbts_modality}
+  - {symbol: INFQ, type: pure_play, cik: "0002007825", aliases: [Infleqtion],
+     modality: neutral_atom, modality_fact: infq_modality}
+  # adjacent industries (M14; CIKs verified 2026-10-07 against company_tickers_exchange.json)
+  - {symbol: KEYS, type: adjacent, cik: "0001601046", sector: test_measurement, aliases: [Keysight]}
+  - {symbol: FEIM, type: adjacent, cik: "0000039020", sector: sensing_timing, aliases: [Frequency Electronics]}
+  - {symbol: PANW, type: adjacent, cik: "0001327567", sector: pqc_cyber, aliases: [Palo Alto Networks]}
   # benchmarks (prices only)
   - {symbol: QQQ,  type: benchmark}
   - {symbol: SOXX, type: benchmark}

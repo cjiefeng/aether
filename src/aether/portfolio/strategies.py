@@ -5,6 +5,12 @@
 
 Per-name caps are applied by water-filling. Sleeve weight the caps can't place goes to QTUM:
 there is no cash sleeve, and a safer profile means more QTUM.
+
+Minimum weight per name (M14, spec §6.5): every eligible name first gets the floor
+`f = min(min_per_name, sleeve / n)`; the family then allocates only the rest of the sleeve, with
+each name's total kept within the cap (so the family sees a cap of `cap - f`). Momentum's names
+outside the top N therefore sit at the floor. The research overlay runs later and can still cut a
+name to 0.
 """
 
 from __future__ import annotations
@@ -103,6 +109,13 @@ def _window(R: NDArray[np.float64], t: int, j: int, n: int) -> Vec:
     return out
 
 
+def effective_floor(n: int, total: float, floor: float) -> float:
+    """The per-name floor actually applied: shrunk to `total / n` when n floors don't fit."""
+    if n == 0 or floor <= 0 or total <= 0:
+        return 0.0
+    return min(floor, total / n)
+
+
 def sleeve_weights(
     family: Family,
     R: NDArray[np.float64],
@@ -111,11 +124,33 @@ def sleeve_weights(
     total: float,
     cap: float,
     params: BacktestParams,
+    floor: float = 0.0,
 ) -> Vec:
-    """Weights (summing to <= total) for the eligible `names`, in that order."""
+    """Weights (summing to <= total) for the eligible `names`, in that order. Each name gets at
+    least the (effective) floor and at most `cap`."""
     n = len(names)
     if n == 0 or total <= 0:
         return np.zeros(n)
+    f = min(effective_floor(n, total, floor), cap)
+    if f <= 0:
+        return _method_weights(family, R, t, names, total, cap, params)
+    rest = total - n * f
+    out = np.full(n, f)
+    if rest > 1e-15 and cap - f > 1e-15:
+        out = out + _method_weights(family, R, t, names, rest, cap - f, params)
+    return out
+
+
+def _method_weights(
+    family: Family,
+    R: NDArray[np.float64],
+    t: int,
+    names: list[int],
+    total: float,
+    cap: float,
+    params: BacktestParams,
+) -> Vec:
+    n = len(names)
     window = params.estimation_window
     if family == "core_equal":
         return cap_weights(np.ones(n), total, cap)
@@ -150,11 +185,12 @@ def target_weights(
     qtum_weight: float,
     cap: float,
     params: BacktestParams,
+    floor: float = 0.0,
 ) -> Vec:
     """Full weight vector (columns of R) held during session t, from `R[:t]` only."""
     w = np.zeros(R.shape[1])
     names = eligible(R, t, sleeve, params.min_sessions)
-    sw = sleeve_weights(family, R, t, names, 1.0 - qtum_weight, cap, params)
+    sw = sleeve_weights(family, R, t, names, 1.0 - qtum_weight, cap, params, floor)
     w[names] = sw
     w[core] = 1.0 - float(sw.sum())  # the core absorbs whatever the caps couldn't place
     return w

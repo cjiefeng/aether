@@ -1,9 +1,9 @@
 """Event-reaction check (spec §6.3): how each stock moved after each classified event, relative to
 the theme. Deterministic; no LLM. Reads first, then one short `write_tx`.
 
-Per (non-quarantined, classified event) x (affected pure-play or QTUM):
+Per (non-quarantined, classified event) x (affected pure-play, adjacent name or QTUM):
 1. t0 = the first NYSE session whose close is after `published_at` (half-days included).
-2. Benchmark: QTUM for pure-plays, QQQ for QTUM's own events.
+2. Benchmark: QTUM for pure-plays, QQQ for QTUM's own events and for adjacent names (M14).
 3. Market model on total-return daily returns over the `estimation_window` sessions ending at
    t0-1: beta = cov/var, residual sigma (n-2 dof). Fewer than `min_sessions` returns -> beta = 1
    (flagged) and sigma = std(r_stock - r_bench).
@@ -195,12 +195,15 @@ class EventRef:
 
 
 def reaction_universe(conn: Connection) -> dict[str, str]:
-    """symbol -> benchmark: QTUM for pure-plays, QQQ for the theme ETF."""
+    """symbol -> benchmark: QTUM for pure-plays; QQQ for the theme ETF and for adjacent names
+    (M14), whose prices aren't driven by the quantum theme."""
     out = {}
     for sym, typ in conn.execute(
-        select(tickers.c.symbol, tickers.c.type).where(tickers.c.type.in_(("pure_play", "etf")))
+        select(tickers.c.symbol, tickers.c.type).where(
+            tickers.c.type.in_(("pure_play", "adjacent", "etf"))
+        )
     ):
-        out[sym] = "QQQ" if typ == "etf" else "QTUM"
+        out[sym] = "QTUM" if typ == "pure_play" else "QQQ"
     return out
 
 

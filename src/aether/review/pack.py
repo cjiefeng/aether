@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, select
@@ -165,14 +166,50 @@ def universe_lines(u: dict[str, Any] | None) -> list[str]:
     if status != "done":
         return [*lines, f"- {status} (see /universe)"]
     props = u.get("proposals") or []
-    changes = [p for p in props if p["action"] in ("add", "remove")]
+    pure = [p for p in props if p.get("track", "pure_play") == "pure_play"]
+    changes = [p for p in pure if p["action"] in ("add", "remove")]
     if not changes:
         lines.append("- No changes proposed.")
-    for p in props:
+    for p in pure:
         lines.append(
             f"- {p['action']} {p['symbol']}" + (f" ({p['name']})" if p.get("name") else "")
         )
+    # M14: the adjacent-industry track, the name cap and strong candidates.
+    adj = [p for p in props if p.get("track") == "adjacent"]
+    a_status = u.get("adjacent_status")
+    if a_status or adj:
+        lines.append("Adjacent industries:")
+        if a_status and a_status != "done":
+            lines.append(f"- track {a_status} (see /universe)")
+        elif not [p for p in adj if p["action"] in ("add", "remove")]:
+            lines.append("- No changes proposed.")
+        for p in adj:
+            sector = (p.get("sector") or "").replace("_", " ")
+            lines.append(f"- {p['action']} {p['symbol']}" + (f" ({sector})" if sector else ""))
+        if u.get("shortlist"):
+            lines.append("- shortlist: " + ", ".join(u["shortlist"]))
+    sl = u.get("slots")
+    if sl:
+        lines.append(f"Names: {sl['active']} of {sl['cap']} used.")
+    if u.get("strong"):
+        lines.append("Strong candidates (need a slot): " + ", ".join(u["strong"]))
     return lines
+
+
+def thesis_section(engine: Engine, today: date, config_dir: Path, profile: str) -> dict[str, Any]:
+    """M14 (spec §6.9, §6.10): the thesis check. `lines` (Telegram) use the published targets only:
+    the holdings breakdown stays on the dashboard."""
+    from aether.portfolio import thesis
+
+    rep = thesis.page_report(engine, today, config_dir)
+    lines = thesis.summary_lines({**rep, "holdings": None}, profile)
+    return {"lines": lines, "report": rep}
+
+
+def _m14_full(engine: Engine, today: date) -> dict[str, Any] | None:
+    from aether.universe.view import full_section
+
+    return full_section(engine, today.strftime("%Y-%m"))
 
 
 def build_pack(
@@ -181,6 +218,7 @@ def build_pack(
     today: date,
     short_rule: ShortInterestRule | None = None,
     weights: WeightsConfig | None = None,
+    config_dir: Path | None = None,
 ) -> dict[str, Any]:
     settings = load_settings(engine)
     profile = settings.selected_profile
@@ -233,6 +271,12 @@ def build_pack(
         "options": options_panel(engine, universe),
         **(_m10(engine, weights, profile, today) if weights is not None else {}),
         "universe": _m12(engine, today),
+        **(
+            {"thesis": thesis_section(engine, today, config_dir, profile)}
+            if config_dir is not None
+            else {}
+        ),
+        "full_review": _m14_full(engine, today),
     }
 
 
@@ -287,6 +331,12 @@ def telegram_text(pack: dict[str, Any]) -> str:
         lines += [s["line"] for s in pack["stances"]] or ["- no conclusions yet"]
         lines.append(f"Overlay value-added: {pack['overlay_value']}")
     lines += universe_lines(pack.get("universe"))
+    fr = pack.get("full_review")
+    if fr:
+        lines += ["", f"Full re-evaluation ({fr['as_of']}):", *fr["lines"]]
+    th = pack.get("thesis")
+    if th:
+        lines += ["", "Thesis check:", *th["lines"]]
     opts = pack.get("options") or []
     if opts:
         lines += ["", "Options (research only, never trades):"]
@@ -356,6 +406,7 @@ def monthly_review(
     telegram: bool,
     now: datetime | None = None,
     weights: WeightsConfig | None = None,
+    config_dir: Path | None = None,
 ) -> JobResult:
     """Publish targets, build the pack, queue the Telegram message. Once per month."""
     month = today.strftime("%Y-%m")
@@ -365,7 +416,7 @@ def monthly_review(
         published = publish_targets(engine, config, today=today, trigger="monthly", weights=weights)
         if published.warning and published.rows_written == 0:
             raise RuntimeError(published.warning)
-        pack = build_pack(engine, flags_params, today, short_rule, weights)
+        pack = build_pack(engine, flags_params, today, short_rule, weights, config_dir)
         text = telegram_text(pack)
     except Exception as exc:
         with write_tx(engine) as conn:
