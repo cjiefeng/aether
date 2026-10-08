@@ -1,6 +1,6 @@
 # Milestone report
 
-## Roadmap change: M14 escalation & alert-noise tuning (2026-10-08, owner-approved)
+## Roadmap change: M13 escalation & alert-noise tuning (2026-10-08, owner-approved)
 
 **Why:** the owner found M11's escalation matrix too lenient and the alerts too noisy.
 
@@ -12,7 +12,7 @@
 - **Too many messages:** one filing could send up to **4 Telegram messages**: M3 RISK, M5 off-cycle review, M11 escalation started, and the escalation result.
 - **Cost:** each escalation runs **Opus 5.5 twice**: a verification search (~$0.15–0.25, pointless for SEC filings, which are already authoritative) and a re-synthesis (~$0.30–0.45). At the cap of 5 a day that's up to **~$3.50/day, more than the $3 daily budget**, which then blocks routine classification and sweeps.
 
-**M14 (new spec §5.2.5 rules and §5.2.6 notification policy):**
+**M13 (new spec §5.2.5 rules and §5.2.6 notification policy):**
 - **Escalation:**
   - **RISK only.** It escalates at materiality 5, or at ≥4 in a severe category: going concern, short report, guidance cut, a real listing-deficiency or common-stock delisting, or dilution ≥10% of fully diluted shares.
   - **Verification search only when there's no T1 source.**
@@ -22,7 +22,8 @@
   - **escalation results only when the stance or overlay changes**
   - **immediate** for urgent items, and an **08:00 SGT daily digest** for the rest
 - **Expected effect:** about 1–2 escalations a month at ~$0.30–0.45 each, instead of several a week.
-- **Build order:** after M12 (in progress), **before M13**, because M13 adds three names.
+- **Build order:** after M12 (in progress), before M14, because M14 adds three names.
+- **Renumbered (2026-10-08) so the numbers follow the build order:** escalation tuning is **M13** (proposed as M14), and adjacent industries is **M14** (it was M13 in the entries below). Those entries now use the new numbers.
 
 **Owner decisions to review:**
 1. The thresholds: severe categories, the 10% dilution bar, the 2/day cap, the 72 h cooldown, the $1.50 sub-budget.
@@ -124,11 +125,11 @@ make secrets-scan    # gitleaks: no leaks
 make backup && make restore-drill
 ```
 
-## Roadmap change: Quantum Thesis applied as M13 thesis checks (2026-10-08, owner-approved)
+## Roadmap change: Quantum Thesis applied as M14 thesis checks (2026-10-08, owner-approved)
 
 The owner's investment thesis is now in **`STRATEGY.md`**, and `CLAUDE.md` points to it. It's guidance for every portfolio review. Under the no-opinions rule it never goes into prompts or config.
 
-M13 gains **§6.10 thesis checks** (deterministic, no LLM, shown only, never trading):
+M14 gains **§6.10 thesis checks** (deterministic, no LLM, shown only, never trading):
 - **Modality tags** per pure-play, each a T1-sourced fact.
 - **Weights by modality and sector,** with concentration flags: one modality over 50%, one name over 25%, or fewer than 3 modalities.
 - **Four red-flag monitors:**
@@ -147,7 +148,7 @@ The 9-name cap, the market-cap-as-one-input rule and the slot rules (§6.7.2) ar
 2. **The runway thresholds differ:** the red-flag monitor uses 24 months, but the overlay's automatic haircut stays at 12 months. Align them if you want the overlay to act at 24.
 3. **"Missing expectations"** is checked only against the company's own recorded guidance; there's no free consensus-estimate source.
 
-**Deferred owner decision:** after M13, the owner will review **all holdings**, not just the open 9th slot, and may repopulate the whole set. M13 adds an owner-triggered **full re-evaluation** (§6.7.3) for this. It re-ranks current names and candidates together, with no protection for current names, and proposes a complete set of up to 9. It's tracked in cjiefeng/aether#29, and M13's close-out checklist must raise it. **#29 is resolved** (outcome comment, then closed) once that review is done and the owner has decided. The M13 PR doesn't close it.
+**Deferred owner decision:** after M14, the owner will review **all holdings**, not just the open 9th slot, and may repopulate the whole set. M14 adds an owner-triggered **full re-evaluation** (§6.7.3) for this. It re-ranks current names and candidates together, with no protection for current names, and proposes a complete set of up to 9. It's tracked in cjiefeng/aether#29, and M14's close-out checklist must raise it. **#29 is resolved** (outcome comment, then closed) once that review is done and the owner has decided. The M14 PR doesn't close it.
 
 ## Fixes: config-change rerun (#13) and sleeve performance chart (#24) (2026-10-08)
 
@@ -173,9 +174,9 @@ The 9-name cap, the market-cap-as-one-input rule and the slot rules (§6.7.2) ar
 ### How to verify
 `make test` (647 passed), `make lint` and `make secrets-scan` are clean. Browser check against a throwaway synthetic DB: chart, markers, tooltips, mode/range switching, light and dark themes, and 375 px width (no horizontal page scroll). No console or CSP errors.
 
-## Roadmap change: M13 adjacent industries (2026-10-08, owner-approved)
+## Roadmap change: M14 adjacent industries (2026-10-08, owner-approved)
 
-There's a new **M13** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1.3, §1.4, §6.3, §6.4, §6.5, **new §6.7.1**, §6.9, §7, §8, §10, §11.
+There's a new **M14** in Phase 4 "Discovery", after M12. Spec: §1.1, §1.2, §1.3, §1.4, §6.3, §6.4, §6.5, **new §6.7.1**, §6.9, §7, §8, §10, §11.
 
 **Context:** the owner asked for a screen of the industries around quantum computing on 2026-10-07. Out of it:
 - **Three adjacent tickers are added** (CIKs verified 2026-10-07 against SEC's `company_tickers_exchange.json`):
