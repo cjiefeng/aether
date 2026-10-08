@@ -31,7 +31,7 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 | **1b. Portfolio** | M4–M5 | Backtested model strategies per risk profile, password login, holdings page, monthly targets with the filing-rule overlay, rebalance planner, SGD view, monthly review pack, options snapshots | **$0** |
 | **2. Intelligence** | M6–M10 | News classification, catalysts, options analytics, scorecards, event reactions, conclusions with track record, the stance overlay, weekly brief | Budgeted |
 | **3. Hardening** | M11 | Escalation flow, ops, backups, K8s (optional) | — |
-| **4. Discovery** | M12–M13 | Monthly universe review: proposed pure-plays (M12) and adjacent-industry names (M13) to add/remove, sent on Telegram; adjacent tickers KEYS, FEIM, PANW tracked and holdable (M13) | Budgeted (separate cap) |
+| **4. Discovery & tuning** | M12–M14 | Monthly universe review of pure-plays (M12); tighter escalation and less alert noise and cost (M13); adjacent-industry names KEYS, FEIM, PANW, the adjacent review track, thesis checks and the full re-evaluation (M14) | Budgeted (separate caps; M13 lowers spend) |
 
 ### 1.2 Watchlist (in `config/watchlist.yaml`; editable without code changes)
 
@@ -45,25 +45,25 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 | **RGTI** | Pure-play | pure_play |
 | **QBTS** | Pure-play (D-Wave) | pure_play |
 | **INFQ** | Pure-play (Infleqtion) | pure_play |
-| **KEYS** | Adjacent: test & measurement (from M13) | adjacent |
-| **FEIM** | Adjacent: sensing & timing (from M13) | adjacent |
-| **PANW** | Adjacent: PQC & cybersecurity (from M13) | adjacent |
+| **KEYS** | Adjacent: test & measurement (from M14) | adjacent |
+| **FEIM** | Adjacent: sensing & timing (from M14) | adjacent |
+| **PANW** | Adjacent: PQC & cybersecurity (from M14) | adjacent |
 
 **Benchmarks** (prices only, no conclusions): `QQQ` (broad tech/market; also QTUM's benchmark for event reactions) and `SOXX` (semiconductors; used to break down what drives QTUM, §6.1).
 
 **Context tickers** (prices only, no conclusions): `IBM, GOOGL, MSFT, AMZN, NVDA`.
 
-**Adjacent tickers (M13, §6.7.1)** are companies in industries around quantum computing (PQC, cryogenics, photonics, test & measurement, sensing & timing, quantum networking, end users, specialty materials) with documented quantum-related products or contracts. Each has a `sector` identifier from a fixed list. They get the full pure-play pipeline (prices, EDGAR, news, classification, scorecard, conclusions) and are holdable, but they stay **out of the pure-play basket** used by the theme decomposition (§6.1). The initial three (CIKs verified 2026-10-07 against SEC's `company_tickers_exchange.json`): KEYS `0001601046` (NYSE), FEIM `0000039020` (Nasdaq), PANW `0001327567` (Nasdaq).
+**Adjacent tickers (M14, §6.7.1)** are companies in industries around quantum computing (PQC, cryogenics, photonics, test & measurement, sensing & timing, quantum networking, end users, specialty materials) with documented quantum-related products or contracts. Each has a `sector` identifier from a fixed list. They get the full pure-play pipeline (prices, EDGAR, news, classification, scorecard, conclusions) and are holdable, but they stay **out of the pure-play basket** used by the theme decomposition (§6.1). The initial three (CIKs verified 2026-10-07 against SEC's `company_tickers_exchange.json`): KEYS `0001601046` (NYSE), FEIM `0000039020` (Nasdaq), PANW `0001327567` (Nasdaq).
 
 **Name cap:** at most **9 active `pure_play` + `adjacent` names** (QTUM excluded), `max_names_ex_qtum` in `config/universe.yaml`. The watchlist loader refuses a config over the cap. With 5 pure-plays and 3 adjacent names, 1 slot is free.
 
-**Monthly universe review (M12, §6.7; adjacent track M13, §6.7.1).** On the 1st of each month Aether proposes pure-plays and adjacent-industry names to add or remove, with sources. It **never edits the watchlist itself**: the owner applies a proposal by editing `watchlist.yaml` through a PR.
+**Monthly universe review (M12, §6.7; adjacent track M14, §6.7.1).** On the 1st of each month Aether proposes pure-plays and adjacent-industry names to add or remove, with sources. It **never edits the watchlist itself**: the owner applies a proposal by editing `watchlist.yaml` through a PR.
 
 ### 1.3 Positions (Holdings page, from M5)
 
 The owner enters, edits and saves holdings (ticker, shares, optional cost basis, plus a USD cash balance) on the **Holdings** page (§8). Each save is a CSRF-protected `update_holdings` command that the worker applies; the dashboard never writes holdings itself. The target is the **selected risk profile's** published monthly target: the model strategy (§6.5) after the research overlay (§6.6.1), not a hand-written weight list. If no holdings are saved, all position features are hidden.
 
-**Optional Tiger Brokers sync (read-only, M5).** If Tiger credentials are configured (S8), the owner can switch `holdings_source` from `manual` to `tiger`. A daily job and a "Sync from Tiger" button then replace the share counts of **strategy-universe symbols only** (QTUM + pure-plays, plus adjacent names from M13) with the account's positions. Positions outside the universe are ignored (only their count is shown), and the sleeve's cash stays a manual entry, because account cash isn't all earmarked for this sleeve. If a sync fails, the last snapshot stays in use with a "stale since …" banner. Manual entry remains the default and the fallback.
+**Optional Tiger Brokers sync (read-only, M5).** If Tiger credentials are configured (S8), the owner can switch `holdings_source` from `manual` to `tiger`. A daily job and a "Sync from Tiger" button then replace the share counts of **strategy-universe symbols only** (QTUM + pure-plays, plus adjacent names from M14) with the account's positions. Positions outside the universe are ignored (only their count is shown), and the sleeve's cash stays a manual entry, because account cash isn't all earmarked for this sleeve. If a sync fails, the last snapshot stays in use with a "stale since …" banner. Manual entry remains the default and the fallback.
 
 `config/positions.yaml` (git-ignored) is **deprecated**: if it exists when M5 first runs, its `holdings` are imported once and the file is then ignored.
 
@@ -73,9 +73,9 @@ Holdings are used for drift vs target, the rebalance plan (§6.6) and "you're 2�
 
 The portfolio features serve one **family-fund sleeve**. These are owner parameters for the engineering, not opinions, and they never go into LLM prompts.
 
-- **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays (and, from M13, the adjacent names).
+- **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays (and, from M14, the adjacent names).
 - **Concentration:** at most **9 names besides QTUM** (pure-plays + adjacent, amended 2026-10-08). The monthly review respects the cap (§6.7.2): it may propose removing **any** of the 9 on serious bad news, and when all 9 slots are full it never proposes an add, but sends a separate **strong-candidate** notification for an exceptional name, so the owner decides. Risk appetite is expressed through the size of the QTUM core (§6.5).
-- **Investment thesis:** the owner's **Quantum Thesis** lives in `STRATEGY.md`: conviction in the technology, not one company; diversify across modalities; include picks-and-shovels suppliers; modest positions built stepwise; red flags. Aether applies it **only as deterministic checks** (§6.10, M13). The thesis text never goes into prompts or config.
+- **Investment thesis:** the owner's **Quantum Thesis** lives in `STRATEGY.md`: conviction in the technology, not one company; diversify across modalities; include picks-and-shovels suppliers; modest positions built stepwise; red flags. Aether applies it **only as deterministic checks** (§6.10, M14). The thesis text never goes into prompts or config.
 - **Market:** US-listed stocks only. Listed companies only; no private or pre-IPO holdings.
 - **Base currency:** SGD. Holdings, trades and targets are in USD; the dashboard also shows value and performance in SGD (reporting only, §6.6).
 - **Horizon:** 12 years or more. A **100% drawdown** of the sleeve is accepted, so volatility and drawdown limits are shown, not enforced (§6.5). Risk control focuses on **permanent loss** (going concern, delisting, heavy dilution) through the research overlay (§6.6.1).
@@ -349,10 +349,35 @@ Every event gets a classification record:
 2. **LLM classification** for everything else, using `CLASSIFIER_MODEL`, untrusted-content wrapping (S1), prompt caching on the rubric system prompt, and strict schema output. **No tools.**
 3. **Trust-tier caps** (`classify/caps.py`): apply the S1 caps in code. Store `materiality_raw` and `materiality`.
 4. **Dedupe/merge:** canonical URL hash plus title similarity (simhash or MinHash). Syndicated copies merge into one event and **don't** count as independent sources. Track `independent_source_count` by distinct registrable domain.
-5. **Escalation** (built in M11; the RISK rules alert from M3):
-   - Triggers: post-cap materiality ≥4, or a T1-sourced RISK ≥3.
-   - Actions: (a) an alert, (b) a verification research run, (c) re-synthesis of that ticker.
-   - Caps: at most `MAX_ESCALATIONS_PER_DAY` (default 5) and at most 1 per ticker per 6 hours. Quarantined events never escalate.
+5. **Escalation** (built in M11, **tightened in M13**; the RISK rules alert from M3):
+   - **M11 (superseded by M13):** triggers were post-cap materiality ≥4 of any class, or a T1-sourced RISK ≥3. Actions: an alert, a verification research run, a re-synthesis. Caps: `MAX_ESCALATIONS_PER_DAY` 5, 1 per ticker per 6 hours.
+   - **Triggers (M13):** **RISK class only.** SIGNAL and NOISE never escalate; the weekly conclusions pick them up. A RISK event escalates when its post-cap materiality is **5**, or it's **≥ 4 in a severe category** (`escalation.severe_categories` in `config/llm.yaml`):
+     - `going_concern`, `short_report`, `guidance_cut`
+     - `delisting_or_compliance`, **only** when the M5 overlay parser classifies it as a listing-deficiency notice or a delisting of the **common stock** (not warrants or units, and not a voluntary exchange transfer)
+     - `dilution`, **only** when the parsed offering is ≥ `large_dilution_pct` (default **10%**) of fully diluted shares. An offering whose size can't be parsed alerts but doesn't escalate.
+
+     Routine filings (S-3/S-1 shelves, 424B supplements under the size bar, Form 25/15 for warrants, 8-K 3.02, NT filings) **alert but never escalate**.
+   - **Actions (M13):**
+     - (a) one notification (§5.2.6)
+     - (b) a verification research run **only if the event has no T1 source**. An SEC filing is already authoritative, so a web search adds nothing.
+     - (c) a re-synthesis of that ticker
+   - **Caps (M13):**
+     - `MAX_ESCALATIONS_PER_DAY` default **2**; `cooldown_hours` **72** per ticker
+     - a separate **escalation sub-budget**, `ESCALATION_DAILY_BUDGET_USD` (default **1.50**), inside the daily soft budget. Escalations stop at it, so they can't starve classification, sweeps or conclusions; any escalation refused for budget is recorded with that reason.
+     - quarantined events never escalate
+   - **Expected effect** (from the M2 filing history): from several escalations a week to about **1–2 a month**, at roughly $0.30–0.45 each (re-synthesis only for T1 events).
+6. **Notification policy** (§5.2.6, M13): see below.
+
+#### 5.2.6 Notification policy (M13; applies to every Telegram alert)
+
+**Goal:** one message per event, and only urgent things sent immediately. The dashboard `/alerts` page still lists everything. Settings live in `config/alerts.yaml`.
+
+- **One message per event.** An event's M3 `risk_event`, M5 `off_cycle_review` and M11 `escalation` alerts merge into **one** Telegram message, deduped by `event_id`. It carries every applicable label, e.g. "RISK · dilution (4) · off-cycle review suggested · escalated". Alerts that arrive later for the same event are recorded but not sent separately.
+- **Escalation results are sent only if something changed:** the stance changed, a flip was proposed but `held` by hysteresis, or the name's overlay output changed. Otherwise the result is dashboard-only, and the original message's dashboard entry links to it.
+- **Daily digest for the rest:**
+  - **Immediate:** escalations; RISK events at or above `immediate_min_materiality` (default **4**); T−1 lock-up and earnings reminders; job failing / recovered; the monthly review pack; the M12/M14 universe messages.
+  - **Digest:** one message at `digest_time` (default **08:00 SGT**) with the other alerts of the last 24h: RISK materiality 3, insider clusters, T−7 reminders. An empty digest isn't sent.
+- **Ops page:** escalations and their spend against the sub-budget, refusals by reason, and the counts of messages sent, merged and digested in the last 30 days.
 
 ### 5.3 Evaluation
 
@@ -448,7 +473,7 @@ Rules:
 **Method (per event × affected ticker):**
 
 1. **Anchor day `t0`:** the first trading session whose close comes *after* `published_at`. Use US/Eastern time and the NYSE calendar (`exchange_calendars` or `pandas_market_calendars`).
-2. **Benchmark:** QTUM for the pure-plays; QQQ for QTUM's own events and for adjacent names (M13), whose prices aren't driven by the quantum theme.
+2. **Benchmark:** QTUM for the pure-plays; QQQ for QTUM's own events and for adjacent names (M14), whose prices aren't driven by the quantum theme.
 3. **Expected return:** market model with β from 120 sessions ending at t0−1; β=1 fallback if there are fewer than 60 sessions. Store β and the residual σ.
 4. **Abnormal return:** `AR_t = r_stock,t − β·r_bench,t`. Compute CAR for **[t0, t0+1]**, **[t0, t0+5]** and **[t0, t0+20]**. A window stays `pending` until it's filled.
 5. **Standardize:** `z = CAR / (σ_resid · √n)`.
@@ -472,7 +497,7 @@ Rules:
 
 The system must show whether its own calls have been any good.
 
-- For every stored conclusion, compute the ticker's **forward excess return vs QTUM** at 1, 3, 6, 12, 24 and 36 months (the longer horizons match the 12-year+ mandate, §1.4) (vs QQQ for QTUM's own stance and for adjacent names, M13), filling each in as it matures.
+- For every stored conclusion, compute the ticker's **forward excess return vs QTUM** at 1, 3, 6, 12, 24 and 36 months (the longer horizons match the 12-year+ mandate, §1.4) (vs QQQ for QTUM's own stance and for adjacent names, M14), filling each in as it matures.
 - **Hit definitions** (configurable):
   - ACCUMULATE: excess return > 0.
   - AVOID/TRIM: excess return < 0.
@@ -490,7 +515,7 @@ The system must show whether its own calls have been any good.
 
 **Prices.** Backtests use **total-return** prices (split- *and* dividend-adjusted). M4 adds a `dividends` table (ex-date, cash amount, provider) filled from the price provider, and computes the total-return series in code, so yfinance and Massive can't mix adjustment conventions. `prices_daily` stays split-adjusted for everything else. Verify Massive's dividends endpoint and free-tier limits at implementation time.
 
-**Universe.** QTUM plus the five pure-plays; from M13 the sleeve also includes the active `adjacent` names, under the same per-name caps (`sleeve_types: [pure_play, adjacent]` in `config/strategies.yaml`, so the owner can drop adjacent names from the model strategies without untracking them). There is **no cash or T-bill sleeve**: a safer profile means **more QTUM**. QQQ and SOXX are benchmarks only (alpha, beta, capture). The risk-free rate is 0 for Sharpe/Sortino/alpha, and the UI says so. A name joins once it has ≥60 sessions.
+**Universe.** QTUM plus the five pure-plays; from M14 the sleeve also includes the active `adjacent` names, under the same per-name caps (`sleeve_types: [pure_play, adjacent]` in `config/strategies.yaml`, so the owner can drop adjacent names from the model strategies without untracking them). There is **no cash or T-bill sleeve**: a safer profile means **more QTUM**. QQQ and SOXX are benchmarks only (alpha, beta, capture). The risk-free rate is 0 for Sharpe/Sortino/alpha, and the UI says so. A name joins once it has ≥60 sessions.
 
 **Strategy families** (each = a QTUM core weight + a pure-play sleeve; parameters in `config/strategies.yaml`):
 
@@ -514,14 +539,14 @@ The system must show whether its own calls have been any good.
 | QTUM weight (fixed) | 75% | 45% | 15% |
 | Pure-play sleeve | 25% | 55% | 85% |
 | Max weight per pure-play | 10% | 20% | 35% |
-| **Min weight per name (floor, M13)** | 1.5% | 3% | 4% |
+| **Min weight per name (floor, M14)** | 1.5% | 3% | 4% |
 | Volatility limit | none (shown) | none (shown) | none (shown) |
 | Max-drawdown limit | none (shown) | none (shown) | none (shown) |
 | Ranking metric | lowest CVaR95 | highest Sortino | highest Sortino |
 
 Sleeve weight the per-name caps can't place goes to QTUM (M4 decision 2). Each profile's sleeve fits within its caps whenever at least three pure-plays are eligible.
 
-**Every name gets a slice (minimum weight per name, M13; owner decision 2026-10-08).** Every eligible sleeve name (pure-play or adjacent, ≥ `min_sessions` of history) is given at least the profile's floor, `min_per_name` in `config/strategies.yaml`. The family's method (equal, inverse-vol, min-variance, momentum) then allocates only the **rest** of the sleeve, and each name's total stays within `max_per_name`. So momentum still favours its top 3, and min-variance or inverse-vol can still tilt toward steadier names, but no name is left at zero. If the floors don't fit (eligible names × floor > sleeve), the floor shrinks to `sleeve ÷ eligible names` and the page says so. With the 9-name cap the floors use at most 13.5% / 27% / 36% of the portfolio (safe / medium / aggressive). The floor applies to the **base** model strategy only: the research overlay (§6.6.1) still zeroes or halves a name on evidence (going concern, delisting, heavy dilution, short runway, stance), and the floor never overrides it.
+**Every name gets a slice (minimum weight per name, M14; owner decision 2026-10-08).** Every eligible sleeve name (pure-play or adjacent, ≥ `min_sessions` of history) is given at least the profile's floor, `min_per_name` in `config/strategies.yaml`. The family's method (equal, inverse-vol, min-variance, momentum) then allocates only the **rest** of the sleeve, and each name's total stays within `max_per_name`. So momentum still favours its top 3, and min-variance or inverse-vol can still tilt toward steadier names, but no name is left at zero. If the floors don't fit (eligible names × floor > sleeve), the floor shrinks to `sleeve ÷ eligible names` and the page says so. With the 9-name cap the floors use at most 13.5% / 27% / 36% of the portfolio (safe / medium / aggressive). The floor applies to the **base** model strategy only: the research overlay (§6.6.1) still zeroes or halves a name on evidence (going concern, delisting, heavy dilution, short runway, stance), and the floor never overrides it.
 
 **Selection (deterministic).** Drop candidates that break the profile's limits; rank the rest by the profile's metric; tie-break on max drawdown, then strategy ID. If nothing qualifies, the profile shows "no qualifying strategy" with the reason (never a silent fallback). Each run stores an **input hash** (prices + config); the same hash must give byte-identical output.
 
@@ -613,7 +638,7 @@ The owner may set ACCUMULATE to × 1.0 so research can only reduce positions.
 
 **Cost control:** each run has its own cap, `UNIVERSE_REVIEW_BUDGET_USD` (default 10.00), separate from the daily soft budget so the review can't starve classification. If the cap is hit, the run stops, is marked `failed` with a reason, and sends nothing partial. Rough cost: $3–8 per run.
 
-### 6.7.1 Adjacent-industry track (M13)
+### 6.7.1 Adjacent-industry track (M14)
 
 The same monthly run gets a second track that screens the **industries around quantum computing**. It reuses the §6.7 pipeline (discovery → deep research → deterministic checks → no-tools proposal with citation validator → delivery) with these differences.
 
@@ -656,7 +681,7 @@ The same monthly run gets a second track that screens the **industries around qu
 
 **Cost:** the adjacent track has its own cap, `UNIVERSE_ADJACENT_BUDGET_USD` (default 10.00), on top of the §6.7 cap. Rough cost: $3–8 per run.
 
-### 6.7.2 Slot rules: removals and the strong-candidate notification (M13; both tracks)
+### 6.7.2 Slot rules: removals and the strong-candidate notification (M14; both tracks)
 
 The 9-name cap (§1.4) covers pure-plays and adjacent names together. These rules apply to both review tracks (§6.7, §6.7.1).
 
@@ -679,7 +704,7 @@ A strong candidate triggers a **separate Telegram notification** from the Aether
 
 Thresholds live in `config/universe.yaml` (`strong_candidate: {min_independent_sources: 2, min_t1_sources: 1, cooldown_reviews: 3}`, `removal: {min_materiality: 4}`).
 
-### 6.7.3 Full re-evaluation (owner-triggered; M13)
+### 6.7.3 Full re-evaluation (owner-triggered; M14)
 
 The monthly review protects current names: a removal needs serious, cited bad news (§6.7.2). The owner can instead trigger a **full re-evaluation** (a "Run full re-evaluation" button on the Universe page: a CSRF-protected `universe_full_review` command, rate-limited to once per 7 days). It re-ranks every current name and every candidate together and **proposes a complete set of up to 9 names** besides QTUM. That set can differ from today's ("repopulate").
 
@@ -729,11 +754,11 @@ On the 1st of each month at 10:30 SGT (after the universe review, §6.7), Aether
 - **M8:** catalysts and the options panel per name.
 - **M10:** stances with track record, and the overlay's value-added line (§6.6.1, layer 3).
 - **M12:** the universe review's proposals.
-- **M13:** the adjacent-industry proposals, the name-cap status (N of 9 used), and the **thesis check** (§6.10): weights by modality and supplier sector, concentration flags, red flags per holding, gaps, and winner signals.
+- **M14:** the adjacent-industry proposals, the name-cap status (N of 9 used), and the **thesis check** (§6.10): weights by modality and supplier sector, concentration flags, red flags per holding, gaps, and winner signals.
 
 **Delivery:** the dashboard **Review** page (full pack, archive) and a Telegram message (S7; plain text, no link previews, ≤4096 chars, overflow says "more on /review"). Holdings never leave the machine (§1.3), so the Telegram text carries target weights, flags, dates and the number of suggested trades only: no share counts, dollar values or account number. It's sent once per month (dedupe key); a failed publish is retried once the next day.
 
-### 6.10 Thesis checks (`portfolio/thesis.py`; M13; no LLM)
+### 6.10 Thesis checks (`portfolio/thesis.py`; M14; no LLM)
 
 The owner's Quantum Thesis (`STRATEGY.md`) is applied as **deterministic checks on stored data**. Results are shown and fed to the monthly review as computed metrics. They **never place trades or change weights**: the research overlay (§6.6.1) remains the only automatic weight adjustment. All thresholds live in `config/thesis.yaml` (numbers only, `extra=forbid`) and are initial values for owner review.
 
@@ -781,7 +806,7 @@ When all three are present, the review pack shows "winner signals present". The 
 
 Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands of rows per year and a database in the tens of MB.
 
-- `tickers` (symbol TEXT PK, name, type CHECK IN ('etf','pure_play','adjacent','benchmark','context'), modality TEXT NULL CHECK IN ('superconducting','trapped_ion','neutral_atom','photonic','annealing','spin_silicon','other') and required when type = 'pure_play' (M13), sector TEXT NULL CHECK IN (the §6.7.1 sector ids) and required when type = 'adjacent', cik TEXT, active INTEGER 0/1) (`adjacent` and `sector` from M13)
+- `tickers` (symbol TEXT PK, name, type CHECK IN ('etf','pure_play','adjacent','benchmark','context'), modality TEXT NULL CHECK IN ('superconducting','trapped_ion','neutral_atom','photonic','annealing','spin_silicon','other') and required when type = 'pure_play' (M14), sector TEXT NULL CHECK IN (the §6.7.1 sector ids) and required when type = 'adjacent', cik TEXT, active INTEGER 0/1) (`adjacent` and `sector` from M14)
 - `prices_daily` (symbol, d TEXT, o/h/l/c REAL, volume INTEGER, provider TEXT, PK(symbol, d)) `WITHOUT ROWID`
 - `fundamentals_q` (symbol, period_end, concept, value_micros INTEGER, unit, source_accession; PK(symbol, period_end, concept)) `WITHOUT ROWID`
 - `capital_structure` (symbol, as_of, instrument CHECK IN ('convertible','warrant','earnout','atm','shelf'), amount_micros INTEGER NULL, shares_underlying INTEGER NULL, strike_micros INTEGER NULL, source_accession, PK(symbol, as_of, instrument, source_accession))
@@ -818,8 +843,8 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `commands` (id INTEGER PK, kind, args TEXT JSON, requested_at, requested_by, status, processed_at): writes requested by the dashboard, executed by the worker
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
 - `universe_reviews` (id INTEGER PK, as_of, status CHECK IN ('running','done','failed'), payload TEXT JSON, model, prompt_version, cost_micros INTEGER, error NULL) (M12)
-- `universe_candidates` (review_id FK, symbol, track CHECK IN ('pure_play','adjacent'), action CHECK IN ('add','remove','watch','keep','skip'), cik NULL, sector NULL, exposure NULL CHECK IN ('high','med','low'), market_cap_micros NULL, mcap_bucket NULL CHECK IN ('small','mid','large'), overlap TEXT JSON, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12; `track`, `sector`, `exposure`, market-cap fields and `skip` from M13)
-- `alerts` (id INTEGER PK, event_id FK NULL, kind (M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`; M13 adds `universe_strong_candidate`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
+- `universe_candidates` (review_id FK, symbol, track CHECK IN ('pure_play','adjacent'), action CHECK IN ('add','remove','watch','keep','skip'), cik NULL, sector NULL, exposure NULL CHECK IN ('high','med','low'), market_cap_micros NULL, mcap_bucket NULL CHECK IN ('small','mid','large'), overlap TEXT JSON, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12; `track`, `sector`, `exposure`, market-cap fields and `skip` from M14)
+- `alerts` (id INTEGER PK, event_id FK NULL, kind (M13 adds `digest`, and a `delivery` column CHECK IN ('immediate','digest','merged','dashboard_only'); M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`; M14 adds `universe_strong_candidate`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
 - `job_runs` (id INTEGER PK, job, started_at, finished_at, status, rows_written, provider, error)
 
 Notes:
@@ -857,7 +882,7 @@ Notes:
 9. **Holdings (M5):** an editable holdings + cash table (saved via the `update_holdings` command; in `tiger` mode the universe rows are read-only, with "Sync from Tiger", the last sync time and the masked account number), the profile picker, current vs target weights, the published targets with each overlay adjustment chain (§6.6.1), the rebalance plan (§6.6) with the publish dates, **Publish targets now**, value in USD and SGD, and the backtest banner.
 10. **Login (M5):** the password form (§2.2 S2).
 11. **Review (M5):** the monthly review packs (§6.9), latest first, with each month's targets, adjustment chains and plan.
-12. **Universe (M12; "Adjacent industries" tab M13):** the latest review and history: each proposed add/remove/watch with description, criteria pass/fail, reasons and cited sources (with trust tiers), plus run cost.
+12. **Universe (M12; "Adjacent industries" tab M14):** the latest review and history: each proposed add/remove/watch with description, criteria pass/fail, reasons and cited sources (with trust tiers), plus run cost.
 13. **Ops:**
    - last run per job and the provider used
    - **jobs failing for more than 24h** (also sent as an alert)
@@ -912,7 +937,7 @@ All jobs run in the single worker's APScheduler with `max_instances=1`. Network 
 - `CLASSIFIER_MODEL` (cheap tier) and `SYNTH_MODEL` (strongest tier) come from env. Look up current IDs in the Anthropic docs.
 - Tools: only `research/` gets the web-search tool, with capped `max_uses`, `allowed_domains` from `sources.yaml`, and a daily run cap. Classification and synthesis: **no tools**.
 - Escalations: `MAX_ESCALATIONS_PER_DAY` and a per-ticker cooldown (§5.2).
-- Monthly universe review (§6.7): `RESEARCH_DEEP_MODEL` (strongest Opus tier) for both the research and the no-tools proposal call, capped per run by `UNIVERSE_REVIEW_BUDGET_USD` (plus `UNIVERSE_ADJACENT_BUDGET_USD` for the M13 track). Adjacent names (M13) add their own research sweeps and weekly conclusions, roughly +$0.3–0.7/day at the §10 assumptions.
+- Monthly universe review (§6.7): `RESEARCH_DEEP_MODEL` (strongest Opus tier) for both the research and the no-tools proposal call, capped per run by `UNIVERSE_REVIEW_BUDGET_USD` (plus `UNIVERSE_ADJACENT_BUDGET_USD` for the M14 track). Adjacent names (M14) add their own research sweeps and weekly conclusions, roughly +$0.3–0.7/day at the §10 assumptions.
 - Backfill uses the **Message Batches API**.
 - Options analytics may enter synthesis prompts as computed metrics (§6.8). The mandate (§1.4) never does.
 - Holdings (manual or Tiger-synced, and the deprecated `positions.yaml`), the broker account number, secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
@@ -955,12 +980,13 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 |---|---|---|---|
 | **M11** | Escalation, ops & deploy | Escalation flow with caps (§5.2.5), verification research, Ops page, structured logging, backup restore drill, optional Litestream, `pip-audit` in lint, **optional** K8s manifests (Docker on the Mac is the supported deploy): **one pod** with `worker` + `app` containers sharing a ReadWriteOnce PVC on local storage (`replicas: 1`, `strategy: Recreate`), Secret, NetworkPolicy (egress allow-list where feasible); runbook incl. "migrate to MySQL/Postgres" and "rotate API key" | Synthetic high-materiality T1 event → alert + re-synthesis within 5 min; 6th escalation in a day is refused; fresh clone → running stack in <10 min; restore from backup reproduces the dashboard |
 
-### Phase 4 — Discovery
+### Phase 4 — Discovery & tuning
 
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M12** | Monthly universe review | `config/universe.yaml` (criteria), deterministic discovery (QTUM holdings, EDGAR full-text search, current pure-plays), deep research on `RESEARCH_DEEP_MODEL`, deterministic eligibility checks, no-tools proposal with citation validator, `universe_reviews` / `universe_candidates`, Telegram summary + Universe page, proposals also in the monthly review pack (§6.9), monthly job, per-run budget cap. Depends on M3 (Telegram), M6 (research runner, LLM wrapper) and M10 (citation validator). | On recorded fixtures: a candidate below the market-cap or liquidity floor is never proposed as `add`, even when the model says add; a candidate without a T1 business excerpt is never `add`; a synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove`; a recent listing with <60 sessions → `watch`; unknown evidence IDs are rejected; the Telegram text is plain, ≤4096 chars, and sent once per review; a month with no changes sends "No changes proposed"; hitting the budget cap marks the run `failed` and sends nothing; the job is registered for the 1st of the month at 10:00 SGT |
-| **M13** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Thesis checks (§6.10)**: `tickers.modality` with T1-sourced facts, `config/thesis.yaml`, concentration by modality/sector, the four red-flag monitors, winner signals, the QTUM hyperscaler-weight check, gaps feeding `fills_gap`, shown on Holdings, Strategies, ticker pages and in the review pack. **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, **§6.7.2 slot rules** (removal of any of the 9 on a qualifying bad-news trigger; strong-candidate Telegram notification when all slots are full), shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Thesis checks (synthetic fixtures):** a pure-play without a modality fails the loader; a sleeve with one modality over 50% raises the concentration flag; each red flag fires on its synthetic trigger and not just below it (2 vs 1 financing; 23 vs 25 months of runway; +4% revenue with +30% opex vs +6%; acquisitions at 26% vs 24% of liquidity); winner signals need all three; a QTUM snapshot with 11% hyperscaler weight is flagged; no thesis check changes a weight or writes a trade; **full re-evaluation:** a current name with no §6.7.2 trigger can still be proposed as a drop, with cited reasons; the proposed set never exceeds 9 or includes an excluded name; a set breaking a concentration flag is marked; the command is CSRF-protected and refused a second time within 7 days; `STRATEGY.md` text never appears in a prompt (a test greps the prompt builders). **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; a `remove` proposal for any of the 9 needs a qualifying trigger (RISK ≥ 4 with T1 or 2×T2, an overlay hard rule, or an accepted AVOID), otherwise it's downgraded to a `watch` note; with all 9 slots full no `add` is proposed; a candidate meeting the strong-candidate thresholds sends exactly one `universe_strong_candidate` Telegram message naming the weakest current name, and isn't re-sent within 3 reviews without new evidence; one that misses a threshold stays `watch` with no notification; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track; **§6.7.3 full re-evaluation** (owner-triggered `universe_full_review` command, complete proposed set of ≤ 9, no protection for current names, cited reasons for every drop, before/after modality and sector weights); **close-out:** the M13 report's owner checklist must raise cjiefeng/aether#29 (the deferred **full holdings review**, which may repopulate the set) and offer to run the first full re-evaluation; #29 is **resolved** (outcome comment, then closed) only after that review and the owner's decision, never auto-closed by the M13 PR |
+| **M13** | Escalation & alert-noise tuning | Built after M12 and before M14 (M14 adds 3 names, which would add noise and cost under the M11 rules). §5.2.5 M13 rules: RISK-only triggers, materiality 5 or ≥ 4 in a severe category (`going_concern`, `short_report`, `guidance_cut`, deficiency/common-stock `delisting_or_compliance` via the M5 overlay parser, `dilution` ≥ 10% of FD shares when parsed); verification research only for events without a T1 source; `MAX_ESCALATIONS_PER_DAY` 2, 72 h per-ticker cooldown; `ESCALATION_DAILY_BUDGET_USD` sub-budget. §5.2.6 notification policy: one Telegram message per event (merging `risk_event`, `off_cycle_review` and `escalation`), escalation results sent only on a stance or overlay change, immediate vs 08:00 SGT daily digest, `alerts.delivery` and the `digest` kind (migration), Ops-page counts. Config: `config/llm.yaml` → `escalation`, `config/alerts.yaml`. | A SIGNAL event at materiality 5 never escalates; an S-3, a 424B5 under 10% of FD shares, a warrant-only Form 25 and an 8-K 3.02 alert but don't escalate; a going-concern event (5) and a 424B5 at 12% of FD shares escalate; a T1 escalation runs no verification search but does re-synthesize, and a T2-only escalation runs both; the 3rd escalation in a day is refused (`daily_cap`), as is a 2nd on the same ticker within 72 h; hitting the escalation sub-budget refuses further escalations (`budget`) while classification and sweeps still run; a 424B5 that triggers RISK, off-cycle and escalation alerts sends **one** Telegram message with all three labels; an unchanged re-synthesis sends no result message, while a stance change does; RISK materiality 3 and T−7 reminders go to the 08:00 digest, and an empty digest sends nothing; all alerts still appear on `/alerts` |
+| **M14** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Thesis checks (§6.10)**: `tickers.modality` with T1-sourced facts, `config/thesis.yaml`, concentration by modality/sector, the four red-flag monitors, winner signals, the QTUM hyperscaler-weight check, gaps feeding `fills_gap`, shown on Holdings, Strategies, ticker pages and in the review pack. **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, **§6.7.2 slot rules** (removal of any of the 9 on a qualifying bad-news trigger; strong-candidate Telegram notification when all slots are full), shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Thesis checks (synthetic fixtures):** a pure-play without a modality fails the loader; a sleeve with one modality over 50% raises the concentration flag; each red flag fires on its synthetic trigger and not just below it (2 vs 1 financing; 23 vs 25 months of runway; +4% revenue with +30% opex vs +6%; acquisitions at 26% vs 24% of liquidity); winner signals need all three; a QTUM snapshot with 11% hyperscaler weight is flagged; no thesis check changes a weight or writes a trade; **full re-evaluation:** a current name with no §6.7.2 trigger can still be proposed as a drop, with cited reasons; the proposed set never exceeds 9 or includes an excluded name; a set breaking a concentration flag is marked; the command is CSRF-protected and refused a second time within 7 days; `STRATEGY.md` text never appears in a prompt (a test greps the prompt builders). **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; a `remove` proposal for any of the 9 needs a qualifying trigger (RISK ≥ 4 with T1 or 2×T2, an overlay hard rule, or an accepted AVOID), otherwise it's downgraded to a `watch` note; with all 9 slots full no `add` is proposed; a candidate meeting the strong-candidate thresholds sends exactly one `universe_strong_candidate` Telegram message naming the weakest current name, and isn't re-sent within 3 reviews without new evidence; one that misses a threshold stays `watch` with no notification; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track; **§6.7.3 full re-evaluation** (owner-triggered `universe_full_review` command, complete proposed set of ≤ 9, no protection for current names, cited reasons for every drop, before/after modality and sector weights); **close-out:** the M14 report's owner checklist must raise cjiefeng/aether#29 (the deferred **full holdings review**, which may repopulate the set) and offer to run the first full re-evaluation; #29 is **resolved** (outcome comment, then closed) only after that review and the owner's decision, never auto-closed by the M14 PR |
 
 ---
 
