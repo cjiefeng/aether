@@ -1,5 +1,33 @@
 # Milestone report
 
+## Roadmap change: M14 escalation & alert-noise tuning (2026-10-08, owner-approved)
+
+**Why:** the owner found M11's escalation matrix too lenient and the alerts too noisy.
+
+**The problems with M11's rules:**
+- **Too many triggers:**
+  - any event at materiality ≥4 escalated, including positive SIGNAL news
+  - any T1 RISK event ≥3 escalated, which covers routine S-3s, NT filings, warrant Form 25s and 8-K 3.02s
+  - every 424B supplement escalated (materiality 4)
+- **Too many messages:** one filing could send up to **4 Telegram messages**: M3 RISK, M5 off-cycle review, M11 escalation started, and the escalation result.
+- **Cost:** each escalation runs **Opus 5.5 twice**: a verification search (~$0.15–0.25, pointless for SEC filings, which are already authoritative) and a re-synthesis (~$0.30–0.45). At the cap of 5 a day that's up to **~$3.50/day, more than the $3 daily budget**, which then blocks routine classification and sweeps.
+
+**M14 (new spec §5.2.5 rules and §5.2.6 notification policy):**
+- **Escalation:**
+  - **RISK only.** It escalates at materiality 5, or at ≥4 in a severe category: going concern, short report, guidance cut, a real listing-deficiency or common-stock delisting, or dilution ≥10% of fully diluted shares.
+  - **Verification search only when there's no T1 source.**
+  - **Caps:** 2 a day, 72 h per ticker, and its own $1.50/day sub-budget.
+- **Notifications:**
+  - **one message per event,** with merged labels
+  - **escalation results only when the stance or overlay changes**
+  - **immediate** for urgent items, and an **08:00 SGT daily digest** for the rest
+- **Expected effect:** about 1–2 escalations a month at ~$0.30–0.45 each, instead of several a week.
+- **Build order:** after M12 (in progress), **before M13**, because M13 adds three names.
+
+**Owner decisions to review:**
+1. The thresholds: severe categories, the 10% dilution bar, the 2/day cap, the 72 h cooldown, the $1.50 sub-budget.
+2. The digest time (08:00 SGT) and the immediate bar (materiality ≥4).
+
 ## M11: Escalation, ops & deploy (2026-10-08)
 
 High-materiality events now **escalate**: an alert, then one verification search, then a re-synthesis of the ticker, under a daily cap and a per-ticker cooldown. Also new: an **Ops page**, **JSON logs** with secret redaction, a weekly **backup restore drill** plus `make restore`, `make init` for a fresh clone, and `docs/RUNBOOK.md`. Phase 3 is complete.

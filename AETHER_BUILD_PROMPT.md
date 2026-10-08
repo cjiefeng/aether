@@ -30,7 +30,7 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 | **1. Risk watcher MVP** | M0–M3 | Prices, dilution/insider/lock-up/earnings alerts from SEC data, Telegram alerts, basic dashboard | **$0** |
 | **1b. Portfolio** | M4–M5 | Backtested model strategies per risk profile, password login, holdings page, monthly targets with the filing-rule overlay, rebalance planner, SGD view, monthly review pack, options snapshots | **$0** |
 | **2. Intelligence** | M6–M10 | News classification, catalysts, options analytics, scorecards, event reactions, conclusions with track record, the stance overlay, weekly brief | Budgeted |
-| **3. Hardening** | M11 | Escalation flow, ops, backups, K8s (optional) | — |
+| **3. Hardening** | M11, M14 | Escalation flow, ops, backups, K8s (optional); M14 tightens escalation and cuts alert noise and escalation cost | — (M14 lowers spend) |
 | **4. Discovery** | M12–M13 | Monthly universe review: proposed pure-plays (M12) and adjacent-industry names (M13) to add/remove, sent on Telegram; adjacent tickers KEYS, FEIM, PANW tracked and holdable (M13) | Budgeted (separate cap) |
 
 ### 1.2 Watchlist (in `config/watchlist.yaml`; editable without code changes)
@@ -349,10 +349,35 @@ Every event gets a classification record:
 2. **LLM classification** for everything else, using `CLASSIFIER_MODEL`, untrusted-content wrapping (S1), prompt caching on the rubric system prompt, and strict schema output. **No tools.**
 3. **Trust-tier caps** (`classify/caps.py`): apply the S1 caps in code. Store `materiality_raw` and `materiality`.
 4. **Dedupe/merge:** canonical URL hash plus title similarity (simhash or MinHash). Syndicated copies merge into one event and **don't** count as independent sources. Track `independent_source_count` by distinct registrable domain.
-5. **Escalation** (built in M11; the RISK rules alert from M3):
-   - Triggers: post-cap materiality ≥4, or a T1-sourced RISK ≥3.
-   - Actions: (a) an alert, (b) a verification research run, (c) re-synthesis of that ticker.
-   - Caps: at most `MAX_ESCALATIONS_PER_DAY` (default 5) and at most 1 per ticker per 6 hours. Quarantined events never escalate.
+5. **Escalation** (built in M11, **tightened in M14**; the RISK rules alert from M3):
+   - **M11 (superseded by M14):** triggers were post-cap materiality ≥4 of any class, or a T1-sourced RISK ≥3. Actions: an alert, a verification research run, a re-synthesis. Caps: `MAX_ESCALATIONS_PER_DAY` 5, 1 per ticker per 6 hours.
+   - **Triggers (M14):** **RISK class only.** SIGNAL and NOISE never escalate; the weekly conclusions pick them up. A RISK event escalates when its post-cap materiality is **5**, or it's **≥ 4 in a severe category** (`escalation.severe_categories` in `config/llm.yaml`):
+     - `going_concern`, `short_report`, `guidance_cut`
+     - `delisting_or_compliance`, **only** when the M5 overlay parser classifies it as a listing-deficiency notice or a delisting of the **common stock** (not warrants or units, and not a voluntary exchange transfer)
+     - `dilution`, **only** when the parsed offering is ≥ `large_dilution_pct` (default **10%**) of fully diluted shares. An offering whose size can't be parsed alerts but doesn't escalate.
+
+     Routine filings (S-3/S-1 shelves, 424B supplements under the size bar, Form 25/15 for warrants, 8-K 3.02, NT filings) **alert but never escalate**.
+   - **Actions (M14):**
+     - (a) one notification (§5.2.6)
+     - (b) a verification research run **only if the event has no T1 source**. An SEC filing is already authoritative, so a web search adds nothing.
+     - (c) a re-synthesis of that ticker
+   - **Caps (M14):**
+     - `MAX_ESCALATIONS_PER_DAY` default **2**; `cooldown_hours` **72** per ticker
+     - a separate **escalation sub-budget**, `ESCALATION_DAILY_BUDGET_USD` (default **1.50**), inside the daily soft budget. Escalations stop at it, so they can't starve classification, sweeps or conclusions; any escalation refused for budget is recorded with that reason.
+     - quarantined events never escalate
+   - **Expected effect** (from the M2 filing history): from several escalations a week to about **1–2 a month**, at roughly $0.30–0.45 each (re-synthesis only for T1 events).
+6. **Notification policy** (§5.2.6, M14): see below.
+
+#### 5.2.6 Notification policy (M14; applies to every Telegram alert)
+
+**Goal:** one message per event, and only urgent things sent immediately. The dashboard `/alerts` page still lists everything. Settings live in `config/alerts.yaml`.
+
+- **One message per event.** An event's M3 `risk_event`, M5 `off_cycle_review` and M11 `escalation` alerts merge into **one** Telegram message, deduped by `event_id`. It carries every applicable label, e.g. "RISK · dilution (4) · off-cycle review suggested · escalated". Alerts that arrive later for the same event are recorded but not sent separately.
+- **Escalation results are sent only if something changed:** the stance changed, a flip was proposed but `held` by hysteresis, or the name's overlay output changed. Otherwise the result is dashboard-only, and the original message's dashboard entry links to it.
+- **Daily digest for the rest:**
+  - **Immediate:** escalations; RISK events at or above `immediate_min_materiality` (default **4**); T−1 lock-up and earnings reminders; job failing / recovered; the monthly review pack; the M12/M13 universe messages.
+  - **Digest:** one message at `digest_time` (default **08:00 SGT**) with the other alerts of the last 24h: RISK materiality 3, insider clusters, T−7 reminders. An empty digest isn't sent.
+- **Ops page:** escalations and their spend against the sub-budget, refusals by reason, and the counts of messages sent, merged and digested in the last 30 days.
 
 ### 5.3 Evaluation
 
@@ -819,7 +844,7 @@ Claude Code designs the full DDL in M0/M1. Expected volume is tens of thousands 
 - `llm_calls` (id INTEGER PK, purpose, model, input_tokens, output_tokens, cache_read_tokens, web_searches, cost_micros, created_at)
 - `universe_reviews` (id INTEGER PK, as_of, status CHECK IN ('running','done','failed'), payload TEXT JSON, model, prompt_version, cost_micros INTEGER, error NULL) (M12)
 - `universe_candidates` (review_id FK, symbol, track CHECK IN ('pure_play','adjacent'), action CHECK IN ('add','remove','watch','keep','skip'), cik NULL, sector NULL, exposure NULL CHECK IN ('high','med','low'), market_cap_micros NULL, mcap_bucket NULL CHECK IN ('small','mid','large'), overlap TEXT JSON, criteria TEXT JSON, description, reasons TEXT JSON, evidence_ids TEXT JSON, PK(review_id, symbol)) (M12; `track`, `sector`, `exposure`, market-cap fields and `skip` from M13)
-- `alerts` (id INTEGER PK, event_id FK NULL, kind (M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`; M13 adds `universe_strong_candidate`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
+- `alerts` (id INTEGER PK, event_id FK NULL, kind (M14 adds `digest`, and a `delivery` column CHECK IN ('immediate','digest','merged','dashboard_only'); M5 adds `review_pack` and `off_cycle_review`; M12 adds `universe_review`; M13 adds `universe_strong_candidate`), channel, sent_at, payload TEXT JSON, dedupe_key UNIQUE)
 - `job_runs` (id INTEGER PK, job, started_at, finished_at, status, rows_written, provider, error)
 
 Notes:
@@ -954,6 +979,8 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | # | Milestone | Deliverables | Acceptance |
 |---|---|---|---|
 | **M11** | Escalation, ops & deploy | Escalation flow with caps (§5.2.5), verification research, Ops page, structured logging, backup restore drill, optional Litestream, `pip-audit` in lint, **optional** K8s manifests (Docker on the Mac is the supported deploy): **one pod** with `worker` + `app` containers sharing a ReadWriteOnce PVC on local storage (`replicas: 1`, `strategy: Recreate`), Secret, NetworkPolicy (egress allow-list where feasible); runbook incl. "migrate to MySQL/Postgres" and "rotate API key" | Synthetic high-materiality T1 event → alert + re-synthesis within 5 min; 6th escalation in a day is refused; fresh clone → running stack in <10 min; restore from backup reproduces the dashboard |
+
+| **M14** | Escalation & alert-noise tuning | **Build after M12 and before M13** (M13 adds 3 names, which would add noise and cost under the M11 rules). §5.2.5 M14 rules: RISK-only triggers, materiality 5 or ≥ 4 in a severe category (`going_concern`, `short_report`, `guidance_cut`, deficiency/common-stock `delisting_or_compliance` via the M5 overlay parser, `dilution` ≥ 10% of FD shares when parsed); verification research only for events without a T1 source; `MAX_ESCALATIONS_PER_DAY` 2, 72 h per-ticker cooldown; `ESCALATION_DAILY_BUDGET_USD` sub-budget. §5.2.6 notification policy: one Telegram message per event (merging `risk_event`, `off_cycle_review` and `escalation`), escalation results sent only on a stance or overlay change, immediate vs 08:00 SGT daily digest, `alerts.delivery` and the `digest` kind (migration), Ops-page counts. Config: `config/llm.yaml` → `escalation`, `config/alerts.yaml`. | A SIGNAL event at materiality 5 never escalates; an S-3, a 424B5 under 10% of FD shares, a warrant-only Form 25 and an 8-K 3.02 alert but don't escalate; a going-concern event (5) and a 424B5 at 12% of FD shares escalate; a T1 escalation runs no verification search but does re-synthesize, and a T2-only escalation runs both; the 3rd escalation in a day is refused (`daily_cap`), as is a 2nd on the same ticker within 72 h; hitting the escalation sub-budget refuses further escalations (`budget`) while classification and sweeps still run; a 424B5 that triggers RISK, off-cycle and escalation alerts sends **one** Telegram message with all three labels; an unchanged re-synthesis sends no result message, while a stance change does; RISK materiality 3 and T−7 reminders go to the 08:00 digest, and an empty digest sends nothing; all alerts still appear on `/alerts` |
 
 ### Phase 4 — Discovery
 
