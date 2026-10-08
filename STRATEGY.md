@@ -2,7 +2,7 @@
 
 This file holds the owner's investment beliefs and portfolio rules. **Every portfolio review** must follow it, whether it's done by the owner, a Claude session or a milestone design.
 
-**Scope.** These are the owner's views. Under the "No opinions in config or prompts" rule (CLAUDE.md, spec §1.2), this file is **never** copied into Aether's LLM prompts or config. Aether applies the rules only as **deterministic, numeric checks** (spec §6.10, M13): modality tags, concentration flags, red-flag monitors and gap detection. Prompts receive only the computed results, as facts and metrics.
+**Scope.** These are the owner's views. Under the "No opinions in config or prompts" rule (CLAUDE.md, spec §1.2), this file is **never** copied into Aether's LLM prompts or config. Aether applies the rules only as **deterministic, numeric checks** (spec §6.10, M14): modality tags, concentration flags, red-flag monitors and gap detection. Prompts receive only the computed results, as facts and metrics.
 
 Standing constraints that apply alongside the thesis (spec §1.4, §6.7.1, §6.7.2):
 - **At most 9 names besides QTUM** (pure-plays + adjacent).

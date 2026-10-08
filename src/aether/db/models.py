@@ -1342,7 +1342,7 @@ escalations = Table(
 # watchlist, so this evidence never enters `events` (Feed, classifier, scorecards).
 UNIVERSE_REVIEW_KINDS = ("monthly", "manual")
 UNIVERSE_REVIEW_STATUSES = ("running", "done", "failed")
-UNIVERSE_TRACKS = ("pure_play",)  # M13 adds 'adjacent'
+UNIVERSE_TRACKS = ("pure_play",)  # M14 adds 'adjacent'
 UNIVERSE_ACTIONS = ("add", "remove", "watch", "keep", "skip")
 UNIVERSE_EVIDENCE_KINDS = ("business_excerpt", "web")
 
