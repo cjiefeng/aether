@@ -11,6 +11,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -20,7 +21,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import Engine, delete, func, select, update
 
 from aether.alerts.candidates import AlertCandidate
-from aether.alerts.dispatch import deliver, enqueue, enqueue_test_alert, run_alerts
+from aether.alerts.dispatch import enqueue_test_alert, run_alerts, run_digest
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
 from aether.catalysts.mark import CatalystMark, apply_mark
 from aether.catalysts.sync import refresh_catalysts
@@ -58,6 +59,7 @@ from aether.ingest.prices import ingest_prices
 from aether.ingest.qtum_holdings import ingest_qtum_holdings
 from aether.ingest.short_interest import ingest_short_interest
 from aether.llm.client import LlmClient, LlmDisabled
+from aether.llm.pricing import ESCALATION_SYNTH_PURPOSE
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
 from aether.ops.restore import drill
@@ -69,6 +71,7 @@ from aether.portfolio.holdings import (
     apply_settings_update,
 )
 from aether.portfolio.job import config_changed, run_strategies
+from aether.portfolio.overlay import name_overlay
 from aether.portfolio.publish import publish_targets, run_rebalance, sgt_today
 from aether.portfolio.tiger_sync import sync_holdings
 from aether.providers.dividends import FallbackDividends, MassiveDividends, YFinanceDividends
@@ -319,7 +322,11 @@ def make_telegram(settings: Settings) -> tuple[TelegramService | None, str | Non
 
 
 def alerts_job(
-    engine: Engine, settings: Settings, service: TelegramService | None, reason: str | None
+    engine: Engine,
+    settings: Settings,
+    service: TelegramService | None,
+    reason: str | None,
+    extra: Sequence[AlertCandidate] = (),
 ) -> JobResult:
     llm_cfg = load_llm_config(settings.config_dir)
     return run_alerts(
@@ -332,6 +339,7 @@ def alerts_job(
             settings.config_dir
         ).publish.off_cycle_min_materiality,
         llm_budget_alert=(settings.daily_llm_budget_usd, llm_cfg.budget_alert_fraction),
+        extra=extra,
     )
 
 
@@ -774,12 +782,23 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     escalation_lock = threading.Lock()
 
     def notify(cands: Sequence[AlertCandidate]) -> None:
-        on = telegram is not None and telegram.blocked is None
-        now = datetime.now(UTC)
-        enqueue(engine, cands, telegram=on, now=now)
-        if on and telegram is not None:
-            with alerts_lock:
-                deliver(engine, telegram, load_alerts_config(settings.config_dir), now)
+        # M13: the full alerts pass with the escalation's candidates, so the event's RISK and
+        # off-cycle alerts are enqueued in the same batch and merge into one message.
+        with alerts_lock:
+            alerts_job(engine, settings, telegram, telegram_off, extra=cands)
+
+    def overlay_state(symbol: str) -> Any:
+        strategies = load_strategies(settings.config_dir)
+        weights = load_weights(settings.config_dir)
+        with engine.connect() as conn:
+            return name_overlay(
+                conn,
+                symbol,
+                sgt_today(),
+                strategies.overlay,
+                weights.conclusions.stance_max_age_days,
+                weights.track_record,
+            )
 
     def verify(target: VerifyTarget) -> tuple[int, int]:
         assert llm is not None
@@ -804,7 +823,8 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         if not synth_lock.acquire(timeout=SYNTH_LOCK_WAIT_S):
             return {"status": "failed", "error": "a conclusions run is still in progress"}
         try:
-            return synthesize_one(engine, synth_deps(settings, llm), "ticker", symbol, sgt_today())
+            deps = replace(synth_deps(settings, llm), purpose=ESCALATION_SYNTH_PURPOSE)
+            return synthesize_one(engine, deps, "ticker", symbol, sgt_today())
         finally:
             synth_lock.release()
 
@@ -821,6 +841,8 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             classify=classify_for_escalation,
             resynthesize=resynthesize if llm is not None else None,
             disabled_reason=llm_off,
+            budget_usd=settings.escalation_daily_budget_usd,
+            overlay_state=overlay_state,
         )
 
     def run_escalations_job() -> None:
@@ -1093,6 +1115,21 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         run_job(engine, "weekly_brief", lambda: brief_job(engine, settings, on))
 
     sched.add_job(run_brief, "cron", day_of_week="sun", hour=9, minute=0, id="weekly_brief")
+
+    # M13 (spec §5.2.6): one digest of the non-urgent alerts per day at digest_time (SGT).
+    def run_digest_job() -> None:
+        with alerts_lock:
+            run_job(engine, "alerts", lambda: alerts_job(engine, settings, telegram, telegram_off))
+            run_job(
+                engine,
+                "alert_digest",
+                lambda: run_digest(
+                    engine, load_alerts_config(settings.config_dir), telegram, telegram_off
+                ),
+            )
+
+    digest_h, digest_m = load_alerts_config(settings.config_dir).digest_hour_minute
+    sched.add_job(run_digest_job, "cron", hour=digest_h, minute=digest_m, id="alert_digest")
     # Alerts (M3): every 10 min; covers the hourly job-health check (spec §9).
     sched.add_job(
         run_alerts_job,

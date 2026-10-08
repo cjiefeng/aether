@@ -165,8 +165,12 @@ ALERT_KINDS = (
     "escalation",  # M11
     "escalation_result",  # M11
     "universe_review",  # M12
+    "digest",  # M13
 )
-ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
+ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only", "digested")
+# M13 (spec §5.2.6): how an alert reaches the owner. `merged` rows were folded into the event's
+# one message; `digest` rows wait for the daily digest.
+ALERT_DELIVERIES = ("immediate", "digest", "merged", "dashboard_only")
 
 # M3 (0004) rebuilt this table: an outbox. Rows are inserted once per dedupe_key; the worker sends
 # pending telegram rows outside any write transaction and records the outcome.
@@ -185,6 +189,7 @@ alerts = Table(
     Column("last_error", Text),
     Column("payload", Text, nullable=False, server_default="{}"),
     Column("dedupe_key", Text, nullable=False, unique=True),
+    Column("delivery", Text, nullable=False, server_default="immediate"),  # M13
     CheckConstraint("channel IN ('telegram','dashboard')", name="channel"),
     CheckConstraint("kind IN (" + ",".join(f"'{k}'" for k in ALERT_KINDS) + ")", name="kind"),
     CheckConstraint(
@@ -192,9 +197,13 @@ alerts = Table(
     ),
     CheckConstraint("length(text) BETWEEN 1 AND 4096", name="text_len"),
     CheckConstraint("attempts >= 0", name="attempts"),
+    CheckConstraint(
+        "delivery IN (" + ",".join(f"'{k}'" for k in ALERT_DELIVERIES) + ")", name="delivery"
+    ),
     _json_ck("payload"),
     Index(None, "status", "id"),
     Index(None, "created_at"),
+    Index(None, "delivery", "status"),
     sqlite_strict=True,
 )
 
@@ -1300,9 +1309,10 @@ conclusion_failures = Table(
 # --------------------------------------------------------------------------- M11: escalation
 # One row per (event, ticker) that met an escalation trigger (spec §5.2.5). Refused rows are final
 # and record which cap refused them; they never run. `detail` holds step outcomes (no model text).
-ESCALATION_TRIGGERS = ("materiality", "t1_risk")
+# M11 triggers stay for history; M13 adds RISK materiality 5 and a severe category at >= 4.
+ESCALATION_TRIGGERS = ("materiality", "t1_risk", "materiality_5", "severe_category")
 ESCALATION_STATUSES = ("running", "done", "failed", "refused")
-ESCALATION_REFUSALS = ("daily_cap", "ticker_cooldown")
+ESCALATION_REFUSALS = ("daily_cap", "ticker_cooldown", "budget")
 
 escalations = Table(
     "escalations",

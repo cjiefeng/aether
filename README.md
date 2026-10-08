@@ -3,7 +3,7 @@
 A self-hosted watcher for a small set of quantum-computing equities. It runs on your own machine and serves a LAN-only dashboard.
 **Personal research tool, not financial advice.** The full spec is in [AETHER_BUILD_PROMPT.md](AETHER_BUILD_PROMPT.md), and progress is tracked in [MILESTONE_REPORT.md](MILESTONE_REPORT.md).
 
-Status: **M10** (conclusions, track record, brief), the last Phase 2 milestone. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`. M8 adds dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. M9 adds the deterministic scorecard (with fully diluted EV and cash runway from SEC XBRL), the event-reaction engine and Calibration page, the QTUM theme decomposition, and the overlay's dilution and runway haircuts. M8 and M9 spend nothing on LLMs. M10 adds the weekly conclusions (Claude Opus 5.5, no tools, citation-checked, with code-enforced stance hysteresis), the track record against two naive baselines, stance multipliers in the overlay with an earned-trust clamp, the overlay value-added check, and the weekly brief.
+Status: **M13** (escalation & alert-noise tuning), Phase 4. Phase 3 (M11: escalation, ops, deploy) and M12 (monthly universe review) are done. Phase 1 (M0–M3) and Phase 1b (M4–M5) are done: prices, SEC filings and deterministic RISK rules, Telegram alerts, backtested model strategies, a password-protected dashboard, your holdings, monthly published targets with a filing-rule overlay, a rebalance plan, a monthly review pack, a USD/SGD view and daily options snapshots. M6 added RSS news, Claude web-search research runs and the budget-guarded LLM wrapper. M7 classifies every news and research item as SIGNAL, NOISE or RISK (rules first, then Claude with no tools), applies the trust-tier caps in code, quarantines injection attempts and adds the Feed page and `make eval`. M8 adds dated catalysts with deterministic hit/slip resolution, FINRA short interest with a spike rule, and options analytics (skew, implied moves into catalysts, positioning, IV rank) on the ticker page and in the review pack. M9 adds the deterministic scorecard (with fully diluted EV and cash runway from SEC XBRL), the event-reaction engine and Calibration page, the QTUM theme decomposition, and the overlay's dilution and runway haircuts. M8 and M9 spend nothing on LLMs. M10 adds the weekly conclusions (Claude Opus 5.5, no tools, citation-checked, with code-enforced stance hysteresis), the track record against two naive baselines, stance multipliers in the overlay with an earned-trust clamp, the overlay value-added check, and the weekly brief. M11 added escalations, the Ops page, JSON logs and the restore drill. M12 adds the monthly universe review. M13 tightens escalation to severe RISK events under a 2-a-day cap and a $1.50 sub-budget, sends one Telegram message per event, sends escalation results only when something changed, and moves non-urgent alerts to an 08:00 SGT daily digest.
 
 ## ⚠️ LAN only: never expose it to the internet
 
@@ -265,21 +265,24 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
 
 ## Escalation, ops & deploy (M11)
 
-**Escalation** (`escalate/`, spec §5.2.5):
-- **Triggers:** an event with post-cap materiality ≥ 4, or a RISK event ≥ 3 on a T1 source. Quarantined or injection-suspected events never escalate. Only events from the last 3 days are considered, so a backfill can't flood the caps. Only tickers that get conclusions escalate.
+**Escalation** (`escalate/`, spec §5.2.5; tightened in M13):
+- **Triggers:** RISK events only, at post-cap materiality 5, or ≥ 4 in a severe category (going concern, short report, guidance cut, a listing-deficiency notice or common-stock delisting read by the M5 overlay parser, or an offering ≥ 10% of fully diluted shares). Routine filings alert but don't escalate. Quarantined or injection-suspected events never escalate. Only events from the last 3 days are considered, so a backfill can't flood the caps. Only tickers that get conclusions escalate.
 - **Steps:**
-  1. An `escalation` alert ("Escalated n/5 today").
-  2. One **verification** research run (web search, `research_verify`, at most 3 searches). The event title enters the prompt only inside an untrusted block, and results go through ingestion like any other source.
+  1. An `escalation` alert, merged into the event's one Telegram message ("… · escalated").
+  2. A **verification** research run (web search, `research_verify`, at most 3 searches) **only when the event has no T1 source**. The event title enters the prompt only inside an untrusted block, and results go through ingestion like any other source.
   3. The classifier, on whatever the run found.
-  4. A **re-synthesis** of the ticker. Hysteresis applies, so a stance change may still be held.
-  5. An `escalation_result` alert.
-- **When it runs:** after every classifier pass and every 2 minutes, so the alert goes out seconds after classification and the re-synthesis lands within a few minutes.
-- **Caps:** `MAX_ESCALATIONS_PER_DAY` (env, default 5, per SGT day) and one per ticker per 6h (`config/llm.yaml` → `escalation`). A refused escalation is recorded with its reason and sends nothing. Spend counts against the daily soft budget.
+  4. A **re-synthesis** of the ticker (`synthesis_escalation`). Hysteresis applies, so a stance change may still be held.
+  5. An `escalation_result` alert, sent to Telegram only when the stance changed, a flip was held, or the overlay output changed; otherwise dashboard-only.
+- **When it runs:** after every classifier pass and every 2 minutes, so the message goes out seconds after classification and the re-synthesis lands within a few minutes.
+- **Caps:** `MAX_ESCALATIONS_PER_DAY` (env, default 2, per SGT day), one per ticker per 72h (`config/llm.yaml` → `escalation`), and `ESCALATION_DAILY_BUDGET_USD` (env, default 1.50) for escalation calls, inside the daily soft budget. A refused escalation is recorded with its reason (`daily_cap`, `ticker_cooldown`, `budget`) and sends nothing.
+
+**Alert delivery** (M13, spec §5.2.6, `config/alerts.yaml`): one Telegram message per event (RISK, off-cycle review and escalation merge, with every label on the first line). Urgent items go out at once; RISK materiality 3, insider clusters and T−7 reminders go into one daily digest at 08:00 SGT (none if empty). `/alerts` still lists every alert, with its delivery and links between alerts of the same event.
 
 **Ops page** (`/ops`):
 - The last run per job (with provider), and jobs failing for more than 24h.
 - LLM spend today against the soft budget, and spend over 30 days by purpose, with a reminder that the Console limit is the hard cap.
-- Escalations used today, plus recent escalations and why any were refused.
+- Escalations used today, escalation spend against its sub-budget, refusals by reason, and recent escalations (why they triggered, what changed).
+- Telegram messages over 30 days: sent at once, digested, merged, kept on the dashboard.
 - Classifier eval scores per prompt version.
 - The newest backup, and the last restore drill.
 

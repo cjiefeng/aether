@@ -16,6 +16,7 @@ from aether.edgar.text import (
     extract_atm,
     extract_going_concern,
     extract_lockup,
+    extract_offering,
     html_to_text,
 )
 from tests.cassettes import cassette_text
@@ -296,3 +297,51 @@ def test_capital_structure_from_synthetic_xbrl() -> None:
     w, c = items["warrant"], items["convertible"]
     assert (w.shares_underlying, w.strike) == (5_000_000, Decimal("11.5"))
     assert c.amount == Decimal(2000) and c.accession == "0000000001-26-000002"  # latest filed
+
+
+# --------------------------------------------------------------------------- offering size (M13)
+
+
+def test_extract_offering_cover_shares_and_prefunded() -> None:
+    o = extract_offering(
+        "PROSPECTUS SUPPLEMENT Acme Quantum, Inc. We are offering 12,500,000 shares of our "
+        "Class A common stock and, in lieu of common stock to certain investors, pre-funded "
+        "warrants to purchase up to 2,500,000 shares of Class A common stock. The underwriters "
+        "have an option to purchase up to an additional 2,250,000 shares."
+    )
+    assert o is not None and (o.shares, o.prefunded) == (15_000_000, 2_500_000)
+    assert "12,500,000 shares" in o.excerpt and len(o.excerpt) <= EXCERPT_MAX
+    plain = extract_offering("We are offering 4000000 shares of common stock at $2.50 per share.")
+    assert plain is not None and (plain.shares, plain.prefunded) == (4_000_000, 0)
+
+
+def test_extract_offering_returns_none_without_a_cover_size() -> None:
+    # An ATM states a dollar amount, not shares; resale and boilerplate text don't count.
+    assert (
+        extract_offering("Sales agreement for an aggregate offering price of up to $100M.") is None
+    )
+    assert extract_offering("The selling stockholders are offering 1,000,000 shares.") is None
+    # Beyond the cover area: not read.
+    far = "x " * 15_000 + "We are offering 1,000,000 shares of common stock."
+    assert extract_offering(far) is None
+
+
+def test_parse_document_stores_the_offering_for_424b() -> None:
+    from aether.ingest.edgar import parse_document
+
+    meta = FilingMeta(
+        accession="0000000001-26-000099",
+        cik="0000000001",
+        form="424B5",
+        filed_at="2026-03-09",
+        accepted_at=None,
+        report_date=None,
+        items=(),
+        primary_doc="acme.htm",
+        primary_doc_description=None,
+        is_xbrl=False,
+    )
+    body = "<p>We are offering 3,000,000 shares of our common stock.</p>"
+    summary = parse_document("ACME", meta, body).summary
+    assert summary["offering"] == {"shares": 3_000_000, "prefunded": 0}
+    assert summary["atm"] is None

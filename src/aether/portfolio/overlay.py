@@ -461,3 +461,24 @@ def stance_adjustments(
         applied = raw if st.proven else min(max(raw, lo), hi)
         out.append(StanceAdj(s, r.stance, raw, applied, applied != raw, r.id, r.as_of, st.label))
     return out
+
+
+def name_overlay(
+    conn: Connection,
+    symbol: str,
+    as_of: date,
+    params: OverlayParams,
+    max_age_days: int,
+    track: TrackRecordParams,
+) -> list[list[Any]]:
+    """What the overlay would do to one name at a publish on `as_of`: its layer-1 rules and its
+    layer-2 stance multiplier, as a comparable list (M13: an escalation result is sent only when
+    this changes)."""
+    out: list[list[Any]] = [
+        [f.rule, _r(f.multiplier)] for f in layer1_findings(conn, [symbol], as_of, params)
+    ]
+    out += [
+        ["stance", a.stance, _r(a.applied)]
+        for a in stance_adjustments(conn, [symbol], as_of, params, max_age_days, track)
+    ]
+    return sorted(out)

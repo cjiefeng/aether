@@ -134,7 +134,7 @@ tr.quarantined td { background: var(--warn-bg); }
          background: color-mix(in srgb, currentColor 8%, transparent); }
 .badge.risk, .badge.alert-failed, .badge.alert-expired, .badge.fact-unverified {
   color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
-.badge.signal, .badge.alert-sent, .badge.fact-signed_off, .badge.tier-t1 {
+.badge.signal, .badge.alert-sent, .badge.alert-digested, .badge.fact-signed_off, .badge.tier-t1 {
   color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
 .badge.alert-pending, .badge.fact-verified_by_claude, .badge.tier-t3 {
   color: var(--warn-fg); border-color: color-mix(in srgb, var(--warn-fg) 55%, transparent); }

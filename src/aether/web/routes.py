@@ -325,12 +325,15 @@ def feed_page(
 @router.get("/alerts", response_class=HTMLResponse)
 def alerts_page(request: Request) -> HTMLResponse:
     engine = request.app.state.ro_engine
+    cfg = load_alerts_config(request.app.state.settings.config_dir)
     return _render(
         request,
         "alerts.html",
         {
             "alerts": alerts_view.recent_alerts(engine, limit=100),
             "delivery": alerts_view.delivery_status(engine),
+            "immediate_min": cfg.immediate_min_materiality,
+            "digest_time": cfg.digest_time,
         },
     )
 
@@ -477,7 +480,12 @@ def ops_page(request: Request) -> HTMLResponse:
             "spend": news_view.llm_spend(engine, settings.daily_llm_budget_usd),
             "by_purpose": ops_view.spend_by_purpose(engine),
             "spend_days": ops_view.SPEND_DAYS,
-            "esc": ops_view.escalation_summary(engine, settings.max_escalations_per_day),
+            "esc": ops_view.escalation_summary(
+                engine,
+                settings.max_escalations_per_day,
+                budget=settings.escalation_daily_budget_usd,
+            ),
+            "messages": ops_view.message_counts(engine),
             "esc_params": load_llm_config(settings.config_dir).escalation,
             "evals": ops_view.eval_scores(engine),
             "backups": ops_view.backups(engine, settings.resolved_backup_dir),

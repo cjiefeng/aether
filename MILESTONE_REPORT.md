@@ -1,5 +1,81 @@
 # Milestone report
 
+## M13: Escalation & alert-noise tuning (2026-10-08)
+
+Escalation is now reserved for **serious RISK events**, and Telegram is quieter: **one message per event**, escalation results **only when something changed**, and non-urgent alerts in **one daily digest at 08:00 SGT**. Escalations also get their own **$1.50/day sub-budget**, so they can't starve classification, sweeps or conclusions. Built before M14 so the three adjacent names don't add noise under the old rules.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| A SIGNAL event at materiality 5 never escalates | ✅ | `tests/test_escalation.py::test_signal_and_noise_never_escalate` (also NOISE 5, SIGNAL 4) |
+| An S-3, a 424B5 under 10% of FD shares, a warrant-only Form 25 and an 8-K 3.02 alert but don't escalate | ✅ | `test_routine_filings_alert_but_dont_escalate`: each one is a `risk_event` candidate and none is an escalation candidate. Also covered: a 424B5 whose size can't be parsed, an 8-K 3.01 voluntary transfer, an 8-K 5.01. |
+| A going-concern event (5) and a 424B5 at 12% of FD shares escalate | ✅ | `test_going_concern_large_offering_and_deficiency_escalate`: `materiality_5`, and `severe_category` with "offering ≈ 12.0% of 100,000,000 fully diluted shares" (90M common + 10M warrants); an 8-K 3.01 deficiency notice escalates too |
+| A T1 escalation runs no verification search but re-synthesizes; a T2-only escalation runs both | ✅ | `test_t1_escalation_resynthesizes_without_verification_within_five_minutes` (LLM purposes `["synthesis_escalation"]`), `test_t2_only_escalation_verifies_and_resynthesizes` (`["research_verify", "synthesis_escalation"]`, title only inside the untrusted block) |
+| The 3rd escalation in a day is refused (`daily_cap`), as is a 2nd on the same ticker within 72 h | ✅ | `test_third_escalation_in_a_day_is_refused`, `test_second_event_on_a_ticker_within_72_hours_is_refused`, `test_caps_daily_cooldown_and_budget` |
+| Hitting the escalation sub-budget refuses further escalations (`budget`) while classification and sweeps still run | ✅ | `test_escalation_sub_budget_refuses_while_classification_still_runs`: with $1.50 of escalation spend today the next escalation is `refused`/`budget` and sends nothing; a `synthesis_escalation` call raises `EscalationBudgetExceeded`; a `classify` call still goes out. `test_sub_budget_stop_mid_escalation_ends_refused` covers the guard stopping the re-synthesis. |
+| A 424B5 that triggers RISK, off-cycle and escalation alerts sends **one** Telegram message with all three labels | ✅ | `tests/test_alerts.py::test_one_message_per_event_with_all_three_labels`: exactly one `sendMessage`, first line "RISK · ACME · dilution (materiality 4/5) · off-cycle review suggested · escalated"; the off-cycle and escalation rows are `merged`; later alert runs send nothing |
+| An unchanged re-synthesis sends no result message, while a stance change does | ✅ | `test_unchanged_resynthesis_stays_on_the_dashboard` (`dashboard_only`, "No change."), `test_stance_change_result_is_sent` ("Changed: stance HOLD → AVOID."), `test_overlay_change_alone_sends_the_result`, `test_changes_decide_whether_the_result_is_sent` (held flip) |
+| RISK materiality 3 and T−7 reminders go to the 08:00 digest; an empty digest sends nothing | ✅ | `test_risk_3_and_t7_go_to_the_0800_digest` (no send until the digest, then one "Daily digest · …" message; rows `digested`); the empty case returns "nothing to digest" and sends nothing. `test_scheduler_registers_escalations_and_digest_jobs`: cron 08:00. |
+| All alerts still appear on `/alerts` | ✅ | `tests/test_web_alerts.py::test_alerts_page_lists_merged_digested_and_dashboard_only_rows` (merged, digested, dashboard-only and digest rows, with same-event links) |
+| Tests green, no network | ✅ | `make test`: 714 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint` clean |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0015_alert_noise`** (hand-written, STRICT kept on both rebuilt tables; up/down/up round-trip checked with data):
+  - `alerts.delivery` (`immediate` / `digest` / `merged` / `dashboard_only`), alert kind `digest`, status `digested`. Existing dashboard-only rows are backfilled.
+  - `escalations`: triggers `materiality_5` and `severe_category` (M11's `materiality` / `t1_risk` kept for history), refusal `budget`.
+- **Triggers** (`escalate/select.py`): RISK only; materiality 5, or ≥ 4 in a severe category. `delisting_or_compliance` counts only when the overlay parser fields say deficiency notice (8-K 3.01) or common stock (Form 25/15). `dilution` counts only at ≥ `large_dilution_pct` of fully diluted shares.
+- **Offering size** (`edgar/text.py::extract_offering`): the cover's "We are offering N shares of [our] [Class A] common stock", plus pre-funded warrants in the same offer. The underwriters' option and common warrants are left out, so the size is a floor. Stored as `parsed.offering` for 424B1/2/4/5. FD shares come from the M9 XBRL helpers, as filed by the offering date.
+- **Actions** (`escalate/run.py`): verification only without a T1 source; re-synthesis as `synthesis_escalation`; the result alert is `immediate` only when the stance changed, a flip was held, or the name's overlay output (`portfolio/overlay.py::name_overlay`, layer-1 rules + stance multiplier) changed.
+- **Sub-budget:** `ESCALATION_DAILY_BUDGET_USD` (default 1.50). The LLM wrapper refuses `research_verify` / `synthesis_escalation` calls past it (`EscalationBudgetExceeded`); the escalation pass refuses at claim once it's spent. Both still count toward the daily soft budget.
+- **Notification policy** (`alerts/dispatch.py`, `alerts/candidates.py`):
+  - one message per event: RISK first, then escalation, then off-cycle as the primary; labels in the spec's order; the others stored `merged` with `merged_into`;
+  - a label arriving while the primary is pending is added to it, and upgrades a digest primary to immediate;
+  - `deliver` sends only immediate rows; the escalation's notify runs the whole alerts pass, so the event's alerts merge in one batch;
+  - `run_digest` at `digest_time` (new `alert_digest` job): one plain-text message ≤ 4096 chars with an overflow pointer.
+- **Config:** `config/llm.yaml` → `escalation` (min 5, severe 4, severe categories, 10%, 72 h); `config/alerts.yaml` → `immediate_min_materiality: 4`, `digest_time: "08:00"`, `immediate_reminder_days: [1]`; `MAX_ESCALATIONS_PER_DAY` default 5 → **2**; compose and `.env.example` updated.
+- **Dashboard:** `/ops` shows escalation spend vs the sub-budget, refusals by reason (30 days), why each escalation triggered and what it changed, plus message counts (sent, digests, digested, merged, dashboard-only). `/alerts` shows each row's delivery, links between alerts of the same event, and the policy text.
+- **Docs:** README (status, escalation, alert delivery, Ops), `docs/RUNBOOK.md` (escalation + new alert-delivery section).
+
+### Decisions (deviations from the spec / plan)
+1. **ATM supplements are sized at the last close:** an ATM states dollars, not shares, so its size is `$amount ÷ last close on or before the filing date`, labelled as such in the message. Without this an ATM could never escalate. Selling the whole program at once is a worst case; the label makes that visible.
+2. **"Overlay output changed"** compares the name's layer-1 findings and stance multiplier before and after the escalation. A filing already in the DB before the claim (e.g. the going-concern 10-Q itself) is in both, so it doesn't count as a change by itself; the event's own immediate message already reports it.
+3. **The sub-budget stopping a re-synthesis mid-run** ends the escalation as `refused`/`budget`. It doesn't use the day's slot.
+4. **Off-cycle-only events** (e.g. a SIGNAL 4+ on a pure-play) stay immediate. The spec's digest list doesn't name them, and they ask for a decision.
+5. **`llm_budget`, `weekly_brief`, `test` alerts stay immediate.** They aren't listed either way; they're one-offs the owner expects at once.
+6. **Delisting forms don't wait for "stopped trading"** (the overlay's zero-weight rule does): escalation is an early warning, so a Form 25 for the common stock escalates at once. Today the rubric puts Form 25/15 at materiality 3, so this only applies if the classifier raises one to 4.
+7. **Filings parsed before M13 have no `offering` field**, so they can't escalate on size (they alert as before). Only new 424Bs are sized.
+8. **Merged rows keep `status = dashboard_only`** with `delivery = merged`; there's no separate `merged` status.
+
+### Facts
+- No facts changed or added.
+
+### Open questions
+- **The offering pattern is narrow on purpose.** Covers that phrase the offering differently (e.g. "N shares of our common stock are being offered") won't be sized and won't escalate on size. I couldn't check the pattern against live 424B5s this session (no network in tests). Worth a look at the next real dilution alert: if `/ops` shows no escalation for a large raise, the cover wording is the likely cause.
+- **Digest timing vs pending expiry:** digest rows wait up to 24 h; `pending_expiry_hours` is 48, so they're safe unless Telegram is down for more than a day.
+
+### Live check (browser, throwaway synthetic DB)
+- `/alerts` and `/ops` render in dark and light themes; 375 px has no horizontal page scroll; no inline styles; no console errors from the pages.
+- Merged, digest, digested and dashboard-only rows show their delivery and link to the other alerts of the same event.
+
+### Owner checklist
+- [ ] Review the thresholds: severe categories, the 10% dilution bar, 2 a day, 72 h, $1.50 (spec §5.2.5; `config/llm.yaml`, `.env`).
+- [ ] Review the digest time (08:00 SGT) and the immediate bar (materiality ≥ 4) in `config/alerts.yaml`.
+- [ ] Decisions 1 (ATM sizing at the last close) and 4–5 (what stays immediate).
+- [ ] If `.env` sets `MAX_ESCALATIONS_PER_DAY=5` explicitly, change or clear it: the new default is 2. Optionally set `ESCALATION_DAILY_BUDGET_USD`.
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0015_alert_noise`.
+- [ ] Still open from earlier milestones: `DAILY_LLM_BUDGET_USD`, `MASSIVE_API_KEY`, Telegram setup, unsigned facts, M9/M10/M12 decisions.
+
+### How to verify
+```bash
+make test            # 714 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open /ops and /alerts
+```
+
 ## M12: Monthly universe review (2026-10-08)
 
 Phase 4 "Discovery" starts. On the 1st of each month Aether reviews which **pure-plays** to add, remove or watch. It applies the same test to current names and new candidates, with sources, and sends one Telegram summary. It **only proposes**: the watchlist changes only through your PR to `watchlist.yaml`.

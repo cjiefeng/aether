@@ -13,7 +13,15 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,9 +66,13 @@ class Settings(BaseSettings):
     daily_llm_budget_usd: Decimal = Field(
         default=Decimal("5.00"), validation_alias="DAILY_LLM_BUDGET_USD"
     )
-    # M11: escalations (alert + verification research + re-synthesis) per SGT day (spec §5.2.5).
+    # M11: escalations (alert + verification research + re-synthesis) per SGT day (spec §5.2.5);
+    # M13 lowered the default to 2 and added a daily sub-budget inside DAILY_LLM_BUDGET_USD.
     max_escalations_per_day: int = Field(
-        default=5, ge=0, le=50, validation_alias="MAX_ESCALATIONS_PER_DAY"
+        default=2, ge=0, le=50, validation_alias="MAX_ESCALATIONS_PER_DAY"
+    )
+    escalation_daily_budget_usd: Decimal = Field(
+        default=Decimal("1.50"), ge=0, validation_alias="ESCALATION_DAILY_BUDGET_USD"
     )
     # M11: `json` (one JSON object per line) or `text`.
     log_format: Literal["json", "text"] = Field(
@@ -119,6 +131,7 @@ class Settings(BaseSettings):
         "universe_review_budget_usd",
         "research_backfill",
         "max_escalations_per_day",
+        "escalation_daily_budget_usd",
         "log_format",
         mode="before",
     )
@@ -430,6 +443,17 @@ class AlertsConfig(_Strict):
     pending_expiry_hours: int = Field(gt=0)
     max_attempts: int = Field(ge=1)
     max_sends_per_run: int = Field(ge=1)
+    # M13 notification policy (spec §5.2.6): RISK events at or above this go out at once, the
+    # rest wait for the daily digest at `digest_time` (SGT, HH:MM); so do reminders whose T-N
+    # isn't in `immediate_reminder_days`.
+    immediate_min_materiality: Materiality
+    digest_time: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    immediate_reminder_days: tuple[int, ...] = ()
+
+    @property
+    def digest_hour_minute(self) -> tuple[int, int]:
+        h, m = self.digest_time.split(":")
+        return int(h), int(m)
 
     @field_validator("reminder_days")
     @classmethod
@@ -898,14 +922,30 @@ class SynthesisParams(_Strict):
     max_attempts: int = Field(ge=1, le=3)  # an invalid answer is retried once (spec §6.2)
 
 
-class EscalationParams(_Strict):
-    """M11 escalation (spec §5.2.5). The daily cap is `MAX_ESCALATIONS_PER_DAY` (env)."""
+# RISK categories that can escalate at materiality >= severe_min_materiality (spec §5.2.5, M13).
+SevereCategory = Literal[
+    "going_concern", "short_report", "guidance_cut", "delisting_or_compliance", "dilution"
+]
 
-    min_materiality: int = Field(ge=1, le=5)  # post-cap materiality of any class
-    t1_risk_min_materiality: int = Field(ge=1, le=5)  # a RISK event on a T1 source
-    cooldown_hours: int = Field(ge=0, le=168)  # at most one escalation per ticker per window
+
+class EscalationParams(_Strict):
+    """Escalation (spec §5.2.5; M11, tightened in M13). RISK events only. The daily cap is
+    `MAX_ESCALATIONS_PER_DAY` and the sub-budget `ESCALATION_DAILY_BUDGET_USD` (env)."""
+
+    min_materiality: int = Field(ge=1, le=5)  # post-cap RISK materiality that always escalates
+    severe_min_materiality: int = Field(ge=1, le=5)  # ... or this in a severe category
+    severe_categories: tuple[SevereCategory, ...] = Field(min_length=1)
+    # `dilution` escalates only when the parsed offering is at least this share of FD shares.
+    large_dilution_pct: float = Field(gt=0, le=1)
+    cooldown_hours: int = Field(ge=0, le=720)  # at most one escalation per ticker per window
     verify_max_uses: int = Field(ge=1, le=10)  # web searches in the verification run
     verify_window_days: int = Field(ge=1, le=30)  # search window: event date - N .. today
+
+    @model_validator(mode="after")
+    def _order(self) -> EscalationParams:
+        if self.severe_min_materiality > self.min_materiality:
+            raise ValueError("severe_min_materiality must be <= min_materiality")
+        return self
 
 
 class LlmConfig(_Strict):

@@ -22,6 +22,11 @@ class AlertRow:
     sent_at: str | None
     attempts: int
     last_error: str | None
+    # M13 (spec §5.2.6): how it was delivered, and the other alerts for the same event (the
+    # merged message, merged labels, the escalation result) as (id, kind) links.
+    delivery: str = "immediate"
+    event_id: int | None = None
+    related: tuple[tuple[int, str], ...] = ()
 
 
 def recent_alerts(engine: Engine, limit: int = 100) -> list[AlertRow]:
@@ -37,11 +42,31 @@ def recent_alerts(engine: Engine, limit: int = 100) -> list[AlertRow]:
                 alerts.c.sent_at,
                 alerts.c.attempts,
                 alerts.c.last_error,
+                alerts.c.delivery,
+                alerts.c.event_id,
             )
             .order_by(alerts.c.id.desc())
             .limit(limit)
         ).all()
-    return [AlertRow(*r) for r in rows]
+        eids = sorted({r.event_id for r in rows if r.event_id is not None})
+        by_event: dict[int, list[tuple[int, str]]] = {}
+        for aid, kind, eid in conn.execute(
+            select(alerts.c.id, alerts.c.kind, alerts.c.event_id)
+            .where(alerts.c.event_id.in_(eids))
+            .order_by(alerts.c.id)
+        ).all():
+            by_event.setdefault(eid, []).append((aid, kind))
+    return [
+        AlertRow(
+            *r[:9],
+            delivery=r.delivery,
+            event_id=r.event_id,
+            related=tuple(
+                x for x in by_event.get(r.event_id, []) if r.event_id is not None and x[0] != r.id
+            ),
+        )
+        for r in rows
+    ]
 
 
 @dataclass(frozen=True)

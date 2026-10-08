@@ -80,3 +80,44 @@ def test_test_alert_command_requires_csrf(rw_engine: Engine, client: TestClient)
     assert r.status_code == 202
     with rw_engine.connect() as conn:
         assert conn.execute(select(commands.c.kind)).scalars().all() == ["test_alert"]
+
+
+def test_alerts_page_lists_merged_digested_and_dashboard_only_rows(
+    rw_engine: Engine, client: TestClient
+) -> None:
+    """M13: every alert stays on /alerts; rows of one event link to each other."""
+    from tests.conftest import seed_tickers
+    from tests.holdings_data import add_event
+
+    seed_tickers(rw_engine, [("ACME", "pure_play")])
+    eid = add_event(rw_engine, "ACME", "2026-03-10T10:00:00Z", 4, "RISK", "dilution")
+    rows = [
+        ("risk_event", "sent", "immediate", eid, "RISK · ACME · dilution · escalated"),
+        ("escalation", "dashboard_only", "merged", eid, "RISK · ACME · escalated"),
+        ("escalation_result", "dashboard_only", "dashboard_only", eid, "Escalation result"),
+        ("insider_cluster", "digested", "digest", None, "RISK · ACME · insider selling cluster"),
+        ("digest", "sent", "immediate", None, "Daily digest · 2026-03-10 · 1 alert(s)"),
+    ]
+    with write_tx(rw_engine) as conn:
+        for i, (kind, status, delivery, event_id, text) in enumerate(rows):
+            conn.execute(
+                insert(alerts).values(
+                    kind=kind,
+                    channel="telegram",
+                    status=status,
+                    delivery=delivery,
+                    event_id=event_id,
+                    text=text,
+                    created_at="2026-03-10T12:00:00Z",
+                    dedupe_key=f"k{i}",
+                )
+            )
+    t = client.get("/alerts").text
+    for *_, text in rows:
+        assert text in t
+    assert "merged into the event&#39;s message" in t or "merged into the event's message" in t
+    assert "dashboard only (no change)" in t and "daily digest" in t
+    assert 'href="/alerts#alert-1"' in t and 'href="/alerts#alert-3"' in t
+    assert f'href="/feed?event={eid}"' in t
+    assert "digest at 08:00 SGT" in t
+    _no_inline(t)

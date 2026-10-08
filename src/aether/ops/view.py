@@ -12,8 +12,9 @@ from typing import Any
 from sqlalchemy import Engine, func, select
 
 from aether.alerts.candidates import FailingJob, failing_jobs
-from aether.db.models import escalations, eval_runs, events, job_runs, llm_calls
+from aether.db.models import alerts, escalations, eval_runs, events, job_runs, llm_calls
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
+from aether.escalate.spend import escalation_spent_since
 from aether.llm.pricing import sgt_day_start
 from aether.ops.backup import NAME_RE
 
@@ -39,6 +40,8 @@ class EscalationRow:
     conclusion_id: int | None
     verify: str | None
     created_at: str
+    reason: str | None = None  # M13: why it escalated
+    changed: tuple[str, ...] = ()  # M13: what the result changed (empty: dashboard only)
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,20 @@ class Escalations:
     refused_today: int
     max_per_day: int
     recent: list[EscalationRow]
+    spent_today: Decimal = Decimal(0)  # M13: escalation calls today vs the sub-budget
+    budget: Decimal = Decimal(0)
+    refusals: dict[str, int] | None = None  # M13: by reason, last SPEND_DAYS days
+
+
+@dataclass(frozen=True)
+class MessageCounts:
+    """M13 (spec §5.2.6): Telegram messages in the last SPEND_DAYS days."""
+
+    sent: int
+    merged: int
+    digested: int
+    digests: int
+    dashboard_only: int
 
 
 @dataclass(frozen=True)
@@ -94,10 +111,27 @@ def spend_by_purpose(engine: Engine, now: datetime | None = None) -> list[Purpos
 
 
 def escalation_summary(
-    engine: Engine, max_per_day: int, now: datetime | None = None, limit: int = 20
+    engine: Engine,
+    max_per_day: int,
+    now: datetime | None = None,
+    limit: int = 20,
+    budget: Decimal = Decimal(0),
 ) -> Escalations:
-    day = to_iso(sgt_day_start(now or datetime.now(UTC)))
+    now = now or datetime.now(UTC)
+    start = sgt_day_start(now)
+    day = to_iso(start)
+    since = to_iso(now - timedelta(days=SPEND_DAYS))
     with engine.connect() as conn:
+        spent = escalation_spent_since(conn, start)
+        refusals = {
+            str(reason): int(n)
+            for reason, n in conn.execute(
+                select(escalations.c.refusal, func.count())
+                .where(escalations.c.status == "refused", escalations.c.created_at >= since)
+                .group_by(escalations.c.refusal)
+                .order_by(escalations.c.refusal)
+            ).all()
+        }
         used, refused = conn.execute(
             select(
                 func.count().filter(escalations.c.status != "refused"),
@@ -125,9 +159,28 @@ def escalation_summary(
                 conclusion_id=r.conclusion_id,
                 verify=(detail.get("verify") or {}).get("status"),
                 created_at=r.created_at,
+                reason=detail.get("reason"),
+                changed=tuple(detail.get("changed") or ()),
             )
         )
-    return Escalations(int(used), int(refused), max_per_day, recent)
+    return Escalations(int(used), int(refused), max_per_day, recent, spent, budget, refusals)
+
+
+def message_counts(engine: Engine, now: datetime | None = None) -> MessageCounts:
+    since = to_iso((now or datetime.now(UTC)) - timedelta(days=SPEND_DAYS))
+    with engine.connect() as conn:
+        r = conn.execute(
+            select(
+                func.count().filter(alerts.c.status == "sent", alerts.c.kind != "digest"),
+                func.count().filter(alerts.c.delivery == "merged"),
+                func.count().filter(alerts.c.status == "digested"),
+                func.count().filter(alerts.c.kind == "digest", alerts.c.status == "sent"),
+                func.count().filter(
+                    alerts.c.delivery == "dashboard_only", alerts.c.channel == "telegram"
+                ),
+            ).where(alerts.c.created_at >= since)
+        ).one()
+    return MessageCounts(*(int(x) for x in r))
 
 
 def eval_scores(engine: Engine, limit: int = 20) -> list[EvalRow]:

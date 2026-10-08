@@ -48,6 +48,7 @@ from aether.edgar.text import (
     extract_going_concern,
     extract_listing_notice,
     extract_lockup,
+    extract_offering,
     html_to_text,
 )
 from aether.providers.edgar import EdgarClient
@@ -62,6 +63,8 @@ MAX_DOCS_PER_RUN = 400
 FORM4_FORMS = frozenset({"4", "4/A"})
 LOCKUP_FORMS = frozenset({"424B4", "424B1"})
 ATM_FORMS = frozenset({"424B5", "424B2"})
+# M13: primary prospectuses whose cover size feeds the 10%-of-FD-shares dilution escalation.
+OFFERING_FORMS = LOCKUP_FORMS | ATM_FORMS
 PERIODIC_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
 SHELF_FORMS = frozenset({"S-3", "S-3ASR", "F-3", "F-3ASR"})
 # M5 overlay: removal/deregistration notices (which security class?) and 8-K Item 3.01 bodies
@@ -159,6 +162,11 @@ def parse_document(symbol: str, f: FilingMeta, body: str) -> ParsedDoc:
                 "concept": None,
                 "excerpt": atm.excerpt,
             }
+    if f.form in OFFERING_FORMS:
+        off = extract_offering(text)
+        out.summary["offering"] = (
+            None if off is None else {"shares": off.shares, "prefunded": off.prefunded}
+        )
     if f.form in PERIODIC_FORMS:
         gc = extract_going_concern(text)
         out.summary["going_concern"] = gc is not None

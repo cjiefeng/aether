@@ -34,7 +34,7 @@ def test_ops_page_empty(client: TestClient) -> None:
         "No backups yet",
         "No restore drill yet",
         "No eval results yet",
-        "Used today (SGT): <strong>0 / 5",
+        "Used today (SGT): <strong>0 / 2",
     ):
         assert text in r.text, text
     assert 'href="/ops" aria-current="page"' in r.text
@@ -134,7 +134,7 @@ def test_ops_page_with_data(
     t = r.text
     assert "1 job failing for more than 24h" in t and "synthetic outage" in t
     assert "research_verify" in t and "$1.25" in t
-    assert "Used today (SGT): <strong>1 / 5</strong>, 1 refused" in t
+    assert "Used today (SGT): <strong>1 / 2</strong>, 1 refused" in t
     assert "refused: ticker cooldown" in t and f'href="/feed?event={e1}"' in t
     assert "classify-v1-test" in t and "90%" in t and "5/5" in t
     assert f"aether-{now:%Y%m%d}.db" in t and "Last restore drill" in t
