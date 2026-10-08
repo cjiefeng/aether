@@ -1,0 +1,53 @@
+# Monthly universe review (spec §6.7, M12). Numbers and identifiers only (unknown keys are
+# rejected). Initial values for owner review.
+
+# Criterion 1: US listing. Exchange names as in SEC's company_tickers_exchange.json (checked
+# 2026-10-08: NYSE, Nasdaq, CBOE, OTC; NYSE American is listed as NYSE).
+exchanges: [NYSE, Nasdaq]
+
+# Criterion 3: size and liquidity (computed in code: latest close x XBRL shares outstanding;
+# median close x volume over the last N sessions).
+min_market_cap_usd: "500000000"
+min_median_dollar_volume_usd: "5000000"
+liquidity_sessions: 20
+
+# Criterion 4: history (else `watch`).
+min_sessions: 60
+
+# Removal: criterion 3 fails in this many consecutive monthly reviews.
+remove_after_failed_reviews: 3
+
+# Discovery: SEC EDGAR full-text search over the last N months (efts.sec.gov). Phrases are
+# matched exactly. "quantum computing company" returned 33 filings on 2026-10-08.
+fts_queries:
+  - '"quantum computing company"'
+fts_forms: ["10-K", "20-F", "S-1", "F-1", "S-4", "424B4"]
+fts_lookback_months: 13
+# SEC SIC codes never treated as candidates: 6770 = blank checks (SPACs). A SPAC's quantum target
+# is found through its own filings or the IPO/SPAC research sweep.
+excluded_sics: ["6770"]
+
+# Criterion 2 evidence: the business section of the latest 10-K / 20-F / S-1 / F-1 / S-4 / 424B4.
+# Candidates found only through QTUM holdings are screened out before any LLM spend when the
+# keyword isn't in the first business_scan_chars. The stored T1 excerpt is the section's opening
+# (or, if that doesn't mention the keyword, the sentence that first does).
+business_scan_chars: 6000
+business_excerpt_chars: 600
+business_keyword: quantum
+max_business_fetches: 120
+
+# Deep research (RESEARCH_DEEP_MODEL with web search; current pure-plays first).
+max_research_candidates: 12
+research_max_uses: 5
+sweep_max_uses: 5
+research_lookback_days: 365
+research_max_tokens: 4000
+research_effort: low
+
+# Proposal call (same model, no tools, structured JSON).
+proposal_max_tokens: 16000
+proposal_effort: high
+proposal_max_attempts: 2
+max_evidence_per_candidate: 12
+
+stale_running_hours: 3

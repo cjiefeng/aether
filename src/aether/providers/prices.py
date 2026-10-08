@@ -76,6 +76,19 @@ def _yf_history(symbol: str, start: date, end: date) -> Any:
     )
 
 
+def yfinance_shares(symbol: str) -> int | None:
+    """Shares outstanding as yfinance reports them (M12 market-cap fallback when SEC XBRL has no
+    share count). May cover one share class only. None on any failure."""
+    import yfinance as yf
+
+    yf.set_tz_cache_location("/tmp/yfinance")  # noqa: S108
+    try:
+        n = yf.Ticker(symbol).fast_info["shares"]
+    except Exception:
+        return None
+    return int(n) if isinstance(n, int | float) and math.isfinite(n) and n > 0 else None
+
+
 def bars_from_frame(frame: Any, provider: str = "yfinance") -> list[Bar]:
     """Convert a yfinance history DataFrame (DatetimeIndex, Open/High/Low/Close/Volume)."""
     if frame is None or len(frame) == 0:

@@ -47,6 +47,7 @@ from aether.db.models import (
     tickers,
 )
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
+from aether.llm.pricing import OWN_BUDGET_PURPOSES
 from aether.providers.prices import US_EASTERN
 from aether.risk.flags import cluster_in_window, load_sales
 
@@ -426,7 +427,7 @@ def llm_budget(
     conn: Connection, budget: Decimal, fraction: Decimal, now: datetime
 ) -> list[AlertCandidate]:
     """One alert per SGT day once synchronous spend reaches `fraction` of the soft budget (batch
-    calls are excluded, as in the LLM wrapper's guard)."""
+    calls and the universe review's own-budget calls are excluded, as in the wrapper's guard)."""
     if budget <= 0:
         return []
     local = now.astimezone(SGT)
@@ -435,7 +436,9 @@ def llm_budget(
         int(
             conn.execute(
                 select(micros_sum(llm_calls.c.cost_micros)).where(
-                    llm_calls.c.created_at >= to_iso(since), llm_calls.c.batch == 0
+                    llm_calls.c.created_at >= to_iso(since),
+                    llm_calls.c.batch == 0,
+                    llm_calls.c.purpose.not_in(OWN_BUDGET_PURPOSES),
                 )
             ).scalar_one()
         )

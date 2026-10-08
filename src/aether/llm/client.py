@@ -12,6 +12,9 @@ Every call:
 - is logged as one `llm_calls` row (tokens, searches, cost; never prompt text), written in a short
   transaction **after** the response.
 
+Calls whose `purpose` is in `OWN_BUDGET_PURPOSES` (the M12 universe review) must carry a
+`RunBudget` and are checked against it instead; they are excluded from today's spend.
+
 Message Batches (the research backfill, M6, and the classifier backlog, M7) bypass the daily soft
 budget by owner decision (2026-10-05) and are excluded from today's spend; each result is still
 logged with `batch = 1` at the batch price.
@@ -37,7 +40,14 @@ from aether.config import LlmConfig, Settings
 from aether.db.engine import write_tx
 from aether.db.models import llm_calls
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
-from aether.llm.pricing import cost_usd, estimate_usd, price_for, sgt_day_start, usage_from_dict
+from aether.llm.pricing import (
+    OWN_BUDGET_PURPOSES,
+    cost_usd,
+    estimate_usd,
+    price_for,
+    sgt_day_start,
+    usage_from_dict,
+)
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +72,18 @@ class BudgetExceeded(LlmError):
 
 class LlmDisabled(LlmError):
     pass
+
+
+@dataclass
+class RunBudget:
+    """A per-run cap (M12 universe review, spec §6.7): calls carrying one skip the daily soft
+    budget and are refused once `spent` + the call's worst-case estimate would pass `cap`."""
+
+    cap: Decimal
+    spent: Decimal = Decimal(0)
+
+    def fits(self, estimate: Decimal) -> bool:
+        return self.spent + estimate <= self.cap
 
 
 def web_search_tool(max_uses: int, allowed_domains: Sequence[str]) -> dict[str, Any]:
@@ -138,7 +160,9 @@ class LlmClient:
         with self._engine.connect() as conn:
             total = conn.execute(
                 select(micros_sum(llm_calls.c.cost_micros)).where(
-                    llm_calls.c.created_at >= since, llm_calls.c.batch == 0
+                    llm_calls.c.created_at >= since,
+                    llm_calls.c.batch == 0,
+                    llm_calls.c.purpose.not_in(OWN_BUDGET_PURPOSES),
                 )
             ).scalar_one()
         return micros_to_decimal(int(total))
@@ -190,9 +214,11 @@ class LlmClient:
         effort: str | None = None,
         output_format: Mapping[str, Any] | None = None,
         research_run_id: int | None = None,
+        run_budget: RunBudget | None = None,
     ) -> dict[str, Any]:
         """One Messages API call. Returns the response as a JSON dict. `output_format` is a
-        structured-output format (`{"type": "json_schema", "schema": ...}`)."""
+        structured-output format (`{"type": "json_schema", "schema": ...}`). With `run_budget`
+        (own-budget purposes only) the call is checked against that cap, not the daily budget."""
         _check_tools(purpose, tools)
         price_for(self._cfg, model)  # UnknownModel before anything else
         estimate = estimate_usd(
@@ -203,18 +229,29 @@ class LlmClient:
             max_tokens=max_tokens,
             max_searches=_max_searches(tools),
         )
-        spent = self.spent_today()
-        if spent + estimate > self._budget:
-            self._log(
-                purpose=purpose,
-                model=model,
-                status="budget_refused",
-                research_run_id=research_run_id,
-                error=f"spent ${spent} + estimate ${estimate} > budget ${self._budget}",
-            )
-            raise BudgetExceeded(
-                f"daily LLM budget: spent ${spent} + estimate ${estimate} > ${self._budget}"
-            )
+        if (purpose in OWN_BUDGET_PURPOSES) != (run_budget is not None):
+            raise ValueError(f"purpose {purpose!r} and run_budget don't match")
+        if run_budget is not None:
+            if not run_budget.fits(estimate):
+                detail = (
+                    f"run spent ${run_budget.spent} + estimate ${estimate} > run cap "
+                    f"${run_budget.cap}"
+                )
+                self._log(purpose=purpose, model=model, status="budget_refused", error=detail)
+                raise BudgetExceeded(detail)
+        else:
+            spent = self.spent_today()
+            if spent + estimate > self._budget:
+                self._log(
+                    purpose=purpose,
+                    model=model,
+                    status="budget_refused",
+                    research_run_id=research_run_id,
+                    error=f"spent ${spent} + estimate ${estimate} > budget ${self._budget}",
+                )
+                raise BudgetExceeded(
+                    f"daily LLM budget: spent ${spent} + estimate ${estimate} > ${self._budget}"
+                )
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -247,6 +284,8 @@ class LlmClient:
             raise LlmError(detail) from None
         dump: dict[str, Any] = msg.model_dump(mode="json")
         cost = cost_usd(self._cfg, model, usage_from_dict(dump.get("usage")))
+        if run_budget is not None:
+            run_budget.spent += cost
         self._log(
             purpose=purpose,
             model=model,

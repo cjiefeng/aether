@@ -36,6 +36,8 @@ ALLOWED_KINDS = frozenset(
         "mark_catalyst",
         # M10: re-run conclusions for one ticker (or all + the theme); LLM spend, budget-guarded.
         "synthesize",
+        # M12: run the universe review now (LLM spend under its own per-run cap).
+        "universe_review",
     }
 )
 

@@ -7,7 +7,7 @@ VARCHAR/BOOLEAN/FLOAT/DATETIME and the CREATE TABLE fails.
 Each milestone adds its own tables plus a migration (M0: infra, M1: market data, M2: EDGAR +
 events, M3: alerts outbox, M4: dividends + backtests, M5: holdings + rebalance, M6: news +
 research, M7: classifier state + eval runs, M8: catalysts + short interest, M9: scores, M10:
-conclusions + track record + briefs). Keep this file and
+conclusions + track record + briefs, M11: escalations, M12: universe review). Keep this file and
 `migrations/versions/*` in sync (a test compares them).
 """
 
@@ -164,6 +164,7 @@ ALERT_KINDS = (
     "weekly_brief",  # M10
     "escalation",  # M11
     "escalation_result",  # M11
+    "universe_review",  # M12
 )
 ALERT_STATUSES = ("pending", "sent", "failed", "expired", "dashboard_only")
 
@@ -1328,5 +1329,109 @@ escalations = Table(
     UniqueConstraint("event_id", "symbol"),
     Index(None, "created_at"),
     Index(None, "symbol", "created_at"),
+    sqlite_strict=True,
+)
+
+
+# --------------------------------------------------------------------------- M12: universe review
+# The monthly universe review (spec §6.7). One `universe_reviews` row per run: inserted as
+# `running`, finished (`done`/`failed`) in one short write after all network and LLM work.
+# `universe_candidates` are the gated proposals (code overrides the model; `proposed_action` keeps
+# what the model said). `universe_evidence` holds the review's own evidence: T1 business excerpts
+# from EDGAR and web-search results (untrusted text, excerpt ≤ 600 chars). Candidates aren't on the
+# watchlist, so this evidence never enters `events` (Feed, classifier, scorecards).
+UNIVERSE_REVIEW_KINDS = ("monthly", "manual")
+UNIVERSE_REVIEW_STATUSES = ("running", "done", "failed")
+UNIVERSE_TRACKS = ("pure_play",)  # M14 adds 'adjacent'
+UNIVERSE_ACTIONS = ("add", "remove", "watch", "keep", "skip")
+UNIVERSE_EVIDENCE_KINDS = ("business_excerpt", "web")
+
+universe_reviews = Table(
+    "universe_reviews",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("as_of", Text, nullable=False),
+    Column("month", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("payload", Text, nullable=False, server_default="{}"),
+    Column("model", Text, nullable=False),
+    Column("prompt_version", Text),
+    Column("cost_micros", Micros, nullable=False, server_default="0"),
+    Column("telegram_text", Text),
+    Column("error", Text),
+    Column("created_at", Text, nullable=False),
+    Column("finished_at", Text),
+    _in_ck("kind", UNIVERSE_REVIEW_KINDS),
+    _in_ck("status", UNIVERSE_REVIEW_STATUSES),
+    _date_ck("as_of"),
+    CheckConstraint("month GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'", name="month"),
+    CheckConstraint("cost_micros >= 0", name="cost"),
+    CheckConstraint("telegram_text IS NULL OR length(telegram_text) <= 4096", name="telegram_len"),
+    CheckConstraint("error IS NULL OR length(error) <= 1000", name="error_len"),
+    _json_ck("payload"),
+    Index(None, "month", "status"),
+    sqlite_strict=True,
+)
+
+universe_candidates = Table(
+    "universe_candidates",
+    metadata,
+    Column(
+        "review_id", Integer, ForeignKey("universe_reviews.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("symbol", Text, nullable=False),
+    Column("track", Text, nullable=False, server_default="pure_play"),
+    Column("action", Text, nullable=False),
+    Column("proposed_action", Text),
+    Column("cik", Text),
+    Column("name", Text),
+    Column("overlap", Text, nullable=False, server_default="{}"),
+    Column("criteria", Text, nullable=False, server_default="{}"),
+    Column("description", Text),
+    Column("reasons", Text, nullable=False, server_default="[]"),
+    Column("evidence_ids", Text, nullable=False, server_default="[]"),
+    Column("gate_note", Text),
+    PrimaryKeyConstraint("review_id", "symbol"),
+    _in_ck("track", UNIVERSE_TRACKS),
+    _in_ck("action", UNIVERSE_ACTIONS),
+    CheckConstraint(
+        "proposed_action IS NULL OR proposed_action IN ("
+        + ",".join(f"'{a}'" for a in UNIVERSE_ACTIONS)
+        + ")",
+        name="proposed_action",
+    ),
+    CheckConstraint("description IS NULL OR length(description) <= 300", name="description_len"),
+    _json_ck("overlap"),
+    _json_ck("criteria"),
+    _json_ck("reasons"),
+    _json_ck("evidence_ids"),
+    sqlite_strict=True,
+)
+
+universe_evidence = Table(
+    "universe_evidence",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column(
+        "review_id", Integer, ForeignKey("universe_reviews.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("symbol", Text),  # NULL: the IPO/SPAC sweep (no ticker yet)
+    Column("kind", Text, nullable=False),
+    Column("url", Text, nullable=False),
+    Column("domain", Text, nullable=False),
+    Column("trust_tier", Text, nullable=False),
+    Column("title", Text, nullable=False),
+    Column("excerpt", Text),
+    Column("published_at", Text),
+    Column("date_source", Text),
+    Column("form", Text),
+    Column("accession", Text),
+    _in_ck("kind", UNIVERSE_EVIDENCE_KINDS),
+    _in_ck("trust_tier", TRUST_TIERS),
+    _excerpt_ck(),
+    CheckConstraint("length(title) BETWEEN 1 AND 500", name="title_len"),
+    CheckConstraint("url LIKE 'https://%' OR url LIKE 'http://%'", name="url_scheme"),
+    Index(None, "review_id", "symbol"),
     sqlite_strict=True,
 )

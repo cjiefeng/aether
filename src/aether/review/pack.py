@@ -6,7 +6,8 @@ the plan, then build one pack and queue one Telegram message (dedupe key `review
 M5 sections: the selected profile's published targets with each adjustment chain, the rebalance
 plan, drift, value in USD and SGD, open risk flags, upcoming earnings and lock-ups. M8 adds the
 upcoming catalysts and the options panel per name (research only). M10 adds the stances with
-their track record and the overlay's value-added line (layer 3). M12 adds universe proposals.
+their track record and the overlay's value-added line (layer 3). M12 adds the month's universe
+review proposals (add / remove / watch), or its status if it isn't done.
 
 Holdings never leave the machine (§1.3): the Telegram text carries target weights, flags, dates
 and the number of suggested trades only. No share counts, dollar values or account number.
@@ -147,6 +148,33 @@ def _m10(engine: Engine, weights: WeightsConfig, profile: str, today: date) -> d
     }
 
 
+def _m12(engine: Engine, today: date) -> dict[str, Any]:
+    """This month's universe review proposals (M12, spec §6.9)."""
+    from aether.universe.view import pack_section
+
+    return pack_section(engine, today.strftime("%Y-%m"))
+
+
+def universe_lines(u: dict[str, Any] | None) -> list[str]:
+    if not u:
+        return []
+    lines = ["", "Universe review (pure-plays):"]
+    status = u.get("status")
+    if status == "none":
+        return [*lines, "- not run yet this month (see /universe)"]
+    if status != "done":
+        return [*lines, f"- {status} (see /universe)"]
+    props = u.get("proposals") or []
+    changes = [p for p in props if p["action"] in ("add", "remove")]
+    if not changes:
+        lines.append("- No changes proposed.")
+    for p in props:
+        lines.append(
+            f"- {p['action']} {p['symbol']}" + (f" ({p['name']})" if p.get("name") else "")
+        )
+    return lines
+
+
 def build_pack(
     engine: Engine,
     flags_params: RiskFlagParams,
@@ -204,6 +232,7 @@ def build_pack(
         "catalysts": upcoming_catalysts(engine, today),
         "options": options_panel(engine, universe),
         **(_m10(engine, weights, profile, today) if weights is not None else {}),
+        "universe": _m12(engine, today),
     }
 
 
@@ -257,6 +286,7 @@ def telegram_text(pack: dict[str, Any]) -> str:
         lines += ["", "Stances (track record):"]
         lines += [s["line"] for s in pack["stances"]] or ["- no conclusions yet"]
         lines.append(f"Overlay value-added: {pack['overlay_value']}")
+    lines += universe_lines(pack.get("universe"))
     opts = pack.get("options") or []
     if opts:
         lines += ["", "Options (research only, never trades):"]

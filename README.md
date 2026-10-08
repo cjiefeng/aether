@@ -291,6 +291,22 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
 
 **Fresh clone:** `make init` writes `.env` (mode 0600) with the password hash and secrets. `make lint` already ran `pip-audit`. K8s manifests and Litestream are documented in the runbook, not built (owner decision, 2026-10-08).
 
+## Universe review (M12)
+
+**When:** the 1st of each month at 10:00 SGT (the 2nd retries a failed month), or **Run review now** on `/universe` (a CSRF'd `universe_review` command). It **proposes only**: Aether never edits the watchlist. You apply a proposal by editing `config/watchlist.yaml` in a PR.
+
+**Pipeline** (`universe/`, thresholds in `config/universe.yaml`):
+1. **Discovery** (SEC only, no LLM): EDGAR full-text search for `"quantum computing company"` in 10-K / 20-F / S-1 / F-1 / S-4 / 424B4 filings from the last 13 months; QTUM holdings not on the watchlist (mapped to CIKs through SEC's `company_tickers_exchange.json`; foreign lines are counted as outside the mandate); and every current pure-play. Blank checks (SIC 6770) and S-4 co-registrants that aren't listed are dropped.
+2. **T1 business excerpt** (criterion 2's evidence): the business section of the latest 10-K / 20-F (else the latest prospectus), first ≤ 600 chars. A new company whose business section doesn't mention "quantum" is screened out before any LLM spend.
+3. **Criteria computed in code:** (1) a NYSE/Nasdaq listing for the CIK; (3) market cap ≥ $500M (latest close × shares: the SEC cover-page count, else the balance-sheet count, else the price provider's) and 20-session median dollar volume ≥ $5M; (4) ≥ 60 sessions.
+4. **Deep research** (`RESEARCH_DEEP_MODEL`, default `claude-opus-5-5`, web search on the `sources.yaml` allow-list): one dossier per candidate (current pure-plays first, at most 12) and one sweep for announced US listings. Evidence comes only from search results (URL, title, date, verbatim cited text), never from model prose, and is stored in `universe_evidence`, not in the Feed.
+5. **Proposal** (same model, **no tools**, strict JSON): add / remove / watch / keep / skip per candidate, a ≤ 300-char description and cited reasons. Unknown evidence ids, missing or extra candidates and `injection_suspected` are rejected (one retry).
+6. **Gates (code wins):** an `add` needs criteria 1, 3 and 4 **and** a cited T1 business excerpt, else it becomes `watch` with the reason. A recent listing (< 60 sessions) or an announced IPO is `watch`. A current pure-play is **removed** by code when it was acquired or delisted (the overlay's delisting / deficiency-notice rules, or an 8-K with Items 2.01 **and** 5.01), or when criterion 3 failed (measured, not unknown) in 3 consecutive reviews. The model's own `remove` stands only when it cites the T1 excerpt (business no longer quantum); otherwise it becomes a `watch` note.
+
+**Delivery:** one plain-text Telegram message per review (≤ 4096 chars; "No changes proposed." when nothing is added or removed), the `/universe` page (criteria, reasons, sources with tiers, overrides, run cost and history) and a section in the monthly review pack.
+
+**Cost:** each run has its own cap, `UNIVERSE_REVIEW_BUDGET_USD` (default $10), **outside** the daily soft budget so it can't starve classification. Hitting the cap fails the run and sends nothing.
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -312,6 +328,7 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
 - `/strategies`: per profile, the model strategy and its current target weights, equity and drawdown charts vs QTUM/QQQ, every candidate with its pass/fail reasons, and the full metrics table (M4).
 - `/holdings`: holdings and cash (editable, or read-only rows in Tiger mode), settings (profile, whole/fractional shares, new-cash-only, holdings source), published targets with each overlay chain, off-cycle events and **Publish targets now**, and the rebalance plan with USD and SGD values (M5). Also a **My sleeve vs QTUM vs QQQ** chart with stats (issue #24; see below).
 - `/review`: monthly review packs, latest first (M5); from M8 with the next 90 days of catalysts and the options panel per name.
+- `/universe`: the latest universe review and the run history: each proposal with its criteria, reasons and cited sources, what code overrode, screened-out companies, announced listings, cost, and **Run review now** (M12).
 - `/track-record`: hit rates vs the baselines per horizon, stance and ticker, confidence calibration, the theme tilt, the overlay value-added check and failed runs (M10).
 - `/briefs`: the weekly brief archive (M10).
 - `/calibration`: the weekly calibration report, flags, high-materiality events the market ignored, implied vs realized moves and the trend (M9).
@@ -399,6 +416,8 @@ src/aether/
   facts.py        facts registry: status gating, DB sync, FACTS.md rendering
   db/             engines (rw / ro / command), models (STRICT tables), dialect.py, migrations
   security/       CSRF, security headers, nh3 sanitizer, untrusted-content wrapping
+  universe/       monthly universe review: discovery, business excerpts, criteria, research, proposal,
+                  gates, run, views (M12)
   escalate/       escalation: trigger selection + caps, the alert → verify → re-synthesis pass (M11)
   ops/            backup.py (online backup + retention), restore.py (drill + restore), view.py (Ops)
   logs.py         JSON/text log setup with secret redaction (M11)
@@ -406,7 +425,7 @@ src/aether/
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
 config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.yaml, strategies.yaml,
-                  options.yaml, llm.yaml, catalysts_seed.yaml, weights.yaml
+                  options.yaml, llm.yaml, catalysts_seed.yaml, weights.yaml, universe.yaml
 evals/            classifier golden set (real items) + committed eval results
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
 docs/RUNBOOK.md   operations runbook (M11)

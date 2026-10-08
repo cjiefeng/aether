@@ -39,6 +39,7 @@ from aether.config import (
     load_rubric,
     load_sources,
     load_strategies,
+    load_universe_config,
     load_watchlist,
     load_weights,
 )
@@ -80,6 +81,7 @@ from aether.providers.prices import (
     FailoverPriceProvider,
     MassiveProvider,
     YFinanceProvider,
+    yfinance_shares,
 )
 from aether.providers.rss import RssClient
 from aether.providers.tiger import TigerConfig, TigerReadOnly
@@ -100,6 +102,7 @@ from aether.score.theme import run_theme
 from aether.score.track_record import run_track_record
 from aether.synthesize.brief import weekly_brief
 from aether.synthesize.run import SynthDeps, run_conclusions, synth_symbols, synthesize_one
+from aether.universe.run import UniverseDeps, run_universe_review
 
 __all__ = ["JobResult", "build_scheduler", "process_commands", "run_job"]
 
@@ -392,6 +395,39 @@ def research_sweep_job(engine: Engine, settings: Settings, llm: LlmClient | None
         load_watchlist(settings.config_dir),
         settings.research_model,
     )
+
+
+def universe_review_job(
+    engine: Engine,
+    settings: Settings,
+    llm: LlmClient | None,
+    notify: Callable[[Sequence[AlertCandidate]], None],
+    kind: str = "monthly",
+) -> JobResult:
+    """M12 monthly universe review (spec §6.7). Needs the API key and SEC_USER_AGENT."""
+    if llm is None:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set; the universe review is disabled")
+    if settings.sec_user_agent is None:
+        raise RuntimeError("SEC_USER_AGENT is not set; the universe review is disabled")
+    edgar = EdgarClient(settings.sec_user_agent)
+    try:
+        deps = UniverseDeps(
+            llm=llm,
+            edgar=edgar,
+            # Its own provider instance: the review runs long and mustn't hold the prices lock.
+            prices=make_price_provider(settings),
+            cfg=load_universe_config(settings.config_dir),
+            sources=load_sources(settings.config_dir),
+            watchlist=load_watchlist(settings.config_dir),
+            overlay=load_strategies(settings.config_dir).overlay,
+            model=settings.research_deep_model,
+            budget_usd=settings.universe_review_budget_usd,
+            notify=notify,
+            shares_fallback=yfinance_shares,
+        )
+        return run_universe_review(engine, deps, today=sgt_today(), kind=kind)
+    finally:
+        edgar.close()
 
 
 NEWS_RSS_MINUTES = 60
@@ -805,8 +841,40 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         with catalysts_lock:
             return apply_mark(engine, CatalystMark.model_validate(args))
 
+    # Monthly universe review (M12, spec §6.7): the 1st at 10:00 SGT; the 2nd retries a failed
+    # month (it does nothing once the month is done). The `universe_review` command runs one now.
+    universe_lock = threading.Lock()
+
+    def run_universe_review_job() -> None:
+        if llm is None:
+            return  # disabled: logged once at startup
+        with universe_lock:
+            run_job(
+                engine,
+                "universe_review",
+                lambda: universe_review_job(engine, settings, llm, notify),
+            )
+
+    def universe_review_command(_args: dict[str, Any]) -> dict[str, Any]:
+        if llm is None:
+            return {"ok": False, "error": llm_off}
+        if not universe_lock.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        try:
+            result = run_job(
+                engine,
+                "universe_review",
+                lambda: universe_review_job(engine, settings, llm, notify, kind="manual"),
+            )
+        finally:
+            universe_lock.release()
+        if result is None:
+            return {"ok": False, "error": "the review failed; see /universe"}
+        return {"ok": True, "rows": result.rows_written}
+
     handlers = {
         **COMMAND_HANDLERS,
+        "universe_review": universe_review_command,
         "mark_catalyst": mark_catalyst,
         "research_sweep": research_sweep_command,
         "refresh_prices": refresh_prices,
@@ -986,6 +1054,9 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             )
 
     sched.add_job(run_monthly_review, "cron", day="1,2", hour=10, minute=30, id="review_pack")
+    sched.add_job(
+        run_universe_review_job, "cron", day="1,2", hour=10, minute=0, id="universe_review"
+    )
 
     # M10: track record + overlay outcomes daily 07:30; conclusions Sunday 08:30 (and once,
     # 15 min after start, if no conclusion is newer than 8 days and an API key is set); the

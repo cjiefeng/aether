@@ -21,7 +21,7 @@ from aether.db.models import (
     research_runs,
 )
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
-from aether.llm.pricing import sgt_day_start
+from aether.llm.pricing import OWN_BUDGET_PURPOSES, sgt_day_start
 from aether.market import last_ok_finished
 
 NEWS_ORIGINS = ("rss", "web_search")
@@ -147,7 +147,11 @@ def llm_spend(engine: Engine, budget: Decimal, now: datetime | None = None) -> S
                 micros_sum(llm_calls.c.cost_micros),
                 func.count().filter(llm_calls.c.status == "ok"),
                 func.count().filter(llm_calls.c.status == "budget_refused"),
-            ).where(llm_calls.c.created_at >= since, llm_calls.c.batch == 0)
+            ).where(
+                llm_calls.c.created_at >= since,
+                llm_calls.c.batch == 0,
+                llm_calls.c.purpose.not_in(OWN_BUDGET_PURPOSES),
+            )
         ).one()
         batch = conn.execute(
             select(micros_sum(llm_calls.c.cost_micros)).where(llm_calls.c.batch == 1)
