@@ -41,7 +41,7 @@
     {% for e in esc.recent %}
       <tr>
         <td class="nowrap">{{ e.created_at[:16]|replace("T", " ") }}</td>
-        <td><a href="/t/{{ e.symbol }}">{{ e.symbol }}</a></td>
+        <td class="nowrap"><a href="/t/{{ e.symbol }}">{{ e.symbol }}</a></td>
         <td><a href="/feed?event={{ e.event_id }}">#{{ e.event_id }}</a> {{ e.title or "" }}</td>
         <td>
           {% if e.status == "refused" %}<span class="muted">refused: {{ e.refusal|replace("_", " ") }}</span>

@@ -1,5 +1,101 @@
 # Milestone report
 
+## M11: Escalation, ops & deploy (2026-10-08)
+
+High-materiality events now **escalate**: an alert, then one verification search, then a re-synthesis of the ticker, under a daily cap and a per-ticker cooldown. Also new: an **Ops page**, **JSON logs** with secret redaction, a weekly **backup restore drill** plus `make restore`, `make init` for a fresh clone, and `docs/RUNBOOK.md`. Phase 3 is complete.
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| Synthetic high-materiality T1 event → alert + re-synthesis within 5 min | ✅ | `tests/test_escalation.py::test_high_materiality_t1_event_alerts_and_resynthesizes_within_five_minutes`, using the real SDK on a fake transport. One pass gives an `escalation` alert, a `verify` research run (1 new item ingested), a new AVOID conclusion and an `escalation_result` alert, all stamped within 5 min of classification. A second pass adds nothing. **Live:** escalations started 17–31 s after classification (the 2-minute job; the classifier hook fires sooner). |
+| 6th escalation in a day is refused | ✅ | `test_sixth_escalation_in_a_day_is_refused`: 5 run, the 6th is stored `refused/daily_cap` and sends nothing. Separate tests cover the 6-hour per-ticker cooldown, the SGT-midnight reset and the cap of 0. **Live:** six synthetic T1 RISK-5 events on the six conclusion tickers gave 5 escalations (n/5 in each alert) and QTUM refused with `daily_cap`. |
+| Fresh clone → running stack in < 10 min | ✅ | **Live:** `git clone` → `make init` → `docker compose up -d --build --wait` → `/healthz` OK in **81 s**. Docker's base-image and layer caches were warm; a cold machine also pulls python:3.12-slim and uv. |
+| Restore from backup reproduces the dashboard | ✅ | `tests/test_restore.py`: the drill restores the newest backup into a temp dir and renders 10 pages (incl. `/t/<pure-play>` and `/ops`), all 200. A corrupt backup fails the drill. `restore` refuses without `--stack-stopped` and brings back the backup's content, keeping the previous DB. **Live:** `make backup` → `make restore-drill` passed (6,093 rows, 10 pages) → `make restore BACKUP=…` → stack healthy again, previous DB kept as `aether.db.pre-restore-<stamp>`. |
+| Tests green, no network | ✅ | `make test`: 671 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint`: clean, `mypy --strict`, no known vulnerabilities (`pip-audit` was already in `make lint`) |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schema `0013_escalation`** (hand-written, STRICT):
+  - New `escalations` table: one row per (event, ticker), with trigger, status, refusal reason (a CHECK ties it to `refused`), research run, conclusion and step detail as JSON.
+  - `research_runs.kind` gains `verify`.
+  - Alert kinds `escalation` and `escalation_result`.
+- **Escalation** (`escalate/select.py`, `escalate/run.py`):
+  - **Triggers:** post-cap materiality ≥ 4, or a RISK event ≥ 3 on a T1 source.
+  - **Filters:** not quarantined or injection-suspected, published within the alert lookback (3 days), on a ticker that gets conclusions.
+  - **Caps:** `MAX_ESCALATIONS_PER_DAY` (env, default 5, per SGT day) and `cooldown_hours: 6` (`config/llm.yaml` → `escalation`).
+  - **Steps:** claim → alert → `research/runner.py::run_verify` (web search, max 3 uses; the title only inside `wrap_untrusted`) → classify → `synthesize_one` → result alert. Each write is its own short `write_tx`; no transaction is held across an LLM call.
+  - **Wiring:** runs after every classifier pass and every 2 minutes, under a non-blocking lock. A `job_runs` row is written only when there's a candidate.
+- **Ops page** (`/ops`, in the nav in place of Health; `/health` stays and links to it):
+  - Last run per job, and jobs failing for more than 24h. `alerts.candidates.failing_jobs` is shared with the alert, so the two agree.
+  - LLM spend today against the soft budget, spend over 30 days by purpose, and the Console hard-cap reminder.
+  - Escalations used today and the recent list.
+  - Eval scores per prompt version.
+  - The newest backup with its age, and the last restore drill.
+- **Logging** (`logs.py`, stdlib):
+  - JSON lines (`AETHER_LOG_FORMAT=json` is the compose default; `text` is also available).
+  - `run_job` logs `job`, `run_id`, `status`, `rows`, `duration_ms`.
+  - A redaction filter masks the secret settings' values and `sk-ant-…` strings in messages, arguments, extras and tracebacks.
+  - uvicorn uses the same handler.
+- **Restore** (`ops/restore.py`):
+  - The drill runs as a weekly worker job (Sun 04:30 SGT) and as `make restore-drill`.
+  - `make restore BACKUP=…` stops the stack first.
+- **`make init`** (`scripts/init_env.py`): writes `.env` at 0600 with the password hash and session and CSRF secrets. It never overwrites an existing `.env`. The README quick start now uses it.
+- **`docs/RUNBOOK.md`:**
+  - Deploy and rollback, `jq` log recipes, backups, the drill and restore.
+  - Escalation tuning.
+  - Key rotation, per secret.
+  - Migrating to MySQL/Postgres.
+  - Litestream and K8s: documented, not built.
+  - Incident checklist.
+
+### Decisions (deviations from the spec / plan)
+1. **Your calls (2026-10-08):**
+   - Litestream is in the runbook only. Nightly backups plus the weekly drill are the supported path, and Litestream would also conflict with our nightly `wal_checkpoint(TRUNCATE)`.
+   - **K8s manifests skipped.** The runbook lists the constraints for adding them later.
+   - Two Telegram messages per escalation: start and result.
+2. **Refusals are final** and recorded. They send nothing; the event's own RISK alert (M3) is unaffected. The cap counts attempts, so a budget-refused or failed escalation still uses its slot. This keeps the cap a hard ceiling on LLM spend.
+3. **The escalation runs even without an API key.** The alert goes out, verify and synthesis are recorded as `skipped` with the reason, and the row is `failed`.
+4. **The ticker scope is the conclusion tickers** (pure-plays + QTUM). Benchmarks and context names never escalate, because there's nothing to re-synthesize.
+5. **A failed verification still re-synthesizes.** The escalation counts as `done` only when a conclusion is written; a held conclusion counts as done.
+6. **The drill's row-count check** fails only when a core table (`tickers`, `prices_daily`, `job_runs`) is empty in the backup but not live. Other counts are reported, not compared, because pruning and holdings edits make "backup ≤ live" untrue. This replaces the plan's "≤ live" rule.
+7. **A manual `make restore-drill` prints its result but doesn't write a `job_runs` row.** It runs as a second process, and only the worker writes (single-writer rule). The Ops page shows the weekly job's result.
+
+### Facts
+- No facts changed or added.
+
+### Open questions
+- **No paid live run.** The live check had no API key, so verify and re-synthesis with a real model are covered by the fake-transport tests. A real escalation costs about $0.15–0.45 (one Opus web-search call plus one Opus conclusion), within the daily soft budget.
+- **Budget interaction.** At the default $5/day soft budget, 5 escalations plus the scheduled sweeps can come close to the limit on a busy news day. Consider raising `DAILY_LLM_BUDGET_USD`, or lowering `MAX_ESCALATIONS_PER_DAY`.
+- Backup file names use the UTC date (an existing behaviour). A 04:00 SGT backup is named for the previous UTC day.
+
+### Live check (isolated compose project `aether-m11` on 127.0.0.1:8090, its own volumes and image tags; Anthropic, Telegram, Tiger and Massive blanked; backfill off; a throwaway password; torn down afterwards, including volumes and images. Your `aether` stack kept running throughout)
+- Fresh clone of the branch → `make init` → healthy in 81 s. The worker migrated to `0013_escalation`, and `/healthz` reported WAL and 0600.
+- Worker logs are JSON lines.
+- Six synthetic T1 events → 5 escalations plus 1 `daily_cap` refusal, alerts "Escalated (1/5 today) … (5/5 today)", and each result alert said "Verification skipped: ANTHROPIC_API_KEY is not set".
+- Backup → drill → restore → healthy, as in the table above.
+- **Browser** (`/ops`, logged in):
+  - The cards render, with "Used today (SGT): 5 / 5, 1 refused" and "Daily cap reached", plus the newest backup.
+  - Light and dark themes both render; at 375 px there's no horizontal page scroll. CSP intact, no console errors, no inline styles.
+  - Fixed during the check: the ticker cell in the escalations table wrapped mid-symbol at narrow widths (now `nowrap`).
+
+### Owner checklist
+- [ ] Review `config/llm.yaml` → `escalation` (≥ 4 any class, T1 RISK ≥ 3, 6h cooldown, 3 searches, 7-day window) and `MAX_ESCALATIONS_PER_DAY` (default 5).
+- [ ] After merging: `./deploy.sh`. The worker migrates to `0013_escalation`, and logs switch to JSON (`AETHER_LOG_FORMAT=text` in `.env` to keep the old format).
+- [ ] Open `/ops`. After the first Sunday, check that the restore drill shows `ok`. Run `make restore-drill` once now if you like.
+- [ ] Skim `docs/RUNBOOK.md`, especially key rotation and restore.
+- [ ] Still open from earlier milestones: `DAILY_LLM_BUDGET_USD`, `MASSIVE_API_KEY`, the Telegram bot setup, the facts not yet signed off, and the M9/M10 decisions.
+
+### How to verify
+```bash
+make test            # 671 passed, network blocked
+make lint            # ruff, mypy --strict, |safe ban, broker + LLM import checks, pip-audit
+make secrets-scan    # gitleaks: no leaks
+./deploy.sh          # after merge; then open /ops
+make backup && make restore-drill
+```
+
 ## Fixes: config-change rerun (#13) and sleeve performance chart (#24) (2026-10-08)
 
 ### Built
