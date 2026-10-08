@@ -73,18 +73,31 @@ docker compose logs --no-log-prefix worker | jq -r 'select(.status == "failed") 
   make restore BACKUP=aether-YYYYMMDD.db
   ```
 
-## Escalation (spec §5.2.5)
+## Escalation (spec §5.2.5; tightened in M13)
 
-- **What triggers it:** an event with post-cap materiality ≥ 4 (any class), or a RISK event ≥ 3 on a T1 source.
-- **What it does:** a Telegram alert, one verification search (web search, `verify_max_uses`), the classifier on what that search found, a re-synthesis of the ticker, and a result alert.
+- **What triggers it:** RISK events only (SIGNAL and NOISE never escalate). Post-cap materiality 5, or materiality ≥ 4 in a severe category:
+  - `going_concern`, `short_report`, `guidance_cut`;
+  - `delisting_or_compliance` only for a listing-deficiency notice (8-K 3.01) or a Form 25/15 removing the **common stock**;
+  - `dilution` only when the parsed offering is ≥ 10% of fully diluted shares (cover shares, or an ATM's dollar size at the last close). An offering whose size can't be parsed alerts but doesn't escalate.
+  - Routine filings (shelves, smaller supplements, warrant Form 25s, 8-K 3.02, NT filings) alert only.
+- **What it does:** one Telegram message for the event (its RISK, off-cycle and escalation alerts merge), a verification search **only when the event has no T1 source**, the classifier on what that search found, and a re-synthesis of the ticker. The result is sent to Telegram only when the stance changed, a flip was held by hysteresis, or the name's overlay output changed; otherwise it's on `/alerts` only.
 - **Hysteresis still applies.** A flip needs a qualifying trigger, so an escalation may end with a "held" stance.
 - **Caps:**
-  - `MAX_ESCALATIONS_PER_DAY` (env, default 5, per SGT day).
-  - One per ticker per `cooldown_hours` (`config/llm.yaml`, 6).
-  - A refused escalation is recorded with its reason, is final, and sends nothing. The event's own RISK alert is unaffected.
-- **Cost:** about one Opus web-search call ($0.05–0.15) plus one Opus conclusion ($0.10–0.30). It counts against `DAILY_LLM_BUDGET_USD`. A budget refusal still uses the day's escalation slot.
-- **Tuning:** thresholds and the cooldown are in the `escalation:` block of `config/llm.yaml`; the daily cap is in `.env`. Then `./deploy.sh`.
+  - `MAX_ESCALATIONS_PER_DAY` (env, default 2, per SGT day).
+  - One per ticker per `cooldown_hours` (`config/llm.yaml`, 72).
+  - `ESCALATION_DAILY_BUDGET_USD` (env, default 1.50): escalation calls (`research_verify`, `synthesis_escalation`) stop there; classification, sweeps and conclusions keep the rest of the daily budget.
+  - A refused escalation (`daily_cap`, `ticker_cooldown`, `budget`) is recorded with its reason, is final, and sends nothing. The event's own RISK alert is unaffected.
+- **Cost:** about $0.30–0.45 for a T1 event (one Opus conclusion); add $0.05–0.25 for the verification search on non-T1 events. Expect 1–2 escalations a month.
+- **Tuning:** thresholds, severe categories, the dilution bar and the cooldown are in the `escalation:` block of `config/llm.yaml`; the daily cap and sub-budget are in `.env`. Then `./deploy.sh`.
 - **To pause escalations:** set `MAX_ESCALATIONS_PER_DAY=0`.
+
+## Alert delivery (spec §5.2.6, M13)
+
+- **One message per event.** RISK, off-cycle review and escalation alerts for one event share one Telegram message; the others are on `/alerts` marked "merged".
+- **Immediate:** escalations, RISK ≥ `immediate_min_materiality` (4), T−1 reminders, job failing/recovered, the review pack, the weekly brief, universe messages.
+- **Daily digest** at `digest_time` (08:00 SGT): RISK 3, insider clusters, T−7 reminders. An empty digest isn't sent.
+- **Tuning:** `config/alerts.yaml` (`immediate_min_materiality`, `digest_time`, `immediate_reminder_days`). Then `./deploy.sh`.
+- The Ops page counts messages sent, merged and digested over 30 days.
 
 ## Rotate keys and secrets
 

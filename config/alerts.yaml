@@ -22,3 +22,12 @@ max_attempts: 5
 
 # Telegram messages per run (about one per second).
 max_sends_per_run: 20
+
+# M13 notification policy (spec §5.2.6). One Telegram message per event (RISK, off-cycle review and
+# escalation merge). RISK events at or above immediate_min_materiality, escalations, T-1 reminders,
+# job failing/recovered, the review pack, the weekly brief and the universe review go out at once;
+# the rest (RISK 3, insider clusters, T-7 reminders) wait for one digest at digest_time (SGT).
+# An empty digest isn't sent. The dashboard /alerts page lists everything.
+immediate_min_materiality: 4
+digest_time: "08:00"
+immediate_reminder_days: [1]

@@ -35,8 +35,9 @@ services:
       # API key is set (owner decision 2026-10-05); RESEARCH_BACKFILL=false turns it off.
       RESEARCH_MODEL: ${RESEARCH_MODEL:-claude-opus-5-5}
       RESEARCH_BACKFILL: ${RESEARCH_BACKFILL:-true}
-      # M11: escalations (alert + verification research + re-synthesis) per SGT day.
-      MAX_ESCALATIONS_PER_DAY: ${MAX_ESCALATIONS_PER_DAY:-5}
+      # M11/M13: escalations per SGT day and their daily sub-budget (inside the daily budget).
+      MAX_ESCALATIONS_PER_DAY: ${MAX_ESCALATIONS_PER_DAY:-2}
+      ESCALATION_DAILY_BUDGET_USD: ${ESCALATION_DAILY_BUDGET_USD:-1.50}
       # M12: monthly universe review (deep research + proposal), capped per run, outside the
       # daily soft budget.
       RESEARCH_DEEP_MODEL: ${RESEARCH_DEEP_MODEL:-claude-opus-5-5}
@@ -72,7 +73,8 @@ services:
       AETHER_SESSION_SECRET: ${AETHER_SESSION_SECRET:-}
       # Display only (News page spend card); the worker enforces it.
       DAILY_LLM_BUDGET_USD: ${DAILY_LLM_BUDGET_USD:-5.00}
-      MAX_ESCALATIONS_PER_DAY: ${MAX_ESCALATIONS_PER_DAY:-5}
+      MAX_ESCALATIONS_PER_DAY: ${MAX_ESCALATIONS_PER_DAY:-2}
+      ESCALATION_DAILY_BUDGET_USD: ${ESCALATION_DAILY_BUDGET_USD:-1.50}
       RESEARCH_DEEP_MODEL: ${RESEARCH_DEEP_MODEL:-claude-opus-5-5}
       UNIVERSE_REVIEW_BUDGET_USD: ${UNIVERSE_REVIEW_BUDGET_USD:-10.00}
     ports:

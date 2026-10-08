@@ -133,11 +133,11 @@ def run(engine: Engine, service: TelegramService | None, now: datetime = NOW) ->
 # --------------------------------------------------------------------------- acceptance
 
 
-def test_synthetic_s3_sends_one_message_and_no_duplicate_on_rerun(
+def test_synthetic_424b5_sends_one_message_and_no_duplicate_on_rerun(
     acme: Engine, tg: tuple[FakeTelegram, TelegramService]
 ) -> None:
     fake, service = tg
-    add_filing_event(acme, _meta("0000000001-26-000010", "S-3", "2026-03-09"))
+    add_filing_event(acme, _meta("0000000001-26-000010", "424B5", "2026-03-09"))
 
     res = run(acme, service)
     assert fake.n("sendMessage") == 1
@@ -145,7 +145,7 @@ def test_synthetic_s3_sends_one_message_and_no_duplicate_on_rerun(
     assert msg["chat_id"] == OWNER
     assert "parse_mode" not in msg
     assert msg["link_preview_options"] == {"is_disabled": True}
-    assert msg["text"].startswith("RISK · ACME · dilution (materiality 3/5)")
+    assert msg["text"].startswith("RISK · ACME · dilution (materiality 4/5)")
     assert "https://www.sec.gov/" in msg["text"]
     assert res.provider == "telegram" and res.warning is None
     # Verified the chat before sending, and removed any webhook.
@@ -350,7 +350,7 @@ def test_chat_id_must_equal_owner(migrated_db: Any) -> None:
 
 
 def test_disabled_module_keeps_alerts_on_dashboard(acme: Engine) -> None:
-    add_filing_event(acme, _meta("0000000001-26-000011", "S-3", "2026-03-09"))
+    add_filing_event(acme, _meta("0000000001-26-000011", "424B5", "2026-03-09"))
     with respx.mock(assert_all_called=False) as router:
         route = router.route(host="api.telegram.org")
         res = run(acme, None)
@@ -365,7 +365,7 @@ def test_disabled_module_keeps_alerts_on_dashboard(acme: Engine) -> None:
     "chat", [{"id": -100123, "type": "group"}, {"id": OTHER, "type": "private"}]
 )
 def test_getchat_not_owner_private_chat_sends_nothing(acme: Engine, chat: dict[str, Any]) -> None:
-    add_filing_event(acme, _meta("0000000001-26-000012", "S-3", "2026-03-09"))
+    add_filing_event(acme, _meta("0000000001-26-000012", "424B5", "2026-03-09"))
     with respx.mock(assert_all_called=False) as router:
         fake = FakeTelegram(router, chat=chat)
         bot = TelegramBot(TelegramConfig(TOKEN, OWNER, OWNER), httpx.Client(), sleep=no_sleep)
@@ -390,7 +390,7 @@ def test_errors_never_contain_the_token(acme: Engine, caplog: pytest.LogCaptureF
     def explode(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"cannot reach {request.url}", request=request)
 
-    add_filing_event(acme, _meta("0000000001-26-000014", "S-3", "2026-03-09"))
+    add_filing_event(acme, _meta("0000000001-26-000014", "424B5", "2026-03-09"))
     with respx.mock(assert_all_called=False) as router, caplog.at_level(logging.DEBUG):
         router.route(host="api.telegram.org").mock(side_effect=explode)
         bot = TelegramBot(TelegramConfig(TOKEN, OWNER, OWNER), httpx.Client(), sleep=no_sleep)
@@ -429,7 +429,7 @@ def test_send_failures_retry_then_fail(
     acme: Engine, tg: tuple[FakeTelegram, TelegramService]
 ) -> None:
     fake, service = tg
-    add_filing_event(acme, _meta("0000000001-26-000015", "S-3", "2026-03-09"))
+    add_filing_event(acme, _meta("0000000001-26-000015", "424B5", "2026-03-09"))
     err = {"ok": False, "error_code": 400, "description": "Bad Request: synthetic"}
     fake.send_errors = [err] * CFG.max_attempts
     for i in range(CFG.max_attempts):
@@ -442,7 +442,7 @@ def test_send_failures_retry_then_fail(
 
 
 def test_pending_alert_expires_instead_of_arriving_late(acme: Engine) -> None:
-    add_filing_event(acme, _meta("0000000001-26-000016", "S-3", "2026-03-09"))
+    add_filing_event(acme, _meta("0000000001-26-000016", "424B5", "2026-03-09"))
     with respx.mock(assert_all_called=False) as router:
         router.route(host="api.telegram.org").mock(return_value=httpx.Response(502, text="x"))
         bot = TelegramBot(TelegramConfig(TOKEN, OWNER, OWNER), httpx.Client(), sleep=no_sleep)
@@ -530,11 +530,16 @@ def test_lockup_and_earnings_reminders_fire_once_each(
         "earnings:ACME:2026-03-11:T-1",
         f"lockup:{acc}:T-1",
     ]
+    # M13: T-1 goes out at once; T-7 waits for the daily digest.
+    rows = alert_rows(acme)
+    assert [r.delivery for r in rows] == ["digest", "immediate", "immediate"]
     texts = [c["text"] for c in fake.calls["sendMessage"]]
-    assert len(texts) == 3
-    assert "lock-up expiry in 7 day(s): 2026-03-17" in texts[0]
-    assert "underwriters may release shares early" in texts[0]
-    assert "Not in the facts registry" in texts[0]
+    assert len(texts) == 2
+    assert "Earnings · ACME" in texts[0] and "lock-up expiry in 1 day(s)" in texts[1]
+    t7 = rows[0].text
+    assert "lock-up expiry in 7 day(s): 2026-03-17" in t7
+    assert "underwriters may release shares early" in t7
+    assert "Not in the facts registry" in t7
 
 
 def test_insider_cluster_alerts_once_per_window(acme: Engine) -> None:
@@ -594,3 +599,197 @@ def test_scheduler_registers_alert_jobs(migrated_db: Any, rw_engine: Engine) -> 
         make_settings(migrated_db, telegram_bot_token=TOKEN, telegram_allowed_user_id=str(OWNER)),
     )
     assert {"alerts", "telegram_in"} <= {j.id for j in on.get_jobs()}
+
+
+# -------------------------------------------------------------- M13 notification policy
+
+
+def _big_424b5(engine: Engine) -> int:
+    """A 424B5 offering 12% of fully diluted shares (synthetic XBRL count + parsed cover)."""
+    from tests.fundamentals_data import COMMON, add_facts, fact
+    from tests.holdings_data import add_filing
+
+    add_facts(engine, [fact("ACME", COMMON, "2025-12-31", 100_000_000, filed="2026-02-10")])
+    _, eid = add_filing(
+        engine,
+        "ACME",
+        "424B5",
+        "2026-03-09",
+        parsed={"offering": {"shares": 12_000_000, "prefunded": 0}, "atm": None},
+        event=("RISK", "dilution", 4, "edgar_primary_prospectus"),
+    )
+    assert eid is not None
+    return eid
+
+
+def _escalation_deps(engine: Engine, service: TelegramService | None) -> Any:
+    from aether.config import load_llm_config
+    from aether.escalate.run import EscalationDeps
+
+    def notify(cands: Any) -> None:
+        reason = None if service else "off"
+        run_alerts(
+            engine,
+            CFG,
+            PARAMS,
+            service,
+            reason,
+            now=NOW,
+            sleep=no_sleep,
+            off_cycle_min_materiality=4,
+            extra=cands,
+        )
+
+    return EscalationDeps(
+        params=load_llm_config(CONFIG_DIR).escalation,
+        max_per_day=2,
+        lookback_days=3,
+        symbols=frozenset({"ACME"}),
+        names={},
+        notify=notify,
+        verify=None,
+        classify=lambda: None,
+        resynthesize=None,
+        disabled_reason="ANTHROPIC_API_KEY is not set",
+    )
+
+
+def test_one_message_per_event_with_all_three_labels(
+    acme: Engine, tg: tuple[FakeTelegram, TelegramService]
+) -> None:
+    from aether.escalate.run import run_escalations
+
+    fake, service = tg
+    eid = _big_424b5(acme)
+    run_escalations(acme, _escalation_deps(acme, service), now=NOW)
+    # Later alert runs find nothing new to send.
+    run(acme, service)
+    run(acme, service, now=NOW + timedelta(minutes=10))
+
+    texts = [c["text"] for c in fake.calls["sendMessage"]]
+    assert len(texts) == 1
+    head = texts[0].split("\n")[0]
+    assert head == (
+        "RISK · ACME · dilution (materiality 4/5) · off-cycle review suggested · escalated"
+    )
+    assert "offering ≈ 12.0% of 100,000,000 fully diluted shares" in texts[0]
+    assert "Targets are unchanged until you press Publish targets now" in texts[0]
+
+    rows = {r.kind: r for r in alert_rows(acme) if r.event_id == eid}
+    assert set(rows) == {"risk_event", "off_cycle_review", "escalation", "escalation_result"}
+    assert (rows["risk_event"].status, rows["risk_event"].delivery) == ("sent", "immediate")
+    for k in ("off_cycle_review", "escalation"):
+        assert (rows[k].status, rows[k].delivery) == ("dashboard_only", "merged")
+        assert json.loads(rows[k].payload)["merged_into"] == f"risk_event:{eid}"
+    # No LLM: the re-synthesis changed nothing, so the result stays on the dashboard.
+    assert rows["escalation_result"].delivery == "dashboard_only"
+
+
+def test_a_label_after_the_primary_was_sent_is_only_recorded(
+    acme: Engine, tg: tuple[FakeTelegram, TelegramService]
+) -> None:
+    fake, service = tg
+    eid = add_filing_event(acme, _meta("0000000001-26-000040", "424B5", "2026-03-09"))
+    run(acme, service)  # RISK 4: sent at once
+    late = cand.AlertCandidate(
+        "escalation",
+        f"escalation:{eid}:ACME",
+        "RISK · ACME · x\nlate",
+        event_id=eid,
+        label="escalated",
+    )
+    run_alerts(acme, CFG, PARAMS, service, None, now=NOW, sleep=no_sleep, extra=[late])
+    assert fake.n("sendMessage") == 1
+    row = next(r for r in alert_rows(acme) if r.kind == "escalation")
+    assert (row.status, row.delivery) == ("dashboard_only", "merged")
+
+
+def test_pending_primary_gains_a_later_label_and_becomes_immediate(acme: Engine) -> None:
+    from aether.alerts.dispatch import enqueue
+
+    risk = cand.AlertCandidate(
+        "risk_event",
+        "risk_event:1",
+        "RISK · ACME · dilution (materiality 3/5)\nTitle\nurl",
+        event_id=None,
+        delivery="digest",
+    )
+    eid = add_filing_event(acme, _meta("0000000001-26-000041", "S-3", "2026-03-09"))
+    risk = cand.AlertCandidate(
+        risk.kind, f"risk_event:{eid}", risk.text, event_id=eid, delivery="digest"
+    )
+    enqueue(acme, [risk], telegram=True, now=NOW)
+    esc = cand.AlertCandidate(
+        "escalation",
+        f"escalation:{eid}:ACME",
+        "RISK · ACME · dilution (materiality 3/5)\nTitle\nEscalated.",
+        event_id=eid,
+        label="escalated",
+    )
+    enqueue(acme, [esc], telegram=True, now=NOW)
+    primary, merged = alert_rows(acme)
+    assert primary.text.split("\n")[0].endswith("· escalated") and "Escalated." in primary.text
+    assert (primary.status, primary.delivery) == ("pending", "immediate")
+    assert merged.delivery == "merged"
+
+
+def test_risk_3_and_t7_go_to_the_0800_digest(
+    acme: Engine, tg: tuple[FakeTelegram, TelegramService]
+) -> None:
+    from aether.alerts.dispatch import run_digest
+
+    fake, service = tg
+    # Empty digest: nothing is created or sent.
+    assert run_digest(acme, CFG, service, None, now=NOW, sleep=no_sleep).warning == (
+        "nothing to digest"
+    )
+    add_filing_event(acme, _meta("0000000001-26-000050", "S-3", "2026-03-09"))  # RISK 3
+    with write_tx(acme) as conn:
+        conn.execute(
+            insert(earnings_calendar).values(
+                symbol="ACME",
+                date="2026-03-17",  # T-7 on 2026-03-10
+                status="scheduled",
+                source="yfinance",
+                fetched_at=utcnow_iso(),
+            )
+        )
+    run(acme, service)
+    assert fake.n("sendMessage") == 0
+    assert [r.delivery for r in alert_rows(acme)] == ["digest", "digest"]
+
+    res = run_digest(acme, CFG, service, None, now=NOW, sleep=no_sleep)
+    assert res.rows_written == 2 and fake.n("sendMessage") == 1
+    text = fake.calls["sendMessage"][0]["text"]
+    assert text.startswith("Daily digest · 2026-03-10 · 2 alert(s)")
+    assert "• RISK · ACME · dilution (materiality 3/5)" in text
+    assert "• Earnings · ACME · scheduled 2026-03-17" in text
+    rows = alert_rows(acme)
+    assert [r.status for r in rows[:2]] == ["digested", "digested"]
+    assert (rows[2].kind, rows[2].status) == ("digest", "sent")
+    assert json.loads(rows[2].payload) == {"alert_ids": [rows[0].id, rows[1].id]}
+    # Same day again: nothing new.
+    run_digest(acme, CFG, service, None, now=NOW + timedelta(hours=1), sleep=no_sleep)
+    assert fake.n("sendMessage") == 1
+
+
+def test_digest_text_fits_telegram() -> None:
+    from aether.alerts.dispatch import digest_text
+
+    text, fit = digest_text(
+        "2026-03-10", [f"RISK · ACME · line {i} " + "x" * 200 for i in range(50)]
+    )
+    assert len(text) <= 4096 and fit < 50
+    assert text.endswith(f"… and {50 - fit} more on the Alerts page.")
+
+
+def test_telegram_off_keeps_everything_dashboard_only(acme: Engine) -> None:
+    from aether.escalate.run import run_escalations
+
+    _big_424b5(acme)
+    run_escalations(acme, _escalation_deps(acme, None), now=NOW)
+    rows = alert_rows(acme)
+    assert len(rows) == 4
+    assert {(r.channel, r.status, r.delivery) for r in rows} == {
+        ("dashboard", "dashboard_only", "dashboard_only")
+    }

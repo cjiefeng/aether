@@ -43,13 +43,19 @@ synthesis:
   effort: high
   max_attempts: 2
 
-# Escalation (M11, spec §5.2.5): an event at or above min_materiality (post-cap, any class), or a
-# RISK event at or above t1_risk_min_materiality on a T1 source, triggers an alert, one verification
-# research run and a re-synthesis of that ticker. At most MAX_ESCALATIONS_PER_DAY (env, default 5)
-# per SGT day and one per ticker per cooldown_hours. Quarantined events never escalate.
+# Escalation (spec §5.2.5; M11, tightened in M13). RISK events only: post-cap materiality >=
+# min_materiality, or >= severe_min_materiality in a severe category. delisting_or_compliance counts
+# only when the M5 overlay parser reads the filing as a listing-deficiency notice (8-K 3.01) or a
+# removal of the common stock (Form 25/15); dilution only when the parsed offering is at least
+# large_dilution_pct of fully diluted shares. Actions: one notification, a verification search only
+# when the event has no T1 source, and a re-synthesis. Caps: MAX_ESCALATIONS_PER_DAY (env, default
+# 2) per SGT day, one per ticker per cooldown_hours, and ESCALATION_DAILY_BUDGET_USD (env, default
+# 1.50) for escalation calls. Quarantined events never escalate.
 escalation:
-  min_materiality: 4
-  t1_risk_min_materiality: 3
-  cooldown_hours: 6
+  min_materiality: 5
+  severe_min_materiality: 4
+  severe_categories: [going_concern, short_report, guidance_cut, delisting_or_compliance, dilution]
+  large_dilution_pct: 0.10
+  cooldown_hours: 72
   verify_max_uses: 3
   verify_window_days: 7

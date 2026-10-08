@@ -15,6 +15,10 @@ Every call:
 Calls whose `purpose` is in `OWN_BUDGET_PURPOSES` (the M12 universe review) must carry a
 `RunBudget` and are checked against it instead; they are excluded from today's spend.
 
+Calls whose `purpose` is in `ESCALATION_PURPOSES` (M13) also pass the escalation sub-budget:
+today's escalation spend + the estimate must fit `ESCALATION_DAILY_BUDGET_USD`, otherwise
+`EscalationBudgetExceeded` is raised. They still count toward the daily soft budget.
+
 Message Batches (the research backfill, M6, and the classifier backlog, M7) bypass the daily soft
 budget by owner decision (2026-10-05) and are excluded from today's spend; each result is still
 logged with `batch = 1` at the batch price.
@@ -40,7 +44,9 @@ from aether.config import LlmConfig, Settings
 from aether.db.engine import write_tx
 from aether.db.models import llm_calls
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
+from aether.escalate.spend import escalation_spent_since
 from aether.llm.pricing import (
+    ESCALATION_PURPOSES,
     OWN_BUDGET_PURPOSES,
     cost_usd,
     estimate_usd,
@@ -68,6 +74,10 @@ class LlmError(RuntimeError):
 
 class BudgetExceeded(LlmError):
     pass
+
+
+class EscalationBudgetExceeded(BudgetExceeded):
+    """The escalation sub-budget (M13) refused the call; the daily budget may still have room."""
 
 
 class LlmDisabled(LlmError):
@@ -136,6 +146,7 @@ class LlmClient:
         self._engine = engine
         self._cfg = cfg
         self._budget = settings.daily_llm_budget_usd
+        self._escalation_budget = settings.escalation_daily_budget_usd
         self._now = clock or (lambda: datetime.now(UTC))
         kwargs: dict[str, Any] = {
             "api_key": self._key,
@@ -166,6 +177,10 @@ class LlmClient:
                 )
             ).scalar_one()
         return micros_to_decimal(int(total))
+
+    def escalation_spent_today(self) -> Decimal:
+        with self._engine.connect() as conn:
+            return escalation_spent_since(conn, sgt_day_start(self._now()))
 
     def _log(
         self,
@@ -240,6 +255,21 @@ class LlmClient:
                 self._log(purpose=purpose, model=model, status="budget_refused", error=detail)
                 raise BudgetExceeded(detail)
         else:
+            if purpose in ESCALATION_PURPOSES:
+                esc = self.escalation_spent_today()
+                if esc + estimate > self._escalation_budget:
+                    detail = (
+                        f"escalation sub-budget: spent ${esc} + estimate ${estimate} > "
+                        f"${self._escalation_budget}"
+                    )
+                    self._log(
+                        purpose=purpose,
+                        model=model,
+                        status="budget_refused",
+                        research_run_id=research_run_id,
+                        error=detail,
+                    )
+                    raise EscalationBudgetExceeded(detail)
             spent = self.spent_today()
             if spent + estimate > self._budget:
                 self._log(

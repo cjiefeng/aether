@@ -25,6 +25,12 @@ SGT = ZoneInfo("Asia/Singapore")
 # excluded from the daily soft budget so the monthly review can't starve classification.
 OWN_BUDGET_PURPOSES = ("research_universe", "universe_proposal")
 
+# Escalation calls (M13, spec §5.2.5): the verification search and the escalation's re-synthesis.
+# They count toward the daily soft budget and also stop at ESCALATION_DAILY_BUDGET_USD, so
+# escalations can't starve classification, sweeps or conclusions.
+ESCALATION_SYNTH_PURPOSE = "synthesis_escalation"
+ESCALATION_PURPOSES = ("research_verify", ESCALATION_SYNTH_PURPOSE)
+
 
 def sgt_day_start(now: datetime) -> datetime:
     """Start of the current Singapore day, in UTC: the soft budget resets at SGT midnight."""

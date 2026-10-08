@@ -32,8 +32,16 @@
   <h2>Escalations</h2>
   <p>Used today (SGT): <strong>{{ esc.used_today }} / {{ esc.max_per_day }}</strong>{% if esc.refused_today %}, {{ esc.refused_today }} refused{% endif %}.
     {% if esc.used_today >= esc.max_per_day %}<span class="warn">Daily cap reached; further triggers are refused until SGT midnight.</span>{% endif %}</p>
-  <p class="muted small">Trigger: post-cap materiality ≥ {{ esc_params.min_materiality }}, or a T1 RISK event ≥ {{ esc_params.t1_risk_min_materiality }}.
-    Each escalation sends an alert, runs one verification search and re-synthesizes the ticker (hysteresis still applies).
+  <p>Escalation spend today: <strong>${{ "%.2f"|format(esc.spent_today) }} / ${{ "%.2f"|format(esc.budget) }}</strong> sub-budget
+    {% if esc.spent_today >= esc.budget %}<span class="warn">reached; further escalations are refused until SGT midnight.</span>{% else %}(inside the daily budget).{% endif %}</p>
+  {% if esc.refusals %}
+  <p class="small">Refused in the last {{ spend_days }} days:
+    {% for reason, n in esc.refusals.items() %}{{ reason|replace("_", " ") }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+  <p class="muted small">Trigger: RISK events only, at post-cap materiality {{ esc_params.min_materiality }}, or ≥ {{ esc_params.severe_min_materiality }} in a severe category
+    ({{ esc_params.severe_categories|join(", ")|replace("_", " ") }}; a delisting only for a deficiency notice or the common stock, dilution only at ≥ {{ "%.0f"|format(esc_params.large_dilution_pct * 100) }}% of fully diluted shares).
+    Each escalation sends one message, runs a verification search only when the event has no T1 source, and re-synthesizes the ticker (hysteresis still applies).
+    The result is sent only when the stance or overlay changed.
     At most one per ticker every {{ esc_params.cooldown_hours }}h. Quarantined events never escalate.</p>
   {% if esc.recent %}
   <table class="small">
@@ -43,11 +51,12 @@
       <tr>
         <td class="nowrap">{{ e.created_at[:16]|replace("T", " ") }}</td>
         <td class="nowrap"><a href="/t/{{ e.symbol }}">{{ e.symbol }}</a></td>
-        <td><a href="/feed?event={{ e.event_id }}">#{{ e.event_id }}</a> {{ e.title or "" }}</td>
+        <td><a href="/feed?event={{ e.event_id }}">#{{ e.event_id }}</a> {{ e.title or "" }}{% if e.reason %}<br><span class="muted">{{ e.reason }}</span>{% endif %}</td>
         <td>
           {% if e.status == "refused" %}<span class="muted">refused: {{ e.refusal|replace("_", " ") }}</span>
           {% else %}<span class="{{ 'ok' if e.status == 'done' else ('bad' if e.status == 'failed' else '') }}">{{ e.status }}</span>
             {% if e.verify %}<span class="muted">· verify {{ e.verify }}</span>{% endif %}
+            {% if e.changed %}<span class="muted">· {{ e.changed|join("; ") }}</span>{% elif e.status == "done" %}<span class="muted">· no change</span>{% endif %}
             {% if e.conclusion_id %}<span class="muted">· <a href="/t/{{ e.symbol }}#conclusion">conclusion #{{ e.conclusion_id }}</a></span>{% endif %}
           {% endif %}
         </td>
@@ -58,6 +67,14 @@
   {% else %}
   <p class="muted">No escalations yet.</p>
   {% endif %}
+</section>
+
+<section class="card">
+  <h2>Messages</h2>
+  <p>Last {{ spend_days }} days: <strong>{{ messages.sent }}</strong> sent at once, <strong>{{ messages.digests }}</strong> daily digest(s) carrying
+    <strong>{{ messages.digested }}</strong> alert(s), <strong>{{ messages.merged }}</strong> merged into another message,
+    <strong>{{ messages.dashboard_only }}</strong> kept on the dashboard (unchanged escalation results).</p>
+  <p class="muted small">One message per event; RISK below the immediate bar, insider clusters and T−7 reminders go to the daily digest. Every alert is on the <a href="/alerts">Alerts</a> page.</p>
 </section>
 </div>
 

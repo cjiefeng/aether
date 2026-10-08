@@ -18,13 +18,19 @@ alert fire at most once however often this runs.
 
 Message text is plain text built from DB fields; Telegram gets no parse_mode, so nothing in a
 filing title is interpreted.
+
+M13 notification policy (spec §5.2.6): each candidate carries its `delivery`. RISK events below
+`immediate_min_materiality`, insider clusters and reminders outside `immediate_reminder_days`
+(T-7) are `digest` (one message at `digest_time`); everything else is `immediate`. `risk_event`,
+`off_cycle_review` and `escalation` alerts for one event merge into one message in the outbox
+(`dispatch.enqueue`); `label` is the tag a merged alert adds to that message's first line.
 """
 
 from __future__ import annotations
 
 import json
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -61,6 +67,8 @@ class AlertCandidate:
     text: str
     payload: dict[str, Any] = field(default_factory=dict)
     event_id: int | None = None
+    delivery: str = "immediate"  # immediate | digest | dashboard_only (M13)
+    label: str | None = None  # tag added to the event's merged message (M13)
 
 
 def _clip(text: str, n: int) -> str:
@@ -76,6 +84,11 @@ def reminder_due(days_left: int, reminder_days: tuple[int, ...]) -> int | None:
     """The tightest T-N reminder that applies (None if the date is further out than every N)."""
     due = [n for n in reminder_days if days_left <= n]
     return min(due) if due else None
+
+
+def reminder_delivery(n: int, cfg: AlertsConfig) -> str:
+    """T-1 goes out at once; T-7 waits for the digest (spec §5.2.6)."""
+    return "immediate" if n in cfg.immediate_reminder_days else "digest"
 
 
 # --------------------------------------------------------------------------- RISK events
@@ -133,6 +146,9 @@ def risk_events(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[Aler
                     "materiality": r.materiality,
                 },
                 event_id=eid,
+                delivery=(
+                    "immediate" if r.materiality >= cfg.immediate_min_materiality else "digest"
+                ),
             )
         )
     return out
@@ -187,6 +203,7 @@ def off_cycle_reviews(
             ),
             payload={"symbol": r.symbol, "category": r.category, "materiality": r.materiality},
             event_id=r.id,
+            label="off-cycle review suggested",
         )
     return list(out.values())
 
@@ -241,6 +258,7 @@ def insider_clusters(engine: Engine, params: RiskFlagParams, now: datetime) -> l
                     ]
                 ),
                 payload={"symbol": sym, "start": c.start.isoformat(), "end": c.end.isoformat()},
+                delivery="digest",
             )
         )
     return out
@@ -299,6 +317,7 @@ def lockup_reminders(conn: Connection, cfg: AlertsConfig, now: datetime) -> list
                 dedupe_key=f"lockup:{r.accession}:T-{n}",
                 text="\n".join(lines),
                 payload={"symbol": r.symbol, "expiry_date": r.expiry_date, "reminder": n},
+                delivery=reminder_delivery(n, cfg),
             )
         )
     return out
@@ -330,6 +349,7 @@ def earnings_reminders(conn: Connection, cfg: AlertsConfig, now: datetime) -> li
                     ]
                 ),
                 payload={"symbol": sym, "date": d, "reminder": n},
+                delivery=reminder_delivery(n, cfg),
             )
         )
     return out
@@ -486,4 +506,4 @@ def collect(
 
 
 def _truncate(c: AlertCandidate) -> AlertCandidate:
-    return AlertCandidate(c.kind, c.dedupe_key, c.text[: MAX_TEXT - 1] + "…", c.payload, c.event_id)
+    return replace(c, text=c.text[: MAX_TEXT - 1] + "…")

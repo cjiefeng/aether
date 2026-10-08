@@ -14,7 +14,10 @@
   {% endif %}
   {% if delivery.channel == "telegram" and delivery.note %}<p class="bad">{{ delivery.note }}</p>{% endif %}
   <p class="muted small">RISK events (materiality ≥ threshold in <code>config/alerts.yaml</code>), insider-selling clusters,
-    lock-up and earnings reminders (T−7, T−1) and jobs failing for more than 24h. Each alert fires once (dedupe key).</p>
+    lock-up and earnings reminders (T−7, T−1) and jobs failing for more than 24h. Each alert fires once (dedupe key).
+    One Telegram message per event: its RISK, off-cycle review and escalation alerts merge into one.
+    Urgent items go out at once; RISK below materiality {{ immediate_min }}, insider clusters and T−7 reminders wait for the daily digest at {{ digest_time }} SGT.
+    Every alert is listed here.</p>
   <button hx-disabled-elt="this" hx-post="/commands/test-alert" hx-target="#test-result" hx-swap="innerHTML">Send test alert</button>
   <span id="test-result" class="result" role="status">{% with status = active_command_status(request, "test_alert") %}{% if status %}{% include "_command_status.html" %}{% endif %}{% endwith %}</span>
 </section>

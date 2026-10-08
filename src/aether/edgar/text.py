@@ -202,6 +202,46 @@ def extract_atm(text: str) -> AtmProgram | None:
     return None
 
 
+# --------------------------------------------------------------------------- offering size (M13)
+
+# The base offering on a prospectus cover: "We are offering N shares of [our] [Class A] common
+# stock", plus pre-funded warrants offered in the same sentence (they are shares in all but
+# name). The underwriters' option and accompanying common warrants are left out: the size is a
+# floor, so the M13 dilution escalation can only under-fire. Only the cover area is searched.
+_OFFERING = re.compile(
+    r"\bwe\s+are\s+offering\s+(?:an\s+aggregate\s+of\s+|up\s+to\s+)?(?:\(i\)\s*)?"
+    r"(\d{1,3}(?:,\d{3})+|\d{4,})\s+shares\s+of\s+(?:our\s+)?(?:Class\s+[A-Z]\s+)?"
+    r"common\s+stock",
+    re.IGNORECASE,
+)
+_PREFUNDED = re.compile(
+    r"pre-?funded\s+warrants\s+to\s+purchase\s+(?:up\s+to\s+)?(?:an\s+aggregate\s+of\s+)?"
+    r"(\d{1,3}(?:,\d{3})+|\d{4,})\s+shares",
+    re.IGNORECASE,
+)
+COVER_CHARS = 20_000
+PREFUNDED_WINDOW = 600
+
+
+@dataclass(frozen=True)
+class Offering:
+    shares: int  # common shares offered, plus pre-funded warrant shares in the same offer
+    prefunded: int
+    excerpt: str
+
+
+def extract_offering(text: str) -> Offering | None:
+    cover = text[:COVER_CHARS]
+    m = _OFFERING.search(cover)
+    if not m:
+        return None
+    shares = int(m[1].replace(",", ""))
+    pf = _PREFUNDED.search(cover, m.end(), m.end() + PREFUNDED_WINDOW)
+    prefunded = int(pf[1].replace(",", "")) if pf else 0
+    end = pf.end() if pf else m.end()
+    return Offering(shares + prefunded, prefunded, excerpt(text, m.start(), end))
+
+
 # --------------------------------------------------------------------------- listing (M5 overlay)
 
 # 8-K Item 3.01 covers both deficiency notices and voluntary exchange transfers. Only a clear

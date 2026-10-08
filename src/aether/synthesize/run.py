@@ -46,6 +46,8 @@ class SynthDeps:
     conclusions: ConclusionParams
     track: TrackRecordParams
     facts: Sequence[Fact]
+    # M13: an escalation's re-synthesis runs as `synthesis_escalation` (escalation sub-budget).
+    purpose: str = PURPOSE
 
 
 def _previous(engine: Engine, kind: str, symbol: str | None) -> Previous | None:
@@ -118,7 +120,7 @@ def _call(deps: SynthDeps, ctx: Context) -> tuple[Validated | None, Decimal, int
         attempts += 1
         try:
             msg = deps.llm.complete(
-                purpose=PURPOSE,
+                purpose=deps.purpose,
                 model=deps.model,
                 system=prompt.system_prompt(ctx.kind),
                 messages=[
