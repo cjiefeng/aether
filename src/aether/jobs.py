@@ -10,7 +10,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,7 +19,8 @@ import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import Engine, delete, func, select, update
 
-from aether.alerts.dispatch import enqueue_test_alert, run_alerts
+from aether.alerts.candidates import AlertCandidate
+from aether.alerts.dispatch import deliver, enqueue, enqueue_test_alert, run_alerts
 from aether.alerts.telegram import TelegramBot, TelegramConfig, TelegramError, TelegramService
 from aether.catalysts.mark import CatalystMark, apply_mark
 from aether.catalysts.sync import refresh_catalysts
@@ -44,6 +45,8 @@ from aether.config import (
 from aether.db.engine import write_tx
 from aether.db.models import commands, conclusions, job_runs
 from aether.db.types import to_iso, utcnow_iso
+from aether.escalate.run import EscalationDeps, run_escalations
+from aether.escalate.select import candidates as escalation_candidates
 from aether.facts import load_facts
 from aether.ingest.dividends import ingest_dividends
 from aether.ingest.earnings_calendar import ingest_earnings_calendar
@@ -56,6 +59,7 @@ from aether.ingest.short_interest import ingest_short_interest
 from aether.llm.client import LlmClient, LlmDisabled
 from aether.market import last_ok_finished
 from aether.ops.backup import backup
+from aether.ops.restore import drill
 from aether.options.job import snapshot_options
 from aether.portfolio.holdings import (
     HoldingsUpdate,
@@ -79,7 +83,14 @@ from aether.providers.prices import (
 )
 from aether.providers.rss import RssClient
 from aether.providers.tiger import TigerConfig, TigerReadOnly
-from aether.research.runner import backfill_state, poll_backfill, run_sweep, submit_backfill
+from aether.research.runner import (
+    VerifyTarget,
+    backfill_state,
+    poll_backfill,
+    run_sweep,
+    run_verify,
+    submit_backfill,
+)
 from aether.review.pack import monthly_review
 from aether.runs import JobResult, run_job
 from aether.score.calibration import has_report, run_calibration
@@ -88,7 +99,7 @@ from aether.score.scorecard import run_scorecards
 from aether.score.theme import run_theme
 from aether.score.track_record import run_track_record
 from aether.synthesize.brief import weekly_brief
-from aether.synthesize.run import SynthDeps, run_conclusions, synth_symbols
+from aether.synthesize.run import SynthDeps, run_conclusions, synth_symbols, synthesize_one
 
 __all__ = ["JobResult", "build_scheduler", "process_commands", "run_job"]
 
@@ -99,6 +110,8 @@ HEARTBEAT_MINUTES = 10
 ALERTS_MINUTES = 10
 CATALYSTS_MINUTES = 30
 INBOUND_POLL_SECONDS = 30
+ESCALATION_MINUTES = 2  # safety net; the classifier also triggers a pass after each run
+SYNTH_LOCK_WAIT_S = 600  # an escalation waits this long for a running conclusions job
 
 
 def heartbeat() -> JobResult:
@@ -173,6 +186,12 @@ def nightly_maintenance(engine: Engine, settings: Settings) -> JobResult:
     finally:
         raw.close()
     return JobResult(rows_written=pruned)
+
+
+def restore_drill_job(settings: Settings) -> JobResult:
+    """M11: restore the newest backup into a temp dir and render the dashboard from it."""
+    result = drill(settings)
+    return JobResult(rows_written=len(result.pages), warning=None, provider=result.backup)
 
 
 def make_price_provider(settings: Settings) -> FailoverPriceProvider:
@@ -582,22 +601,26 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     # news/research ingest; a job_runs row only when something waits (no idle noise).
     classify_lock = threading.Lock()
 
+    def classify_pass() -> None:
+        ctx = classifier_context(settings)
+        if llm is not None and has_classifier_work(engine, batches_only=True):
+            run_job(
+                engine,
+                "classify_batch_poll",
+                lambda: poll_batches(engine, llm, ctx) or JobResult(warning="nothing open"),
+            )
+        if has_classifier_work(engine):
+            run_job(engine, "classify", lambda: run_classify(engine, llm, ctx))
+
     def run_classifier() -> None:
         if not classify_lock.acquire(blocking=False):
             return  # another run is in progress; it will pick the new items up
         try:
-            ctx = classifier_context(settings)
-            if llm is not None and has_classifier_work(engine, batches_only=True):
-                run_job(
-                    engine,
-                    "classify_batch_poll",
-                    lambda: poll_batches(engine, llm, ctx) or JobResult(warning="nothing open"),
-                )
-            if has_classifier_work(engine):
-                run_job(engine, "classify", lambda: run_classify(engine, llm, ctx))
+            classify_pass()
         finally:
             classify_lock.release()
         run_catalysts()
+        run_escalations_job()  # M11: escalate right after classification
 
     def run_news_rss() -> None:
         run_job(engine, "news_rss", lambda: news_rss_job(engine, settings))
@@ -708,6 +731,74 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
             return  # disabled: logged once at startup
         with synth_lock:
             run_job(engine, "conclusions", lambda: conclusions_job(engine, settings, llm))
+
+    # Escalation (M11, spec §5.2.5): alert → verification research → re-synthesis, with caps.
+    # Runs after every classifier pass and every 2 minutes; a job_runs row only when a candidate
+    # exists. The non-blocking lock also stops the classify step inside an escalation recursing.
+    escalation_lock = threading.Lock()
+
+    def notify(cands: Sequence[AlertCandidate]) -> None:
+        on = telegram is not None and telegram.blocked is None
+        now = datetime.now(UTC)
+        enqueue(engine, cands, telegram=on, now=now)
+        if on and telegram is not None:
+            with alerts_lock:
+                deliver(engine, telegram, load_alerts_config(settings.config_dir), now)
+
+    def verify(target: VerifyTarget) -> tuple[int, int]:
+        assert llm is not None
+        cfg = load_llm_config(settings.config_dir)
+        return run_verify(
+            engine,
+            llm,
+            cfg,
+            load_sources(settings.config_dir),
+            settings.research_model,
+            target,
+            max_uses=cfg.escalation.verify_max_uses,
+            window_days=cfg.escalation.verify_window_days,
+        )
+
+    def classify_for_escalation() -> None:
+        with classify_lock:
+            classify_pass()
+
+    def resynthesize(symbol: str) -> dict[str, Any]:
+        assert llm is not None
+        if not synth_lock.acquire(timeout=SYNTH_LOCK_WAIT_S):
+            return {"status": "failed", "error": "a conclusions run is still in progress"}
+        try:
+            return synthesize_one(engine, synth_deps(settings, llm), "ticker", symbol, sgt_today())
+        finally:
+            synth_lock.release()
+
+    def escalation_deps() -> EscalationDeps:
+        watchlist = load_watchlist(settings.config_dir)
+        return EscalationDeps(
+            params=load_llm_config(settings.config_dir).escalation,
+            max_per_day=settings.max_escalations_per_day,
+            lookback_days=load_alerts_config(settings.config_dir).event_lookback_days,
+            symbols=frozenset(synth_symbols(engine)),
+            names={t.symbol: (t.aliases[0] if t.aliases else t.symbol) for t in watchlist.tickers},
+            notify=notify,
+            verify=verify if llm is not None else None,
+            classify=classify_for_escalation,
+            resynthesize=resynthesize if llm is not None else None,
+            disabled_reason=llm_off,
+        )
+
+    def run_escalations_job() -> None:
+        if not escalation_lock.acquire(blocking=False):
+            return
+        try:
+            deps = escalation_deps()
+            if not escalation_candidates(
+                engine, deps.params, deps.symbols, datetime.now(UTC), deps.lookback_days
+            ):
+                return
+            run_job(engine, "escalations", lambda: run_escalations(engine, deps))
+        finally:
+            escalation_lock.release()
 
     def mark_catalyst(args: dict[str, Any]) -> dict[str, Any]:
         args.pop("_command_id", None)
@@ -975,6 +1066,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         next_run_time=datetime.now(ZoneInfo(TZ)) + timedelta(minutes=1),
     )
     sched.add_job(run_classifier, "interval", minutes=CLASSIFY_MINUTES, id="classify")
+    sched.add_job(run_escalations_job, "interval", minutes=ESCALATION_MINUTES, id="escalations")
     sched.add_job(run_research_sweep, "cron", hour="8,20", minute=0, id="research_sweep")
     sched.add_job(
         run_backfill_submit,
@@ -991,5 +1083,14 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         hour=4,
         minute=0,
         id="nightly_maintenance",
+    )
+    # M11: weekly backup restore drill, after Sunday's backup.
+    sched.add_job(
+        wrap("restore_drill", lambda: restore_drill_job(settings)),
+        "cron",
+        day_of_week="sun",
+        hour=4,
+        minute=30,
+        id="restore_drill",
     )
     return sched

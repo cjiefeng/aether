@@ -7,6 +7,7 @@ cycle.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -34,10 +35,21 @@ def run_job(engine: Engine, name: str, fn: Callable[[], JobResult]) -> JobResult
             .values(job=name, started_at=utcnow_iso(), status="running")
             .returning(job_runs.c.id)
         ).scalar_one()
+    t0 = time.monotonic()
+    log.info("job %s started", name, extra={"job": name, "run_id": run_id})
     try:
         result = fn()
     except Exception as exc:
-        log.exception("job %s failed", name)
+        log.exception(
+            "job %s failed",
+            name,
+            extra={
+                "job": name,
+                "run_id": run_id,
+                "status": "failed",
+                "duration_ms": int((time.monotonic() - t0) * 1000),
+            },
+        )
         with write_tx(engine) as conn:
             conn.execute(
                 update(job_runs)
@@ -57,4 +69,17 @@ def run_job(engine: Engine, name: str, fn: Callable[[], JobResult]) -> JobResult
                 error=result.warning,
             )
         )
+    log.info(
+        "job %s ok",
+        name,
+        extra={
+            "job": name,
+            "run_id": run_id,
+            "status": "ok",
+            "rows": result.rows_written,
+            "provider": result.provider,
+            "warning": result.warning,
+            "duration_ms": int((time.monotonic() - t0) * 1000),
+        },
+    )
     return result

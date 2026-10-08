@@ -15,6 +15,7 @@ from aether.db.engine import ensure_db_file, make_rw_engine, write_tx
 from aether.db.models import tickers
 from aether.facts import load_facts, sync_facts
 from aether.jobs import build_scheduler
+from aether.logs import setup_logging
 from aether.portfolio.holdings import import_positions_yaml
 
 log = logging.getLogger("aether.worker")
@@ -52,9 +53,7 @@ def startup(settings: Settings) -> Engine:
 
 def main() -> None:
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    setup_logging(settings)
     engine = startup(settings)
     log.info("worker started; db=%s", settings.db_path)
     build_scheduler(engine, settings).start()

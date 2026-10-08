@@ -7,6 +7,7 @@ import logging
 import uvicorn
 
 from aether.config import get_settings
+from aether.logs import setup_logging
 from aether.security.auth import AuthConfigError
 from aether.web.app import create_app
 
@@ -15,9 +16,7 @@ log = logging.getLogger("aether.web")
 
 def main() -> None:
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    setup_logging(settings)
     host, port = settings.bind_host_port
     try:
         app = create_app(settings)
@@ -33,6 +32,7 @@ def main() -> None:
         proxy_headers=False,
         server_header=False,
         log_level=settings.log_level.lower(),
+        log_config=None,  # keep the root handler from `setup_logging` (JSON, redaction)
     )
 
 

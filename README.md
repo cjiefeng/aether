@@ -20,14 +20,15 @@ Only **Docker** (with Compose v2), **make** and **git**. Python, uv, the linters
 ## Quick start
 
 ```bash
-cp .env.example .env
-chmod 600 .env          # deploy.sh refuses to start if .env is readable by others
+git clone git@github.com:cjiefeng/aether.git && cd aether
+make init               # prompts for the dashboard password; writes .env (0600) with the hash + secrets
 # edit .env: SEC_USER_AGENT="Your Name you@example.com" (required for EDGAR) and
-#            MASSIVE_API_KEY (price fallback, free tier)
-make hash-password      # prompts for the dashboard password; paste both printed lines into .env
+#            MASSIVE_API_KEY (price fallback, free tier); other keys are optional
 make hooks              # enable the gitleaks pre-commit hook (runs in Docker)
 ./deploy.sh             # pull latest main, build, start, wait until healthy
 ```
+
+Operations (logs, backups and restore, key rotation, escalation tuning, MySQL/Postgres, Litestream, K8s notes): [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
 
@@ -262,6 +263,34 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
 
 **Weekly brief** (Sunday 09:00 SGT; `/briefs`): built from the database, no LLM. What changed, top signals, risks, filtered-noise counts, the next 30 days, the stance table with track record, a reaction note and position drift. Telegram gets a plain-text copy once a week (no holdings values; only the number of names outside the no-trade band). The monthly review pack now includes the stances and the overlay value-added line.
 
+## Escalation, ops & deploy (M11)
+
+**Escalation** (`escalate/`, spec §5.2.5):
+- **Triggers:** an event with post-cap materiality ≥ 4, or a RISK event ≥ 3 on a T1 source. Quarantined or injection-suspected events never escalate. Only events from the last 3 days are considered, so a backfill can't flood the caps. Only tickers that get conclusions escalate.
+- **Steps:**
+  1. An `escalation` alert ("Escalated n/5 today").
+  2. One **verification** research run (web search, `research_verify`, at most 3 searches). The event title enters the prompt only inside an untrusted block, and results go through ingestion like any other source.
+  3. The classifier, on whatever the run found.
+  4. A **re-synthesis** of the ticker. Hysteresis applies, so a stance change may still be held.
+  5. An `escalation_result` alert.
+- **When it runs:** after every classifier pass and every 2 minutes, so the alert goes out seconds after classification and the re-synthesis lands within a few minutes.
+- **Caps:** `MAX_ESCALATIONS_PER_DAY` (env, default 5, per SGT day) and one per ticker per 6h (`config/llm.yaml` → `escalation`). A refused escalation is recorded with its reason and sends nothing. Spend counts against the daily soft budget.
+
+**Ops page** (`/ops`):
+- The last run per job (with provider), and jobs failing for more than 24h.
+- LLM spend today against the soft budget, and spend over 30 days by purpose, with a reminder that the Console limit is the hard cap.
+- Escalations used today, plus recent escalations and why any were refused.
+- Classifier eval scores per prompt version.
+- The newest backup, and the last restore drill.
+
+**Structured logs:** one JSON object per line (`AETHER_LOG_FORMAT=json` in compose; `text` is also available). Each scheduled job logs `job`, `run_id`, `status`, `rows` and `duration_ms`. Secret values and Anthropic-key-shaped strings are masked before anything is written.
+
+**Backups:**
+- **Restore drill** (Sundays 04:30 SGT; `make restore-drill`): restores the newest backup into a temp dir, checks its integrity and schema revision, compares row counts, and renders the dashboard from the copy. Each page must return 200.
+- **`make restore BACKUP=…`:** stops the stack and swaps the backup in, keeping the old DB as `aether.db.pre-restore-<stamp>`.
+
+**Fresh clone:** `make init` writes `.env` (mode 0600) with the password hash and secrets. `make lint` already ran `pip-audit`. K8s manifests and Litestream are documented in the runbook, not built (owner decision, 2026-10-08).
+
 ## Dashboard
 
 - `/`: the Overview.
@@ -291,6 +320,7 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
 - `/login`: the password form (M5).
 - `/alerts`: delivery status (Telegram or dashboard only, and why), the last 100 alerts, and **Send test alert**.
 - `/facts`: the facts registry with status badges, source links, notes, open questions and how to sign off.
+- `/ops`: last run per job, jobs failing >24h, LLM spend (today and by purpose), escalations used today, eval scores, backups and the restore drill (M11).
 - `/health`: DB, schema and last run per job.
 
 Charts use vendored ECharts (`web/static/VENDORED.txt`) and load their data from `/api/prices/*`, `/api/dilution/*`, `/api/strategies/curves`, `/api/catalysts` and `/api/reactions/*` as JSON. There are no inline scripts, so the CSP stays strict.
@@ -322,7 +352,10 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 | `make hash-password` | Prompt for the dashboard password; print `AETHER_DASHBOARD_PASSWORD_HASH` and a fresh `AETHER_SESSION_SECRET` |
 | `make fmt` | ruff format + autofix |
 | `make migrate` | `alembic upgrade head` (the worker also does this at startup) |
+| `make init` | Fresh clone: write `.env` (0600) from `.env.example` with the password hash, session and CSRF secrets (never overwrites) |
 | `make backup` | Online SQLite backup to `/data/backups/aether-YYYYMMDD.db` (14 days kept, mode 0600) |
+| `make restore-drill` | Restore the newest backup into a temp dir, check it and render the dashboard from it (live DB untouched) |
+| `make restore BACKUP=…` | Stop the stack and replace the live DB with a backup (previous DB kept as `aether.db.pre-restore-*`) |
 | `make secrets-scan` | gitleaks over git history and the working tree |
 | `make facts` | Regenerate `FACTS.md` from `config/facts.yaml` |
 | `make lock` | Re-resolve `uv.lock` |
@@ -366,7 +399,9 @@ src/aether/
   facts.py        facts registry: status gating, DB sync, FACTS.md rendering
   db/             engines (rw / ro / command), models (STRICT tables), dialect.py, migrations
   security/       CSRF, security headers, nh3 sanitizer, untrusted-content wrapping
-  ops/backup.py   online backup + retention
+  escalate/       escalation: trigger selection + caps, the alert → verify → re-synthesis pass (M11)
+  ops/            backup.py (online backup + retention), restore.py (drill + restore), view.py (Ops)
+  logs.py         JSON/text log setup with secret redaction (M11)
   jobs.py         APScheduler wiring (Asia/Singapore, max_instances=1)
   worker.py       single writer: migrate → sync config → schedule
   web/            FastAPI + Jinja2 + HTMX (vendored), no inline scripts/styles
@@ -374,6 +409,7 @@ config/           watchlist.yaml, sources.yaml, facts.yaml, rubric.yaml, alerts.
                   options.yaml, llm.yaml, catalysts_seed.yaml, weights.yaml
 evals/            classifier golden set (real items) + committed eval results
 tests/            pytest suite; fixtures/cassettes for recorded HTTP
+docs/RUNBOOK.md   operations runbook (M11)
 ```
 
 ## Data & safety notes
@@ -381,4 +417,4 @@ tests/            pytest suite; fixtures/cassettes for recorded HTTP
 - SQLite lives in the named Docker volume `aether-data` at `/data/aether.db`, which is local disk inside the Docker VM. **Never** put the DB on NFS, SMB or a macOS bind mount, because file locking breaks.
 - Backups land in the same volume (`/data/backups`). Copy them off the machine if you want real disaster recovery.
 - Secrets come from `.env` only (`MASSIVE_API_KEY` and `SEC_USER_AGENT` included) and are passed to the `worker` service only. The Massive key is sent in an `Authorization` header, never in a URL. `.env`, `config/positions.yaml` and `data/` are git- and docker-ignored.
-- If a secret ever leaks: rotate it (Anthropic Console → new key; Telegram `/revoke`), then update `.env`.
+- If a secret ever leaks: rotate it (see the runbook's "Rotate keys and secrets"), then update `.env`.

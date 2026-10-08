@@ -18,7 +18,7 @@
     <nav aria-label="Main">
       {% for href, label in [("/", "Overview"), ("/strategies", "Strategies"), ("/holdings", "Holdings"), ("/review", "Review"),
                              ("/track-record", "Track record"), ("/briefs", "Briefs"),
-                             ("/catalysts", "Catalysts"), ("/feed", "Feed"), ("/calibration", "Calibration"), ("/news", "News"), ("/alerts", "Alerts"), ("/facts", "Facts"), ("/health", "Health")] %}
+                             ("/catalysts", "Catalysts"), ("/feed", "Feed"), ("/calibration", "Calibration"), ("/news", "News"), ("/alerts", "Alerts"), ("/facts", "Facts"), ("/ops", "Ops")] %}
       <a href="{{ href }}"{% if path == href or (href == "/" and path.startswith("/t/")) %} aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>

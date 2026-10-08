@@ -337,8 +337,15 @@ def earnings_reminders(conn: Connection, cfg: AlertsConfig, now: datetime) -> li
 # --------------------------------------------------------------------------- job health
 
 
-def job_health(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[AlertCandidate]:
-    cutoff = now - timedelta(hours=cfg.job_failing_hours)
+@dataclass(frozen=True)
+class FailingJob:
+    job: str
+    first_failure: str  # started_at of the first failed run since the last ok run
+    failures: int
+    last_error: str | None
+
+
+def _runs_by_job(conn: Connection) -> dict[str, list[Any]]:
     runs: dict[str, list[Any]] = defaultdict(list)
     for r in conn.execute(
         select(job_runs.c.job, job_runs.c.status, job_runs.c.started_at, job_runs.c.error)
@@ -346,31 +353,43 @@ def job_health(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[Alert
         .order_by(job_runs.c.id)
     ).all():
         runs[r.job].append(r)
+    return runs
 
-    out: list[AlertCandidate] = []
-    for job, rs in sorted(runs.items()):
+
+def failing_jobs(
+    conn: Connection, hours: int, now: datetime, runs: dict[str, list[Any]] | None = None
+) -> list[FailingJob]:
+    """Jobs with no ok run since a failure that started more than `hours` ago (alerts + Ops)."""
+    cutoff = now - timedelta(hours=hours)
+    out = []
+    for job, rs in sorted((runs if runs is not None else _runs_by_job(conn)).items()):
         last_ok = max((i for i, r in enumerate(rs) if r.status == "ok"), default=-1)
         failures = rs[last_ok + 1 :]
-        if not failures:
+        if not failures or datetime.fromisoformat(failures[0].started_at) > cutoff:
             continue
-        first = failures[0].started_at
-        if datetime.fromisoformat(first) > cutoff:
-            continue
-        err = _clip(failures[-1].error or "no error recorded", 300)
+        out.append(FailingJob(job, failures[0].started_at, len(failures), failures[-1].error))
+    return out
+
+
+def job_health(conn: Connection, cfg: AlertsConfig, now: datetime) -> list[AlertCandidate]:
+    runs = _runs_by_job(conn)
+    out: list[AlertCandidate] = []
+    for f in failing_jobs(conn, cfg.job_failing_hours, now, runs):
+        err = _clip(f.last_error or "no error recorded", 300)
         out.append(
             AlertCandidate(
                 kind="job_failing",
-                dedupe_key=f"job_failing:{job}:{first}",
+                dedupe_key=f"job_failing:{f.job}:{f.first_failure}",
                 text="\n".join(
                     [
-                        f"Ops · job {job} failing for more than {cfg.job_failing_hours}h",
-                        f"Failing since {first}: {len(failures)} failed run(s), no successful "
-                        "run since.",
+                        f"Ops · job {f.job} failing for more than {cfg.job_failing_hours}h",
+                        f"Failing since {f.first_failure}: {f.failures} failed run(s), no "
+                        "successful run since.",
                         f"Last error: {err}",
                         "Dashboard data from this job is stale.",
                     ]
                 ),
-                payload={"job": job, "first_failure": first},
+                payload={"job": f.job, "first_failure": f.first_failure},
             )
         )
 

@@ -10,7 +10,7 @@ PIP_AUDIT := pip-audit==2.9.0
 
 .PHONY: help down logs ps dev-image lock test lint fmt typecheck eval migrate backup \
         secrets-scan smoke facts hooks record-cassette hash-password record-options \
-        golden-candidates record-short-interest
+        golden-candidates record-short-interest init restore restore-drill
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1 | sort | xargs
@@ -31,8 +31,25 @@ migrate:
 backup:
 	$(DC) exec worker python -m aether.ops.backup
 
+# M11: restore the newest backup into a temp dir, check it and render the dashboard from it
+# (read-only for the live DB; also runs weekly in the worker).
+restore-drill:
+	$(DC) exec worker python -m aether.ops.restore drill
+
+# M11: replace the live DB with a backup: make restore BACKUP=aether-YYYYMMDD.db
+# Stops the stack first and keeps the current DB as aether.db.pre-restore-<stamp>.
+restore:
+	@test -n "$(BACKUP)" || { echo "usage: make restore BACKUP=aether-YYYYMMDD.db"; exit 2; }
+	$(DC) stop app worker
+	$(DC) run --rm --no-deps -T worker python -m aether.ops.restore restore "$(BACKUP)" --stack-stopped
+	@echo "Restored. Start the stack again with ./deploy.sh"
+
 smoke:
 	curl -fsS http://localhost:8080/healthz && echo
+
+# M11: first run on a fresh clone: writes .env (0600) with the password hash and secrets.
+init:
+	$(DC) run --rm $(if $(CI),-T,) -e AETHER_INIT_PASSWORD dev $(UV) python scripts/init_env.py
 
 ## --- dev tooling (dev container) -----------------------------------------
 dev-image:

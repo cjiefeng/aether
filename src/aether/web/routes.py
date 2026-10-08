@@ -14,7 +14,15 @@ from aether.alerts import view as alerts_view
 from aether.catalysts import view as catalysts_view
 from aether.catalysts.mark import CatalystMark
 from aether.classify.prompt import prompt_version
-from aether.config import CATEGORY_CLASS, PROFILES, load_rubric, load_strategies, load_weights
+from aether.config import (
+    CATEGORY_CLASS,
+    PROFILES,
+    load_alerts_config,
+    load_llm_config,
+    load_rubric,
+    load_strategies,
+    load_weights,
+)
 from aether.db import health
 from aether.db.commands import (
     active_command,
@@ -23,6 +31,7 @@ from aether.db.commands import (
     get_command,
     rate_limit_resets_at,
 )
+from aether.ops import view as ops_view
 from aether.options.view import options_panel, options_stale
 from aether.portfolio import holdings_view, performance
 from aether.portfolio import view as strategies_view
@@ -427,6 +436,29 @@ def logout(request: Request) -> Response:
     response = Response(status_code=204, headers={"HX-Redirect": "/login"})
     auth.clear_session_cookie(response)
     return response
+
+
+@router.get("/ops", response_class=HTMLResponse)
+def ops_page(request: Request) -> HTMLResponse:
+    state = request.app.state
+    engine, settings = state.ro_engine, state.settings
+    hours = load_alerts_config(settings.config_dir).job_failing_hours
+    return _render(
+        request,
+        "ops.html",
+        {
+            "jobs": health.collect(engine, settings.db_path).jobs,
+            "failing": ops_view.failing(engine, hours),
+            "failing_hours": hours,
+            "spend": news_view.llm_spend(engine, settings.daily_llm_budget_usd),
+            "by_purpose": ops_view.spend_by_purpose(engine),
+            "spend_days": ops_view.SPEND_DAYS,
+            "esc": ops_view.escalation_summary(engine, settings.max_escalations_per_day),
+            "esc_params": load_llm_config(settings.config_dir).escalation,
+            "evals": ops_view.eval_scores(engine),
+            "backups": ops_view.backups(engine, settings.resolved_backup_dir),
+        },
+    )
 
 
 @router.get("/health", response_class=HTMLResponse)

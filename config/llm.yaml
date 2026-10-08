@@ -42,3 +42,14 @@ synthesis:
   max_tokens: 16000
   effort: high
   max_attempts: 2
+
+# Escalation (M11, spec §5.2.5): an event at or above min_materiality (post-cap, any class), or a
+# RISK event at or above t1_risk_min_materiality on a T1 source, triggers an alert, one verification
+# research run and a re-synthesis of that ticker. At most MAX_ESCALATIONS_PER_DAY (env, default 5)
+# per SGT day and one per ticker per cooldown_hours. Quarantined events never escalate.
+escalation:
+  min_materiality: 4
+  t1_risk_min_materiality: 3
+  cooldown_hours: 6
+  verify_max_uses: 3
+  verify_window_days: 7
