@@ -83,6 +83,37 @@ def _latest_plan(engine: Engine, profile: str) -> tuple[dict[str, Any], str, str
     return None if row is None else (json.loads(row.plan), row.as_of, row.created_at)
 
 
+# Issue #36: the Rebalance plan table sorts by these columns (display only; the plan, its
+# numbers and its trade order don't change). Drift sorts by |drift|. Cash isn't a plan row, so
+# the template keeps it last.
+PLAN_SORT_KEYS = ("weight", "target", "drift")
+PLAN_SORT_DEFAULT = ("target", "desc")
+
+
+def plan_sort(sort: str | None, direction: str | None) -> tuple[str, str]:
+    """A valid (column, "asc" | "desc"), falling back to the default for anything else."""
+    if sort in PLAN_SORT_KEYS and direction in ("asc", "desc"):
+        return sort, direction
+    return PLAN_SORT_DEFAULT
+
+
+def sort_plan_rows(rows: list[dict[str, Any]], sort: str, direction: str) -> list[dict[str, Any]]:
+    """Rows by `sort` (|drift| for drift), ties by symbol ascending in either direction; rows
+    without a value come last whatever the direction."""
+
+    def value(r: dict[str, Any]) -> float | None:
+        v = r.get(sort)
+        if not isinstance(v, int | float) or isinstance(v, bool):
+            return None
+        return abs(float(v)) if sort == "drift" else float(v)
+
+    have = [r for r in rows if value(r) is not None]
+    missing = sorted((r for r in rows if value(r) is None), key=lambda r: str(r["symbol"]))
+    sign = -1.0 if direction == "desc" else 1.0
+    have.sort(key=lambda r: (sign * (value(r) or 0.0), str(r["symbol"])))
+    return have + missing
+
+
 def off_cycle_events(engine: Engine, since: str, min_materiality: int = 4) -> list[dict[str, Any]]:
     """Material events on pure-plays since the last publish: candidates for an off-cycle
     review (shown next to "Publish targets now")."""

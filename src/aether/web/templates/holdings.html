@@ -2,6 +2,12 @@
 {% block title %}Holdings · Aether{% endblock %}
 {% macro w(x) -%}{% if x is none %}—{% else %}{{ "%.1f"|format(x * 100) }}%{% endif %}{%- endmacro %}
 {% macro money(x) -%}{% if x is none %}—{% else %}${{ "{:,.2f}".format(x|float) }}{% endif %}{%- endmacro %}
+{# Issue #36: a sortable plan column. First click sorts descending; clicking the active column flips it. #}
+{% macro sort_th(key, label, cur) -%}
+{%- set active = cur[0] == key -%}
+{%- set next_dir = ("asc" if cur[1] == "desc" else "desc") if active else "desc" -%}
+<th{% if active %} aria-sort="{{ 'descending' if cur[1] == 'desc' else 'ascending' }}"{% endif %}><a class="sort{{ ' active' if active }}" href="?sort={{ key }}&amp;dir={{ next_dir }}#plan">{{ label }}{% if active %} <span aria-hidden="true">{{ "↓" if cur[1] == "desc" else "↑" }}</span>{% endif %}</a></th>
+{%- endmacro %}
 {% set s = h.settings %}
 {% set tiger_mode = s.holdings_source == "tiger" %}
 {% block scripts %}
@@ -179,15 +185,15 @@
 <section class="card"><p class="muted">No plan yet. It's built once targets are published, and refreshed weekly (Sunday 07:10 SGT) and after each update or publish.</p></section>
 {% else %}
 {% set plan = h.plan %}
-<section class="card">
+<section class="card" id="plan">
   <div class="card-head"><h2>Rebalance plan: {{ plan.profile|capitalize }}</h2>
     <span class="muted small">Against targets published {{ plan.targets_as_of }}; next publish {{ plan.next_publish }}</span></div>
   {% for n in plan.notes %}<p class="muted small">{{ n }}</p>{% endfor %}
 
   <table class="num">
-    <thead><tr><th>Symbol</th><th>Shares</th><th>Value</th><th>Weight</th><th>Target</th><th>Drift</th><th>Trade</th><th>After</th></tr></thead>
+    <thead><tr><th>Symbol</th><th>Shares</th><th>Value</th>{{ sort_th("weight", "Weight", plan_sort) }}{{ sort_th("target", "Target", plan_sort) }}{{ sort_th("drift", "Drift", plan_sort) }}<th>Trade</th><th>After</th></tr></thead>
     <tbody>
-    {% for r in plan.rows %}
+    {% for r in plan_rows %}
       <tr class="{{ r.action or '' }}">
         <td>{{ r.symbol }}</td><td>{{ r.shares }}</td><td>{{ money(r.value) }}</td><td>{{ w(r.weight) }}</td>
         <td>{{ w(r.target) }}</td><td>{{ r.drift|pct }}</td>
@@ -195,8 +201,10 @@
         <td>{{ w(r.post_weight) }}</td>
       </tr>
     {% endfor %}
-      <tr><td>Cash</td><td></td><td>{{ money(plan.cash) }}</td><td>{{ w(plan.cash_weight) }}</td><td>—</td><td></td><td></td><td>{{ w(plan.cash_weight_after) }}</td></tr>
     </tbody>
+    <tfoot>
+      <tr class="cash"><td>Cash</td><td></td><td>{{ money(plan.cash) }}</td><td>{{ w(plan.cash_weight) }}</td><td>—</td><td></td><td></td><td>{{ w(plan.cash_weight_after) }}</td></tr>
+    </tfoot>
   </table>
 
   <h3>Trades ({{ "new cash only" if plan.mode == "new_cash_only" else "sells first, then buys" }})</h3>

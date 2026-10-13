@@ -10,6 +10,7 @@ from sqlalchemy import Engine
 from starlette.testclient import TestClient
 
 from aether.config import load_strategies
+from aether.portfolio import holdings_view
 from aether.portfolio.holdings import (
     HoldingsUpdate,
     PositionIn,
@@ -196,3 +197,85 @@ def test_performance_endpoint_carries_no_position_sizes(
     assert hyp["enough"] and [s["name"] for s in hyp["series"]][1:] == ["QTUM", "QQQ"]
     assert client.get("/api/holdings/performance?range=5y").status_code == 400
     assert client.get("/api/holdings/performance?mode=x").status_code == 400
+
+
+# --------------------------------------------------------------------------- plan sort (#36)
+
+
+def _r(sym: str, weight: object = 0.1, target: object = 0.1, drift: object = 0.0) -> dict:
+    return {"symbol": sym, "weight": weight, "target": target, "drift": drift}
+
+
+def test_plan_sort_orders_ties_and_missing_values() -> None:
+    rows = [
+        _r("BBB", target=0.2, drift=-0.05),
+        _r("AAA", target=0.2, drift=0.03),
+        _r("CCC", target=None, drift=None),
+        _r("DDD", target=0.5, drift=0.01),
+    ]
+
+    def order(sort: str, direction: str) -> list[str]:
+        return [r["symbol"] for r in holdings_view.sort_plan_rows(rows, sort, direction)]
+
+    assert holdings_view.plan_sort(None, None) == ("target", "desc")
+    assert holdings_view.plan_sort("shares", "desc") == ("target", "desc")
+    assert holdings_view.plan_sort("drift", "up") == ("target", "desc")
+    assert order("target", "desc") == ["DDD", "AAA", "BBB", "CCC"]  # ties by symbol, None last
+    assert order("target", "asc") == ["AAA", "BBB", "DDD", "CCC"]
+    # |drift|: the 5-point underweight comes first.
+    assert order("drift", "desc") == ["BBB", "AAA", "DDD", "CCC"]
+    assert order("drift", "asc") == ["DDD", "AAA", "BBB", "CCC"]
+
+
+def _plan_symbols(text: str) -> list[str]:
+    body = text.split('id="plan"', 1)[1]
+    tbody = body.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    return re.findall(r"<tr[^>]*>\s*<td>([A-Z$]+)</td>", tbody)
+
+
+def test_plan_table_sorts_and_keeps_cash_last(rw_engine: Engine, client: TestClient) -> None:
+    days = seed_prices(rw_engine)
+    apply_holdings_update(
+        rw_engine,
+        HoldingsUpdate(
+            positions=(
+                PositionIn(symbol="QTUM", shares=D(100)),
+                PositionIn(symbol="ACME", shares=D(40)),
+                PositionIn(symbol="FAKE", shares=D(40)),
+            ),
+            cash=D(3000),
+        ),
+    )
+    fake_run(rw_engine, days[-1], {"safe": A})
+    run_rebalance(rw_engine, CONFIG, today=date(2026, 9, 1))
+    plan = holdings_view.holdings_page(rw_engine, date(2026, 9, 1)).plan
+    assert plan is not None
+    rows = {r["symbol"]: r for r in plan["rows"]}
+
+    def expect(key: str, direction: str) -> list[str]:
+        val = (lambda s: abs(rows[s][key])) if key == "drift" else (lambda s: rows[s][key])
+        sign = -1 if direction == "desc" else 1
+        return sorted(rows, key=lambda s: (sign * val(s), s))
+
+    page = client.get("/holdings").text
+    assert _plan_symbols(page) == expect("target", "desc")  # default
+    assert (
+        'aria-sort="descending"><a class="sort active" href="?sort=target&amp;dir=asc#plan">'
+        in page
+    )
+    for key in ("weight", "target", "drift"):
+        for direction in ("desc", "asc"):
+            text = client.get(f"/holdings?sort={key}&dir={direction}").text
+            assert _plan_symbols(text) == expect(key, direction), (key, direction)
+            assert text.count("aria-sort=") == 1
+            tbody, rest = text.split('id="plan"', 1)[1].split("</tbody>", 1)
+            assert "<td>Cash</td>" not in tbody and "<tfoot>" in rest.split("</table>")[0]
+            no_inline(text)
+    # Display only: the trade list keeps its order.
+    trades = lambda t: re.findall(r"<li>(Sell|Buy) [\d.]+ ([A-Z]+)", t)  # noqa: E731
+    assert trades(page)  # the fixture's plan has trades (FAKE has a zero target)
+    assert trades(client.get("/holdings?sort=drift&dir=asc").text) == trades(page)
+    # Junk params fall back to the default.
+    assert _plan_symbols(client.get("/holdings?sort=shares&dir=sideways").text) == expect(
+        "target", "desc"
+    )
