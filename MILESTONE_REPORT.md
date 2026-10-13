@@ -1,5 +1,39 @@
 # Milestone report
 
+## Roadmap change: M16 pure-play tilt for Aggressive (2026-10-14, owner-approved, relayed by the portfolio-manager session)
+
+**Why:** in Aether, Aggressive meant "less QTUM", not "more pure-play". The portfolio-manager session's Aggressive target was QTUM 15%, adjacent suppliers 56.6% (KEYS 35% at the cap, PANW 12.5%, FEIM 9.1%) and pure-plays only 28.3%. Two causes:
+- **The risk-based families** (min-variance, inverse-vol) favour the low-volatility, large-cap adjacent names.
+- **Overflow and overlay-freed weight go to any sleeve name,** adjacent included.
+
+The owner wants Aggressive to be **"least QTUM, most pure-play"**.
+
+**M16 (spec §6.5, §6.6.1, §6.10 check 8, §8, §6.9, §11):**
+- **Aggressive buckets:**
+  - adjacent ≤ **20%** total and ≤ **10%** per name
+  - pure-plays ≥ **65%**, each still ≤ 35%
+  - QTUM stays **15%**
+- **Aggressive families:** only `core_equal` and `core_momentum` (no min-var or inv-vol).
+- **Weighting:** each bucket is weighted separately by the chosen family, with floors per bucket.
+- **Redistribution:**
+  - adjacent overflow → pure-plays → QTUM
+  - weight freed from a pure-play → the other pure-plays → QTUM, **never adjacent names**
+- **Visibility:**
+  - a "QTUM / pure-play / adjacent %" split and look-through on Strategies, Holdings and in the review pack
+  - a flag when the post-overlay pure-play share drops below 65%
+- **Safe and Medium are unchanged** (bucket keys `null`; byte-identical targets).
+- **Illustrative result:** Aggressive ≈ QTUM 15 / pure-play 65 / adjacent 20. Look-through pure-play exposure goes from ~29% to ~65%.
+- **$0 LLM; no migration** (checked against `strategy_weights`, `strategy_metrics` and `profile_targets`).
+
+**Spec corrections made along the way:**
+- **§6.5** said cap overflow goes straight to QTUM. The code (`cap_weights`) spreads it over the other sleeve names first. The text now describes the code.
+- **§6.6.1** said freed weight goes to "the other pure-plays". Since M14 it goes to any uncut sleeve name, adjacent included. The text now matches; M16 adds the bucket rule only for Aggressive.
+- **The brief's "2 eligible pure-plays" acceptance case is restated.** Two pure-plays at 35% caps can hold 70%, so the 65% bucket fits and nothing goes to QTUM. The QTUM-remainder case needs **1** eligible pure-play: 35% pure-play + 20% adjacent, 30% to QTUM, and the flag fires.
+
+**Open question (out of scope for M16):** should Medium later get a milder version, e.g. adjacent ≤ 25% total? KEYS is at Medium's 20% cap too. The owner hasn't decided.
+
+**Implementation note:** after deploy, the config-change rerun (#13) recomputes the backtest and republishes targets with trigger `config_change`. **Publish targets now** also works.
+
 ## Fix: faster test suite and coverage gaps (2026-10-14)
 
 ### Built
