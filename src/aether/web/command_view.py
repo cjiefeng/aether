@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine
 
-from aether.db.commands import active_command
+from aether.db.commands import COMMANDS_POLL_SECONDS, active_command
 
 SGT = ZoneInfo("Asia/Singapore")
 
@@ -154,7 +154,9 @@ def status_for(row: Any, now: datetime | None = None) -> CommandStatus:
                 cid,
             )
         return CommandStatus(
-            "queued", f"{label} requested. The worker picks it up within 30 s.", cid
+            "queued",
+            f"{label} requested. The worker picks it up within {COMMANDS_POLL_SECONDS} s.",
+            cid,
         )
     if row.status == "running":
         if age > RUNNING_STALE:

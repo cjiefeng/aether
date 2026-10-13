@@ -20,7 +20,7 @@
 <p class="banner stale"><strong>{{ banner }}</strong> Model strategies, not advice. You place any trades yourself.</p>
 
 {% if h.pending %}
-<p class="banner stale">{{ h.pending }} change(s) waiting for the worker (it checks every 30 s). Reload to see them applied.</p>
+<p class="banner stale">{{ h.pending }} change(s) waiting for the worker (it checks every {{ poll_seconds }} s). Reload to see them applied.</p>
 {% endif %}
 {% if h.rebalance_stale %}
 <p class="banner stale">

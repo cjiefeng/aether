@@ -17,6 +17,11 @@ from aether.db.engine import write_tx
 from aether.db.models import commands
 from aether.db.types import to_iso, utcnow_iso
 
+# How often the worker checks the queue (issue #42: 30 s -> 10 s, so buttons respond faster).
+# The check is one indexed `SELECT ... LIMIT 1`; a `job_runs` row is written only when there's
+# work. Lives here, not in `jobs`, so the dashboard's "picks it up within N s" text can't drift.
+COMMANDS_POLL_SECONDS = 10
+
 # Allow-list of command kinds the dashboard may request. Extended per milestone.
 ALLOWED_KINDS = frozenset(
     {

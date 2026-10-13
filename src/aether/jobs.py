@@ -45,6 +45,7 @@ from aether.config import (
     load_watchlist,
     load_weights,
 )
+from aether.db.commands import COMMANDS_POLL_SECONDS  # issue #42: 10 s
 from aether.db.engine import write_tx
 from aether.db.models import commands, conclusions, job_runs
 from aether.db.types import to_iso, utcnow_iso
@@ -530,10 +531,28 @@ def has_pending_commands(engine: Engine) -> bool:
         )
 
 
+class _SkipBusyCommandsTick(logging.Filter):
+    """Drops APScheduler's "maximum number of running instances reached" warning for the
+    commands poll only. While a long command runs, `max_instances=1` skips every tick (6 a
+    minute at 10 s); that's expected, not a fault. Other jobs' skips still log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "maximum number of running instances" not in str(record.msg):
+            return True
+        job = record.args[0] if isinstance(record.args, tuple) and record.args else None
+        return getattr(job, "id", None) != "process_commands"
+
+
+_SKIP_FILTER = _SkipBusyCommandsTick()
+
+
 def build_scheduler(engine: Engine, settings: Settings) -> Any:
     sched = BlockingScheduler(
         timezone=TZ, job_defaults={"max_instances": 1, "coalesce": True, "misfire_grace_time": 300}
     )
+    aps_log = logging.getLogger("apscheduler.scheduler")
+    if _SKIP_FILTER not in aps_log.filters:
+        aps_log.addFilter(_SKIP_FILTER)
 
     def wrap(name: str, fn: Callable[[], JobResult]) -> Callable[[], None]:
         def _run() -> None:
@@ -995,7 +1014,13 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         id="heartbeat",
         next_run_time=datetime.now(ZoneInfo(TZ)),
     )
-    sched.add_job(commands_tick, "interval", seconds=30, id="process_commands")
+    sched.add_job(
+        commands_tick,
+        "interval",
+        seconds=COMMANDS_POLL_SECONDS,
+        id="process_commands",
+        name="process_commands",
+    )
     # Prices + QTUM holdings: daily 06:30 SGT (spec §9); catch up at startup if >24h stale.
     sched.add_job(
         run_prices,
