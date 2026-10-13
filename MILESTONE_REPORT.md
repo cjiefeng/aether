@@ -1,5 +1,30 @@
 # Milestone report
 
+## Fix: Watchlist weight in QTUM covers every watchlist name (#39) (2026-10-13)
+
+### Built
+- The Overview card now lists every active `pure_play`, `adjacent` and `context` ticker, grouped by type. Within a group, held names come first by weight, then "not held" names A–Z.
+- **Totals:**
+  - Each group has a labelled subtotal.
+  - The headline keeps "Pure-plays combined" and adds "all watchlist names".
+  - The table ends with an all-watchlist total.
+- QTUM (etf) and QQQ/SOXX (benchmarks) are left out.
+- The card is one row per symbol (Symbol, % of QTUM), so it fits at phone width.
+- `market.holdings_view` now takes `(symbol, type)` pairs and returns groups. `market.watch_symbols` picks the types from the active tickers, so the card follows `config/watchlist.yaml`.
+
+### Decisions
+- **`pure` is unchanged** (scope guard): the pure-play basket chart and the theme cross-check (`theme.weight`) still use pure-plays only.
+- **`HoldingsView.combined` now means all listed watchlist names.** This card is its only user.
+
+### Open questions
+- **Deploy check:** the issue notes that the live `tickers` table had no KEYS, FEIM or PANW, which suggests the running stack predates M14. After `./deploy.sh`, the Adjacent group should list all three.
+
+### Owner checklist
+- Run `./deploy.sh`, then check the Overview card. Context names (MSFT, NVDA, AMZN, GOOGL, IBM) and the adjacent names should appear with their weights, and the pure-play subtotal should match the old "combined" figure.
+
+### How to verify
+`make test` (796 passed), `make lint` and `make secrets-scan` are clean. Browser check against a throwaway synthetic DB at 375 px: no page scroll, subtotals aligned, and no console errors.
+
 ## Fix: sortable Rebalance plan (#36) (2026-10-13)
 
 ### Built

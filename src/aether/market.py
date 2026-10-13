@@ -182,15 +182,44 @@ def last_ok_finished(engine: Engine, job: str) -> str | None:
     return ts
 
 
+# Issue #39: the Overview card lists every active watchlist name QTUM can hold, by type. QTUM
+# itself (etf) and the benchmark ETFs are funds, not constituents, so they're left out.
+WATCH_GROUPS: tuple[tuple[str, str], ...] = (
+    ("pure_play", "Pure-plays"),
+    ("adjacent", "Adjacent"),
+    ("context", "Context"),
+)
+
+
+@dataclass(frozen=True)
+class WatchGroup:
+    type: str
+    label: str
+    symbols: tuple[str, ...]  # held names by weight (largest first), then the rest A-Z
+    subtotal: float  # % of QTUM held by this group's names
+
+
 @dataclass(frozen=True)
 class HoldingsView:
     snapshot_date: str | None
     weights: dict[str, float]  # watchlist symbol -> % of QTUM
-    combined: float | None
+    combined: float | None  # all listed watchlist names
     stale: bool
+    groups: tuple[WatchGroup, ...] = ()
+
+    def subtotal(self, ticker_type: str) -> float | None:
+        return next((g.subtotal for g in self.groups if g.type == ticker_type), None)
 
 
-def holdings_view(engine: Engine, watch: Sequence[str], today: date) -> HoldingsView:
+def watch_symbols(ticker_types: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """(symbol, type) for the names the card lists: every given ticker of a `WATCH_GROUPS` type."""
+    wanted = {t for t, _ in WATCH_GROUPS}
+    return [(s, t) for s, t in ticker_types if t in wanted]
+
+
+def holdings_view(engine: Engine, watch: Sequence[tuple[str, str]], today: date) -> HoldingsView:
+    """QTUM's latest snapshot weights for `watch` ((symbol, type) pairs), grouped by type."""
+    symbols = [s for s, _ in watch]
     with engine.connect() as conn:
         snap: str | None = conn.execute(select(func.max(qtum_holdings.c.snapshot_date))).scalar()
         if snap is None:
@@ -198,13 +227,22 @@ def holdings_view(engine: Engine, watch: Sequence[str], today: date) -> Holdings
         rows = conn.execute(
             select(qtum_holdings.c.holding_symbol, qtum_holdings.c.weight).where(
                 qtum_holdings.c.snapshot_date == snap,
-                qtum_holdings.c.holding_symbol.in_(list(watch)),
+                qtum_holdings.c.holding_symbol.in_(symbols),
             )
         ).all()
     weights = {s: w for s, w in rows}
+    groups = []
+    for ticker_type, label in WATCH_GROUPS:
+        members = [s for s, t in watch if t == ticker_type]
+        if not members:
+            continue
+        held = sorted((s for s in members if s in weights), key=lambda s: (-weights[s], s))
+        rest = sorted(s for s in members if s not in weights)
+        subtotal = round(sum(weights[s] for s in held), 2)
+        groups.append(WatchGroup(ticker_type, label, (*held, *rest), subtotal))
     # The issuer may date a snapshot ahead (next session), so only lateness counts as stale.
     stale = (today - date.fromisoformat(snap)).days > HOLDINGS_MAX_LAG_DAYS
-    return HoldingsView(snap, weights, round(sum(weights.values()), 2), stale)
+    return HoldingsView(snap, weights, round(sum(weights.values()), 2), stale, tuple(groups))
 
 
 @dataclass(frozen=True)
