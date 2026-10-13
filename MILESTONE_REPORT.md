@@ -29,6 +29,13 @@
 
 **Trade-off:** news found only by web search can arrive up to a week late. SEC filings (every 30 min) and RSS (hourly) stay real-time and free.
 
+**Added (owner, 2026-10-13): LLM expense log and export.**
+- **Every LLM call is logged, now and in future,** including errors, refusals, budget refusals, batch submissions and each batch result, and evals and dev scripts.
+- **Each row records:** tokens by component, searches, cost, the price-table version and context.
+- **The log is never pruned.**
+- **The owner exports it** as CSV/JSON from the Ops page or with `make llm-log FROM= TO=`. It's metadata only (no prompts, holdings or secrets) with a daily summary, so it can be shared for analysis and matched to the Console by request ID.
+- **This is now a CLAUDE.md hard rule.**
+
 **Owner checklist**
 - [ ] Check the Console spend by API key (see above).
 - [ ] Set `DAILY_LLM_BUDGET_USD` in `.env` (e.g. 2.00) as Aether's own ceiling.
