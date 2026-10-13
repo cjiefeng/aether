@@ -450,7 +450,7 @@ def test_budget_cap_fails_the_run_and_sends_nothing(rw_engine: Engine, migrated_
     with rw_engine.connect() as conn:
         review = conn.execute(select(universe_reviews)).one()
         refused = conn.execute(
-            select(llm_calls).where(llm_calls.c.status == "budget_refused")
+            select(llm_calls).where(llm_calls.c.status == "refused_budget")
         ).all()
         assert conn.execute(select(alerts)).all() == []
         assert conn.execute(select(universe_candidates)).all() == []

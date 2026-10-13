@@ -129,6 +129,7 @@ def _call(deps: SynthDeps, ctx: Context) -> tuple[Validated | None, Decimal, int
                 max_tokens=deps.llm_cfg.synthesis.max_tokens,
                 effort=deps.llm_cfg.synthesis.effort,
                 output_format=prompt.output_format(ctx.kind),
+                context={"symbol": ctx.symbol, "kind": ctx.kind},
             )
         except BudgetExceeded:
             raise

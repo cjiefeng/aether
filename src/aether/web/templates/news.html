@@ -3,6 +3,7 @@
 {% block content %}
 <h1>News &amp; research</h1>
 {% if stale %}<p class="banner stale">{{ stale }}</p>{% endif %}
+{% if sweep_stale %}<p class="banner stale">{{ sweep_stale }} It runs Sundays at 07:00 SGT; <strong>Run research sweep now</strong> starts one.</p>{% endif %}
 <p class="muted small">Company releases and industry press from RSS, and reports found by Claude web-search research runs.
   Everything here is <strong>untrusted</strong> data; the classifier labels each item SIGNAL, NOISE or RISK (details and filters on the
   <a href="/feed">Feed</a>). Syndicated copies (press-release
@@ -80,6 +81,6 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<p class="muted">No research sweeps yet (twice a day at 08:00 and 20:00 SGT when an API key is set).</p>{% endif %}
+  {% else %}<p class="muted">No research sweeps yet (weekly, Sundays at 07:00 SGT, when an API key is set).</p>{% endif %}
 </section>
 {% endblock %}

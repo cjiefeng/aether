@@ -152,6 +152,7 @@ def _call(
     prompt: str,
     max_uses: int,
     budget: RunBudget,
+    symbol: str | None = None,
 ) -> dict[str, Any]:
     return llm.complete(
         purpose=PURPOSE,
@@ -162,6 +163,7 @@ def _call(
         tools=[web_search_tool(max_uses, sources.allowed_domains())],
         effort=cfg.research_effort,
         run_budget=budget,
+        context={"symbol": symbol} if symbol else None,
     )
 
 
@@ -187,6 +189,7 @@ def dossier(
         dossier_prompt(name, symbol, start, end),
         cfg.research_max_uses,
         budget,
+        symbol,
     )
     return to_evidence(msg, symbol, start, end, now, sources, cfg.max_evidence_per_candidate)
 
@@ -256,6 +259,7 @@ def adjacent_dossier(
         adjacent_dossier_prompt(name, symbol, sector, start, end),
         cfg.research_max_uses,
         budget,
+        symbol,
     )
     return to_evidence(msg, symbol, start, end, now, sources, cfg.max_evidence_per_candidate)
 

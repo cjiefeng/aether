@@ -1026,6 +1026,10 @@ class ResearchParams(_Strict):
     # Worst-case input-token allowance per search for the budget estimate (results are input).
     est_input_tokens_per_search: int = Field(ge=0)
     est_base_input_tokens: int = Field(ge=0)
+    # M15: mark the static system prefix for caching on web-search calls. With a marker, the API
+    # also inserts its own cache writes after each search result (read back by later search rounds
+    # in the same call); without one, nothing is cached.
+    cache_prefix: bool = True
 
 
 class ClassifyParams(_Strict):
@@ -1078,6 +1082,8 @@ class LlmConfig(_Strict):
     escalation parameters.
     Numbers and identifiers only."""
 
+    # M15: the date the price table was checked; stored on every llm_calls row and in exports.
+    price_version: Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
     prices: dict[Annotated[str, Field(pattern=r"^claude-[a-z0-9\-]+$")], ModelPrice]
     web_search_per_1k: Usd
     batch_discount: Annotated[Decimal, Field(gt=0, le=1)]  # batch tokens cost this fraction

@@ -34,7 +34,7 @@
 {% if fresh.stale %}
 <p class="banner stale">
   {% if fresh.last_ok %}Backtests stale since {{ fresh.last_ok }} (last successful run).
-  {% else %}No successful backtest run yet. Results appear after the worker's first daily run (07:10 SGT) once prices are in.{% endif %}
+  {% else %}No successful backtest run yet. Results appear after the worker's first weekly run (Sunday 07:10 SGT, or shortly after the worker starts) once prices are in.{% endif %}
 </p>
 {% endif %}
 

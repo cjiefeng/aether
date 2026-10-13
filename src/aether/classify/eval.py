@@ -40,7 +40,8 @@ from aether.classify.rules import classify_news
 from aether.config import CATEGORY_CLASS, get_settings, load_llm_config
 from aether.db.models import llm_calls
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
-from aether.llm.client import LlmClient, LlmError
+from aether.llm.client import DEV_LOG_PATH, EVAL_PURPOSE, LlmClient, LlmError
+from aether.ops.llm_log import append_dev_log
 
 GOLDEN_PATH = Path("evals/classifier_golden.jsonl")
 RESULTS_DIR = Path("evals/results")
@@ -151,13 +152,14 @@ def predict(
     for _ in range(attempts):
         try:
             msg = llm.complete(
-                purpose="classify_eval",
+                purpose=EVAL_PURPOSE,
                 model=ctx.model,
                 system=system,
                 messages=messages(ev),
                 max_tokens=ctx.params.max_tokens,
                 effort=ctx.params.effort,
                 output_format=output_format(),
+                context={"kind": "classify_eval"},
             )
             c = parse_and_validate(msg, ev, ctx.rubric)
         except (InvalidOutput, LlmError) as exc:
@@ -399,7 +401,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             load_llm_config(settings.config_dir),
         )
         result = run_eval(llm, engine, ctx, rows)
+        # The temp DB goes away: keep its llm_calls rows in the dev log (spec §10, M15).
+        logged = append_dev_log(engine, Path(DEV_LOG_PATH))
         engine.dispose()
+    print(f"{logged} LLM calls appended to {DEV_LOG_PATH}")
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / f"{result['prompt_version']}.json"
     path.write_text(json.dumps(result, indent=1, sort_keys=True) + "\n", "utf-8")

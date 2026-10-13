@@ -185,7 +185,8 @@ def test_scheduler_registers_portfolio_job(rw_engine: Engine, migrated_db: Path)
     job_ = sched.get_job("portfolio")
     assert job_ is not None
     fields = {f.name: str(f) for f in job_.trigger.fields}
-    assert (fields["hour"], fields["minute"]) == ("7", "10")  # 07:10 SGT, after prices
+    # Weekly, Sunday 07:10 SGT after prices (M15; daily before).
+    assert (fields["day_of_week"], fields["hour"], fields["minute"]) == ("sun", "7", "10")
     assert str(job_.trigger.timezone) == "Asia/Singapore"
 
 

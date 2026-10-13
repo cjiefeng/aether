@@ -2,6 +2,7 @@
 # keys). Prices: USD per million tokens, Anthropic first-party list prices checked 2026-10-05
 # (claude-api reference, cached 2026-09-25); web search $10 per 1,000 searches (web-search tool docs).
 # A model missing here is refused by the LLM wrapper: its cost couldn't be computed.
+price_version: "2026-10-05"     # bump whenever the prices below are re-checked
 prices:
   claude-opus-5-5:   {input: "4.00", output: "20.00", cache_write: "5.00",  cache_read: "0.20"}
   claude-opus-5:     {input: "5.00", output: "25.00", cache_write: "6.25",  cache_read: "0.50"}
@@ -17,12 +18,13 @@ chars_per_token: 3             # conservative input estimate for the budget guar
 research:
   max_tokens: 4000
   effort: low                  # Opus 5.5 thinking can't be disabled; effort is the control
-  sweep_max_uses: 5
-  sweep_days: 3                # each sweep looks back this many days
+  sweep_max_uses: 3            # M15: was 5; weekly sweeps (A/B calls used 2)
+  sweep_days: 7                # each sweep looks back this many days
   backfill_max_uses: 5
   backfill_months: 12
   est_input_tokens_per_search: 6000
   est_base_input_tokens: 3000
+  cache_prefix: false          # M15 A/B 2026-10-13: the marker cost more on web-search calls (README)
 
 # Classifier (M7). No tools, ever (S1). Structured JSON output; effort low (Sonnet 5.5 thinking
 # stays on adaptively). A backlog larger than batch_threshold goes to one Message Batch (50%),

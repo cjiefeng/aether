@@ -12,13 +12,19 @@ from typing import Any
 from sqlalchemy import Engine, func, select
 
 from aether.alerts.candidates import FailingJob, failing_jobs
+from aether.config import LlmConfig
 from aether.db.models import alerts, escalations, eval_runs, events, job_runs, llm_calls
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
 from aether.escalate.spend import escalation_spent_since
-from aether.llm.pricing import sgt_day_start
+from aether.llm.pricing import SGT, sgt_day_start
+from aether.ops import llm_log
 from aether.ops.backup import NAME_RE
 
 SPEND_DAYS = 30
+# Spec §10 (M15): normal running after M8-M15, USD per day.
+SPEND_TARGET_USD = (Decimal("0.60"), Decimal("0.90"))
+LOG_LIMIT = 100
+STATUSES = ("ok", "error", "refusal", "refused_budget", "batch_submitted", "batch_result")
 
 
 @dataclass(frozen=True)
@@ -100,7 +106,7 @@ def spend_by_purpose(engine: Engine, now: datetime | None = None) -> list[Purpos
         rows = conn.execute(
             select(
                 llm_calls.c.purpose,
-                func.count().filter(llm_calls.c.status == "ok"),
+                func.count().filter(llm_calls.c.status.in_(("ok", "refusal"))),
                 micros_sum(llm_calls.c.cost_micros),
             )
             .where(llm_calls.c.created_at >= since)
@@ -237,3 +243,84 @@ def backups(engine: Engine, backup_dir: Path, now: datetime | None = None) -> Ba
         drill_at=drill.started_at if drill else None,
         drill_note=(drill.error or drill.provider) if drill else None,
     )
+
+
+# --------------------------------------------------------------------------- M15 expense log
+
+
+@dataclass(frozen=True)
+class ComponentSpend:
+    """Last SPEND_DAYS days by purpose and cost component (spec §10), plus the TOTAL row."""
+
+    rows: list[llm_log.SummaryRow]
+    total: llm_log.SummaryRow | None
+    per_day: Decimal
+    target: tuple[Decimal, Decimal]
+    price_version: str
+
+    @property
+    def on_target(self) -> bool:
+        return self.per_day <= self.target[1]
+
+
+def component_spend(engine: Engine, cfg: LlmConfig, now: datetime | None = None) -> ComponentSpend:
+    today = (now or datetime.now(UTC)).astimezone(SGT).date()
+    data = llm_log.rows(engine, today - timedelta(days=SPEND_DAYS - 1), today)
+    rows = llm_log.purpose_summary(data, cfg, label=f"last {SPEND_DAYS} days")
+    total = rows.pop() if rows else None  # the TOTAL row comes last
+    per_day = (total.cost / SPEND_DAYS).quantize(Decimal("0.01")) if total else Decimal(0)
+    return ComponentSpend(rows, total, per_day, SPEND_TARGET_USD, cfg.price_version)
+
+
+@dataclass(frozen=True)
+class LogFilters:
+    d_from: str
+    d_to: str
+    purpose: str = ""
+    model: str = ""
+    status: str = ""
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ExpenseLog:
+    filters: LogFilters
+    rows: list[dict[str, Any]]
+    total: int  # rows matching the filters (only the latest LOG_LIMIT are shown)
+    purposes: list[str]
+    models: list[str]
+    statuses: tuple[str, ...] = STATUSES
+
+
+def expense_log(
+    engine: Engine,
+    *,
+    d_from: str | None,
+    d_to: str | None,
+    purpose: str | None,
+    model: str | None,
+    status: str | None,
+    now: datetime | None = None,
+) -> ExpenseLog:
+    today = (now or datetime.now(UTC)).astimezone(SGT).date()
+    error = None
+    try:
+        lo, hi = llm_log.parse_range(d_from or None, d_to or None, today)
+    except llm_log.RangeError as exc:
+        error = str(exc)
+        lo, hi = llm_log.parse_range(None, None, today)
+    data = llm_log.rows(engine, lo, hi)
+    purposes = sorted({str(r["purpose"]) for r in data})
+    models = sorted({str(r["model"]) for r in data})
+    keep = [
+        r
+        for r in data
+        if (not purpose or r["purpose"] == purpose)
+        and (not model or r["model"] == model)
+        and (not status or r["status"] == status)
+    ]
+    shown = [
+        {**r, "context": json.loads(r["context"] or "{}")} for r in reversed(keep[-LOG_LIMIT:])
+    ]
+    f = LogFilters(lo.isoformat(), hi.isoformat(), purpose or "", model or "", status or "", error)
+    return ExpenseLog(f, shown, len(keep), purposes, models)

@@ -22,7 +22,7 @@ from aether.db.models import (
 )
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
 from aether.llm.pricing import OWN_BUDGET_PURPOSES, sgt_day_start
-from aether.market import last_ok_finished
+from aether.market import WEEKLY_JOB_MAX_AGE, job_stale, last_ok_finished
 
 NEWS_ORIGINS = ("rss", "web_search")
 ORIGIN_LABELS = {"rss": "RSS", "web_search": "Research"}
@@ -145,8 +145,8 @@ def llm_spend(engine: Engine, budget: Decimal, now: datetime | None = None) -> S
         today, calls, refused = conn.execute(
             select(
                 micros_sum(llm_calls.c.cost_micros),
-                func.count().filter(llm_calls.c.status == "ok"),
-                func.count().filter(llm_calls.c.status == "budget_refused"),
+                func.count().filter(llm_calls.c.status.in_(("ok", "refusal"))),
+                func.count().filter(llm_calls.c.status == "refused_budget"),
             ).where(
                 llm_calls.c.created_at >= since,
                 llm_calls.c.batch == 0,
@@ -241,6 +241,16 @@ def feeds(engine: Engine) -> list[dict[str, object]]:
     with engine.connect() as conn:
         rows = conn.execute(select(feed_state).order_by(feed_state.c.feed_id)).all()
     return [dict(r._mapping) for r in rows]
+
+
+def sweep_stale(engine: Engine, now: datetime | None = None) -> str | None:
+    """M15: the weekly research sweep is stale after 8 days (only once a sweep has run)."""
+    last = last_ok_finished(engine, "research_sweep")
+    if last is None:
+        return None
+    if job_stale(last, now or datetime.now(UTC), WEEKLY_JOB_MAX_AGE):
+        return f"Weekly research sweep stale since {last}."
+    return None
 
 
 def rss_stale(engine: Engine, now: datetime | None = None) -> str | None:

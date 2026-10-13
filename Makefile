@@ -10,7 +10,8 @@ PIP_AUDIT := pip-audit==2.9.0
 
 .PHONY: help down logs ps dev-image lock test lint fmt typecheck eval migrate backup \
         secrets-scan smoke facts hooks record-cassette hash-password record-options \
-        golden-candidates record-short-interest init restore restore-drill
+        golden-candidates record-short-interest init restore restore-drill \
+        llm-log sweep-ab
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1 | sort | xargs
@@ -43,6 +44,15 @@ restore:
 	$(DC) stop app worker
 	$(DC) run --rm --no-deps -T worker python -m aether.ops.restore restore "$(BACKUP)" --stack-stopped
 	@echo "Restored. Start the stack again with ./deploy.sh"
+
+# M15: export the LLM expense log (metadata only) from the live DB, read-only:
+# make llm-log FROM=2026-10-01 TO=2026-10-31  ->  exports/llm-log-<from>-<to>.csv
+llm-log:
+	@test -n "$(FROM)" -a -n "$(TO)" || { echo "usage: make llm-log FROM=YYYY-MM-DD TO=YYYY-MM-DD"; exit 2; }
+	@mkdir -p exports
+	$(DC) exec -T worker python -m aether.ops.llm_log --from "$(FROM)" --to "$(TO)" \
+	  > "exports/llm-log-$(FROM)-$(TO).csv" || { rm -f "exports/llm-log-$(FROM)-$(TO).csv"; exit 1; }
+	@echo "Written: exports/llm-log-$(FROM)-$(TO).csv"
 
 smoke:
 	curl -fsS http://localhost:8080/healthz && echo
@@ -84,6 +94,15 @@ eval:
 	$(DEV) sh -c 'export ANTHROPIC_API_KEY="$$(sed -n "s/^ANTHROPIC_API_KEY=//p" .env 2>/dev/null)"; \
 	  export CLASSIFIER_MODEL="$$(sed -n "s/^CLASSIFIER_MODEL=//p" .env 2>/dev/null)"; \
 	  $(UV) python -m aether.classify.eval $(EVAL_ARGS)'
+
+# M15 cache A/B for the research sweep (costs real money, ~$0.6; never part of `make test`):
+# make sweep-ab SYMBOL=ACME. Rows go to exports/llm-dev-log.csv.
+sweep-ab:
+	@test -n "$(SYMBOL)" || { echo "usage: make sweep-ab SYMBOL=<watchlist ticker>"; exit 2; }
+	$(DEV) sh -c 'export ANTHROPIC_API_KEY="$$(sed -n "s/^ANTHROPIC_API_KEY=//p" .env 2>/dev/null)"; \
+	  export RESEARCH_MODEL="$$(sed -n "s/^RESEARCH_MODEL=//p" .env 2>/dev/null)"; \
+	  [ -n "$$RESEARCH_MODEL" ] || unset RESEARCH_MODEL; \
+	  $(UV) python scripts/sweep_ab.py "$(SYMBOL)"'
 
 # Export real ingested events from a DB as golden-set candidates (read-only):
 # make golden-candidates DB=data/scratch.db

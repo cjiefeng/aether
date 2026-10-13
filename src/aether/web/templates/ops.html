@@ -79,6 +79,82 @@
 </div>
 
 <section class="card">
+  <h2>LLM spend by cost component</h2>
+  <p>Last {{ spend_days }} days: <strong>${{ "%.2f"|format(components.total.cost if components.total else 0) }}</strong>,
+    <strong>${{ "%.2f"|format(components.per_day) }}/day</strong> against the
+    ${{ "%.2f"|format(components.target[0]) }}–{{ "%.2f"|format(components.target[1]) }}/day target
+    {% if components.total %}{% if components.on_target %}<span class="ok">(within)</span>{% else %}<span class="warn">(over)</span>{% endif %}{% endif %}.</p>
+  {% if components.rows %}
+
+  <table class="small">
+    <thead><tr><th>Purpose</th><th class="num">Calls</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache write</th><th class="num">Cache read</th><th class="num">Searches</th><th class="num">Batch discount</th><th class="num">Other</th><th class="num">Total</th></tr></thead>
+    <tbody>
+    {% for r in components.rows + [components.total] %}
+      <tr{% if loop.last %} class="total"{% endif %}>
+        <td>{{ r.purpose }}</td><td class="num">{{ r.calls }}</td>
+        {% for k in ("input", "output", "cache_write", "cache_read", "searches", "batch_discount", "other") %}
+        <td class="num">${{ "%.2f"|format(r.parts[k]) }}</td>
+        {% endfor %}
+        <td class="num"><strong>${{ "%.2f"|format(r.cost) }}</strong></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% endif %}
+  <p class="muted small">Components at the price table checked {{ components.price_version }} (<code>config/llm.yaml</code>); "other" is what that table doesn't explain (e.g. a refusal fallback billed on another model). The Console bills at actual rates.</p>
+</section>
+
+<section class="card" id="llm-log">
+  <h2>LLM expense log</h2>
+  <form class="form-row" method="get" action="/ops#llm-log">
+    <label>From <input type="date" name="from" value="{{ log.filters.d_from }}"></label>
+    <label>To <input type="date" name="to" value="{{ log.filters.d_to }}"></label>
+    <label>Purpose <select name="purpose"><option value="">all</option>{% for p in log.purposes %}<option value="{{ p }}"{% if p == log.filters.purpose %} selected{% endif %}>{{ p }}</option>{% endfor %}</select></label>
+    <label>Model <select name="model"><option value="">all</option>{% for m in log.models %}<option value="{{ m }}"{% if m == log.filters.model %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Status <select name="status"><option value="">all</option>{% for st in log.statuses %}<option value="{{ st }}"{% if st == log.filters.status %} selected{% endif %}>{{ st }}</option>{% endfor %}</select></label>
+    <button type="submit">Filter</button>
+  </form>
+  {% if log.filters.error %}<p class="warn small">{{ log.filters.error }}; showing the last {{ spend_days }} days.</p>{% endif %}
+  <p class="small">
+    <a href="/ops/llm-log.csv?from={{ log.filters.d_from }}&amp;to={{ log.filters.d_to }}">Export CSV</a> ·
+    <a href="/ops/llm-log.json?from={{ log.filters.d_from }}&amp;to={{ log.filters.d_to }}">Export JSON</a>
+    <span class="muted">({{ log.filters.d_from }} to {{ log.filters.d_to }}, every call plus a daily summary by purpose and component; metadata only: no prompts, responses, holdings or keys. Also <code>make llm-log FROM= TO=</code>.)</span></p>
+  {% if log.rows %}
+  <p class="muted small">{{ log.total }} matching call{{ "" if log.total == 1 else "s" }}{% if log.total > log.rows|length %}; the latest {{ log.rows|length }} shown{% endif %}.</p>
+
+  <table class="small">
+    <thead><tr><th>When (UTC)</th><th>Purpose</th><th>Model</th><th>Status</th><th>Effort</th><th>Stop</th><th class="num">Tries</th><th class="num">ms</th><th class="num">In</th><th class="num">Out</th><th class="num">Cache w</th><th class="num">Cache r</th><th class="num">Search</th><th class="num">Cost</th><th>Context</th><th>Request</th></tr></thead>
+    <tbody>
+    {% for r in log.rows %}
+      <tr>
+        <td class="nowrap">{{ r.created_at[:16]|replace("T", " ") }}</td>
+        <td>{{ r.purpose }}{% if r.batch %} <span class="muted">(batch)</span>{% endif %}</td>
+        <td class="nowrap">{{ r.model }}</td>
+        <td class="{{ 'ok' if r.status in ('ok', 'batch_result') else ('bad' if r.status in ('error', 'refusal') else ('warn' if r.status == 'refused_budget' else '')) }}">{{ r.status }}</td>
+        <td>{{ r.effort or "—" }}</td>
+        <td>{{ r.stop_reason or "—" }}</td>
+        <td class="num">{{ r.attempts }}</td>
+        <td class="num">{{ r.latency_ms if r.latency_ms is not none else "—" }}</td>
+        <td class="num">{{ r.input_tokens }}</td>
+        <td class="num">{{ r.output_tokens }}</td>
+        <td class="num">{{ r.cache_write_tokens }}</td>
+        <td class="num">{{ r.cache_read_tokens }}</td>
+        <td class="num">{{ r.web_searches }}</td>
+        <td class="num">${{ "%.4f"|format(r.cost_usd) }}</td>
+        <td class="small">{% for k, v in r.context|dictsort %}{{ k }}={{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+        <td class="small"><code>{{ r.request_id or "" }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% else %}
+  <p class="muted">No LLM calls match.</p>
+  {% endif %}
+</section>
+
+<section class="card">
   <h2>Jobs</h2>
   {% if failing %}
   <h3>Failing for more than {{ failing_hours }}h</h3>

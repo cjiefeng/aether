@@ -457,6 +457,12 @@ CLASSIFY_MINUTES = 10
 BACKFILL_POLL_MINUTES = 15
 BACKFILL_SUBMIT_DELAY = timedelta(minutes=2)
 CATCH_UP_AFTER = timedelta(hours=24)
+# M15 (spec §9): weekly jobs catch up at startup only when their last ok run is older than this,
+# so a restart never triggers a paid sweep.
+WEEKLY_CATCH_UP_AFTER = timedelta(days=8)
+# Sunday ordering: conclusions wait (up to this long) for the sweep's items to be classified.
+CONCLUSIONS_WAIT = timedelta(minutes=60)
+CONCLUSIONS_POLL_S = 60.0
 PORTFOLIO_CATCH_UP_DELAY = timedelta(minutes=5)
 # M9 scores catch up after prices, EDGAR and the classifier have had a first pass.
 SCORES_CATCH_UP_DELAY = timedelta(minutes=8)
@@ -467,12 +473,17 @@ SYNTH_CATCH_UP_AFTER = timedelta(days=8)
 SYNTH_CATCH_UP_DELAY = timedelta(minutes=15)
 
 
-def _catch_up(engine: Engine, job: str, delay: timedelta = timedelta(0)) -> dict[str, Any]:
-    """Extra `add_job` kwargs: run now (+ `delay`) if the last ok run is older than a day.
-    Otherwise none, and the cron trigger decides. (APScheduler 3: `next_run_time=None` would
-    mean *paused*.)"""
+def _catch_up(
+    engine: Engine,
+    job: str,
+    delay: timedelta = timedelta(0),
+    after: timedelta = CATCH_UP_AFTER,
+) -> dict[str, Any]:
+    """Extra `add_job` kwargs: run now (+ `delay`) if the last ok run is older than `after` (a day;
+    8 days for weekly jobs). Otherwise none, and the cron trigger decides. (APScheduler 3:
+    `next_run_time=None` would mean *paused*.)"""
     last = last_ok_finished(engine, job)
-    if last is None or datetime.now(UTC) - datetime.fromisoformat(last) > CATCH_UP_AFTER:
+    if last is None or datetime.now(UTC) - datetime.fromisoformat(last) > after:
         return {"next_run_time": datetime.now(ZoneInfo(TZ)) + delay}
     return {}
 
@@ -483,7 +494,24 @@ def strategies_catch_up(engine: Engine, settings: Settings) -> dict[str, Any]:
     republishes the targets with trigger `config_change`."""
     if config_changed(engine, load_strategies(settings.config_dir)):
         return {"next_run_time": datetime.now(ZoneInfo(TZ)) + PORTFOLIO_CATCH_UP_DELAY}
-    return _catch_up(engine, "strategies", PORTFOLIO_CATCH_UP_DELAY)
+    return _catch_up(engine, "strategies", PORTFOLIO_CATCH_UP_DELAY, WEEKLY_CATCH_UP_AFTER)
+
+
+def wait_for_classification(
+    engine: Engine,
+    timeout: timedelta = CONCLUSIONS_WAIT,
+    poll_s: float = CONCLUSIONS_POLL_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Block until nothing waits for the classifier (incl. open batches) or `timeout` passes.
+    True when classification finished (spec §9 Sunday ordering, M15)."""
+    deadline = clock() + timeout.total_seconds()
+    while has_classifier_work(engine) or has_classifier_work(engine, batches_only=True):
+        if clock() >= deadline:
+            return False
+        sleep(poll_s)
+    return True
 
 
 def short_interest_job(engine: Engine, settings: Settings) -> JobResult:
@@ -550,7 +578,9 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         run_catalysts()
         return {"ok": result is not None, "rows": result.rows_written if result else 0}
 
-    # Dividends then backtests (M4), daily 07:10 SGT after prices. The command shares the lock.
+    # Dividends then backtests (M4), weekly Sunday 07:10 SGT from M15 (daily before), and after
+    # every holdings / settings / Tiger change, publish and strategies.yaml change. The command
+    # shares the lock.
     dividend_provider = make_dividend_provider(settings)
     portfolio_lock = threading.Lock()
 
@@ -787,6 +817,13 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     def run_conclusions_job() -> None:
         if llm is None:
             return  # disabled: logged once at startup
+        # Sunday ordering (M15): sweep 07:00 → classification → conclusions; never run on
+        # half-classified evidence unless the classifier is still busy after an hour.
+        if not wait_for_classification(engine):
+            log.warning(
+                "conclusions: classification still running after %s; running anyway",
+                CONCLUSIONS_WAIT,
+            )
         with synth_lock:
             run_job(engine, "conclusions", lambda: conclusions_job(engine, settings, llm))
 
@@ -1012,6 +1049,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     sched.add_job(
         run_portfolio,
         "cron",
+        day_of_week="sun",
         hour=7,
         minute=10,
         id="portfolio",
@@ -1212,7 +1250,21 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
     )
     sched.add_job(run_classifier, "interval", minutes=CLASSIFY_MINUTES, id="classify")
     sched.add_job(run_escalations_job, "interval", minutes=ESCALATION_MINUTES, id="escalations")
-    sched.add_job(run_research_sweep, "cron", hour="8,20", minute=0, id="research_sweep")
+    # Weekly research sweep (M15): Sunday 07:00 SGT with a 7-day lookback; startup catch-up only
+    # after 8 days, so restarts never trigger a paid sweep.
+    sched.add_job(
+        run_research_sweep,
+        "cron",
+        day_of_week="sun",
+        hour=7,
+        minute=0,
+        id="research_sweep",
+        **(
+            _catch_up(engine, "research_sweep", BACKFILL_SUBMIT_DELAY, WEEKLY_CATCH_UP_AFTER)
+            if llm is not None
+            else {}
+        ),
+    )
     sched.add_job(
         run_backfill_submit,
         "date",

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Engine, select
 
 from aether.config import PROFILES
 from aether.db.models import strategy_curves, strategy_metrics, strategy_runs, strategy_weights
-from aether.market import job_stale, last_ok_finished
+from aether.market import WEEKLY_JOB_MAX_AGE, job_stale, last_ok_finished
 
-STRATEGIES_JOB_MAX_AGE = timedelta(hours=30)
+STRATEGIES_JOB_MAX_AGE = WEEKLY_JOB_MAX_AGE  # weekly from M15 (spec §9)
 BANNER = "Backtest for reference only. Historical returns are not future gains."
 FAMILY_LABELS = {
     "core_equal": "QTUM core + equal-weight sleeve",
