@@ -68,8 +68,9 @@ dev-image:
 lock:
 	$(DEV) uv lock
 
+# Extra pytest arguments: make test ARGS="-k holdings" (or ARGS=--lf).
 test:
-	$(DEV) $(UV) pytest
+	$(DEV) $(UV) pytest $(ARGS)
 
 fmt:
 	$(DEV) sh -c '$(UV) ruff format . && $(UV) ruff check --fix .'

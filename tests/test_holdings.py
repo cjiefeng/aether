@@ -217,7 +217,8 @@ def test_worker_handlers_apply_update_and_replan(
         headers=csrf(client),
     )
     assert r.status_code == 202
-    sched.get_job("process_commands").func()
+    job = sched.get_job("process_commands")
+    job.func(**job.kwargs)
     with rw_engine.connect() as conn:
         cmd = conn.execute(select(commands.c.status, commands.c.result)).one()
         plan = conn.execute(select(rebalance_plans.c.plan)).scalar_one()

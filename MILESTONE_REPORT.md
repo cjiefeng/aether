@@ -1,5 +1,32 @@
 # Milestone report
 
+## Fix: faster test suite and coverage gaps (2026-10-14)
+
+### Built
+- **Faster tests:** `tests/conftest.py` migrates one template DB per session (`migrated_template`) and gives each test a byte copy, instead of running all 16 migrations per test (~0.5 s of setup each). The suite drops from **314 s to 46 s** locally, and the CI test job (353 s on the last run) should drop to about a minute. Every test still gets its own fresh file, with WAL and owner-only (0600) permissions. Migration tests still migrate their own DBs.
+- **`make test ARGS=…`** passes extra arguments to pytest (`-k holdings`, `--lf`, a file path).
+- **New tests (31):**
+  - `test_healthcheck.py`: the worker check fails with no DB, no heartbeat, a stale, failed or running heartbeat, or a schema behind head, and passes on a recent heartbeat. The app check follows `/healthz` (200 → 0, 503 → 1). Usage errors return 2. The module had no tests, and it's what `./deploy.sh` waits on.
+  - `test_worker_commands.py`: every `ALLOWED_KINDS` command has a handler in the real `build_scheduler` wiring and vice versa. A second `recompute_strategies` or `refresh_prices` while one is running returns `busy` straight away.
+  - `test_engine_pragmas.py`: `write_tx` retries `SQLITE_BUSY` with backoff, gives up after `attempts`, doesn't retry other errors, and rolls back when the body raises.
+  - `test_web_command_status.py`: every command kind has its own label and completion message.
+  - `test_config_and_facts.py`: removed facts are deleted on sync (see below).
+
+### Fixes
+- **`sync_facts` now deletes facts removed from `facts.yaml`.** Before, it only upserted, so removed or renamed facts stayed on `/facts` and in the `facts` table that alerts and catalysts read. A removed fact that a stored catalyst still cites is kept, because of the foreign key, so worker startup can't fail. It goes on a later sync once nothing cites it.
+- **Removed dead code:** `universe/slots.py` `gate_removal`, `count_evidence` and `previous_review_date` had no callers. Removals are gated in `universe/gates.py`, and evidence is counted in `universe/run.py` and `universe/adjacent.py`, all covered by existing tests.
+
+### Decisions
+- **`process_commands` gets its handlers as a job argument** (`kwargs={"handlers": …}`) instead of a closure, so tests check the exact map the worker uses. Tests that call the job directly pass `**job.kwargs`.
+- **No `pytest-xdist`:** measured at 39.5 s with 4 workers and 49.2 s with `-n auto`, against 45.7 s serial, because each worker repeats about 10 s of imports and collection. It's not worth a new dependency.
+- **Not added:** a test for the app refusing to start without secrets, because `test_auth.py` already covers it.
+
+### Open questions
+- The page-level "no inline script/style" check exists as ~14 per-file copies, while the central test only renders `/health`. They could be merged into one parametrised test over every page. Left for a separate change.
+
+### How to verify
+- `make test` (829 passed in 46 s), `make lint` and `make secrets-scan` are clean.
+
 ## Fix: worker polls dashboard commands every 10 s (#42) (2026-10-14)
 
 ### Built

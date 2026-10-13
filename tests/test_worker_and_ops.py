@@ -120,17 +120,17 @@ def test_commands_poll_every_10s_and_record_only_when_there_is_work(
                 conn.execute(select(job_runs).where(job_runs.c.job == "process_commands")).all()
             )
 
-    job_.func()  # empty queue: one cheap read, no job_runs row
+    job_.func(**job_.kwargs)  # empty queue: one cheap read, no job_runs row
     assert runs() == 0
     cmd_engine = make_command_engine(migrated_db)
     cid = enqueue_command(cmd_engine, "ping", {}, requested_by="192.168.1.10")
     cmd_engine.dispose()
-    job_.func()
+    job_.func(**job_.kwargs)
     assert runs() == 1
     with rw_engine.connect() as conn:
         row = conn.execute(select(commands).where(commands.c.id == cid)).one()
     assert row.status == "done" and "pong" in json.loads(row.result)
-    job_.func()  # drained again: still one row
+    job_.func(**job_.kwargs)  # drained again: still one row
     assert runs() == 1
 
 

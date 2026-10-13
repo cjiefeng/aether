@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import Engine, update
 from starlette.testclient import TestClient
 
+from aether.db.commands import ALLOWED_KINDS
 from aether.db.engine import write_tx
 from aether.db.models import commands
 from aether.db.types import to_iso
@@ -136,3 +139,20 @@ def test_stale_states_stop_polling() -> None:
     Row.status = "running"
     Row.requested_at = to_iso(now - timedelta(hours=2))
     assert command_view.status_for(Row(), now).state == "stale"
+
+
+@pytest.mark.parametrize("kind", sorted(ALLOWED_KINDS))
+def test_every_command_kind_has_a_label_and_done_message(kind: str) -> None:
+    """A new command kind must get its own label and completion message, not the generic
+    fallbacks ("Done.", a title-cased kind)."""
+    assert kind in command_view.LABELS
+    row = SimpleNamespace(
+        id=1,
+        kind=kind,
+        status="done",
+        requested_at=to_iso(datetime.now(UTC)),
+        result=json.dumps({"ok": True, "rows": 2}),
+    )
+    s = command_view.status_for(row)
+    assert s.state == "done"
+    assert s.message != "Done."

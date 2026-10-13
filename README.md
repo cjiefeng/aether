@@ -390,7 +390,7 @@ Every pull request runs `.github/workflows/ci.yml`. It has four jobs: `make test
 |---|---|
 | `./deploy.sh` | Pull latest `main`, rebuild and (re)start the stack (`worker` = single writer + scheduler, `app` = read-only dashboard) |
 | `make down` / `logs` / `ps` | Stop / tail / inspect the stack |
-| `make test` | pytest in the dev container. Network is blocked (`pytest-socket`); tests use a temp-file SQLite DB with prod pragmas and migrations |
+| `make test` | pytest in the dev container. Network is blocked (`pytest-socket`); each test gets a fresh temp-file SQLite DB with prod pragmas, copied from one migrated per session. Extra pytest arguments: `make test ARGS="-k holdings"` or `ARGS=--lf` |
 | `make lint` | ruff, ruff format check, `mypy --strict`, the `\|safe`/`Markup` ban, the read-only broker check, and `pip-audit` on the hashed lockfile |
 | `make hash-password` | Prompt for the dashboard password; print `AETHER_DASHBOARD_PASSWORD_HASH` and a fresh `AETHER_SESSION_SECRET` |
 | `make fmt` | ruff format + autofix |

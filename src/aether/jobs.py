@@ -1002,7 +1002,7 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         "synthesize": synthesize_command,
     }
 
-    def commands_tick() -> None:
+    def commands_tick(handlers: Mapping[str, CommandHandler]) -> None:
         # Only record a job_runs row when there is work, to keep the table small.
         if has_pending_commands(engine):
             run_job(engine, "process_commands", lambda: process_commands(engine, handlers=handlers))
@@ -1020,6 +1020,8 @@ def build_scheduler(engine: Engine, settings: Settings) -> Any:
         seconds=COMMANDS_POLL_SECONDS,
         id="process_commands",
         name="process_commands",
+        # Passed as an argument (not a closure) so tests can check the handlers the worker uses.
+        kwargs={"handlers": handlers},
     )
     # Prices + QTUM holdings: daily 06:30 SGT (spec §9); catch up at startup if >24h stale.
     sched.add_job(
