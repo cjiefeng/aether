@@ -128,6 +128,9 @@ th a.sort:hover, th a.sort.active { color: var(--fg); }
 th a.sort:hover { text-decoration: underline; }
 th.num, td.num { text-align: right; white-space: nowrap; }
 tr.group th { color: var(--fg); font-weight: 600; padding-top: var(--s4); }
+tr.group th, tr.group td { vertical-align: bottom; }
+tr.group td { padding-top: var(--s4); }
+tbody + tbody tr.group td { padding-top: var(--s5); }
 tbody + tbody tr.group th { padding-top: var(--s5); }
 tr.sell td:first-child, tr.buy td:first-child { font-weight: 600; }
 tr.quarantined td { background: var(--warn-bg); }

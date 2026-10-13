@@ -118,12 +118,22 @@
   <h2>Watchlist weight in QTUM</h2>
   {% if holdings.snapshot_date %}
     {% if holdings.stale %}<p class="banner stale">Holdings snapshot stale since {{ holdings.snapshot_date }}.</p>{% endif %}
-    <p>Pure-plays combined: <strong>{{ "%.2f"|format(holdings.combined) }}%</strong> of QTUM
+    <p>Pure-plays combined: <strong>{{ "%.2f"|format(holdings.subtotal("pure_play") or 0) }}%</strong> of QTUM
+      · all watchlist names: <strong>{{ "%.2f"|format(holdings.combined) }}%</strong>
       <span class="muted">(issuer data as of {{ holdings.snapshot_date }})</span></p>
-    <table class="num compact">
-      <thead><tr>{% for sym in pure %}<th>{{ sym }}</th>{% endfor %}</tr></thead>
-      <tbody><tr>{% for sym in pure %}<td>{{ "%.2f%%"|format(holdings.weights[sym]) if sym in holdings.weights else "not held" }}</td>{% endfor %}</tr></tbody>
+    <table class="num compact watch-weights">
+      <thead><tr><th>Symbol</th><th class="num">% of QTUM</th></tr></thead>
+      {% for g in holdings.groups %}
+      <tbody>
+        <tr class="group"><th scope="rowgroup">{{ g.label }} subtotal</th><td class="num"><strong>{{ "%.2f%%"|format(g.subtotal) }}</strong></td></tr>
+        {% for sym in g.symbols %}
+        <tr><td><a href="/t/{{ sym }}">{{ sym }}</a></td><td class="num">{% if sym in holdings.weights %}{{ "%.2f%%"|format(holdings.weights[sym]) }}{% else %}<span class="muted">not held</span>{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+      {% endfor %}
+      <tfoot><tr><th scope="row">All watchlist names</th><td class="num"><strong>{{ "%.2f%%"|format(holdings.combined) }}</strong></td></tr></tfoot>
     </table>
+    <p class="muted small">Every active pure-play, adjacent and context name in <code>config/watchlist.yaml</code>. QTUM itself and the QQQ/SOXX benchmarks are funds, not constituents, so they aren't listed.</p>
   {% else %}
     <p class="banner stale">No QTUM holdings snapshot yet.</p>
   {% endif %}

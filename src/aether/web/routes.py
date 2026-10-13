@@ -120,7 +120,9 @@ def overview(request: Request) -> HTMLResponse:
         {
             "groups": groups,
             "fresh": market.freshness(engine, summaries),
-            "holdings": market.holdings_view(engine, pure, today),
+            # Issue #39: every pure-play, adjacent and context name (not `pure`, which stays
+            # pure-play only for the basket).
+            "holdings": market.holdings_view(engine, market.watch_symbols(ticker_types), today),
             "pure": pure,
             "ranges": list(market.RANGES),
             "default_range": market.DEFAULT_RANGE,

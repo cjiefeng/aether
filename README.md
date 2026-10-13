@@ -339,7 +339,7 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
   - Stale banners.
   - A chart comparing QTUM, an equal-weighted pure-play basket, SOXX and QQQ, rebased to 100 on a log scale, with ranges from 1M to 2Y.
   - A ticker table (last close, 1d/30d change, distance from the 52-week high, as-of date, provider).
-  - The watchlist's weight in QTUM.
+  - The watchlist's weight in QTUM: every active pure-play, adjacent and context name from `config/watchlist.yaml`, grouped by type, with a subtotal per group (the pure-play subtotal is the theme number) and an all-watchlist total. QTUM itself and the QQQ/SOXX benchmarks aren't listed (issue #39).
   - Open risk flags, recent alerts and RISK filings from the last 30 days.
   - Position drift vs the selected profile, when holdings are saved (M5).
   - Catalysts and earnings for the next 12 months (M8).
