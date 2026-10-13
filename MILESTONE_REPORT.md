@@ -1,5 +1,25 @@
 # Milestone report
 
+## Fix: worker polls dashboard commands every 10 s (#42) (2026-10-14)
+
+### Built
+- `COMMANDS_POLL_SECONDS = 10` (was a hardcoded 30) drives the `process_commands` interval. Button latency drops from 0–30 s (about 15 s on average) to 0–10 s (about 5 s).
+- The dashboard's "The worker picks it up within N s" message and the Holdings "it checks every N s" banner now read the same constant. Both said 30 s before.
+- The commands poll is now named `process_commands`. A logging filter drops APScheduler's "maximum number of running instances reached" warning for this job only. While a long command runs, every tick is skipped, which is expected, and at 10 s that would be 6 warnings a minute. Other jobs' skips still log.
+
+### Decisions
+- **Where the constant lives:** `db/commands.py` (the queue module), not next to `HEARTBEAT_MINUTES` in `jobs.py` as the issue suggested. The dashboard text needs the same number, and `aether/web` shouldn't import the worker's `jobs` module. `jobs.py` imports it from there.
+
+### Impact
+- **Database:** 3× the pending-check reads (one indexed `SELECT … LIMIT 1` per tick). There are still no `job_runs` rows for empty ticks.
+- **LLM cost:** none. Polling is free, and paid commands keep their rate limits.
+
+### How to verify
+- `make test` (798 passed), `make lint` and `make secrets-scan` are clean.
+- **Live check:** the real scheduler from `build_scheduler` ran against a throwaway DB, with only the commands job kept.
+  - Two empty ticks wrote no `job_runs` rows.
+  - Three queued `ping`s finished in 5.1, 6.2 and 6.3 s, and their pongs were 10 s apart.
+
 ## Fix: Watchlist weight in QTUM covers every watchlist name (#39) (2026-10-13)
 
 ### Built
@@ -1883,7 +1903,7 @@ make secrets-scan    # gitleaks: no leaks
 9. **`pip-audit` runs via `uvx` against `uv export` with hashes** (`uv pip audit` doesn't exist). It needs network, so it belongs to `make lint` and is never a test.
 10. **Backups use Python's `sqlite3.backup()`** (same online API as the CLI's `.backup`), because the slim image has no `sqlite3` binary.
 11. **htmx 2.0.4 is vendored** (sha256 recorded in `web/static/VENDORED.txt`), with `includeIndicatorStyles`, `allowEval` and `allowScriptTags` turned off for the CSP.
-12. **Job-run hygiene.** `process_commands` polls every 30 s but records a `job_runs` row only when there's work. The heartbeat runs every 10 min, and job runs are pruned after 90 days.
+12. **Job-run hygiene.** `process_commands` polls every 30 s (10 s since issue #42) but records a `job_runs` row only when there's work. The heartbeat runs every 10 min, and job runs are pruned after 90 days.
 13. **`httpx2` is a dev dependency** (owner decision). Starlette 1.7's TestClient now uses it natively, so the deprecation-warning filter is gone. `httpx` stays the runtime HTTP client, and respx cassettes mock `httpx`.
 14. **`./deploy.sh` replaces `make up`** (owner decision). It fast-forwards to `origin/main` and runs `docker compose up -d --build --wait`.
 

@@ -26,6 +26,7 @@ from aether.config import (
 )
 from aether.db import health
 from aether.db.commands import (
+    COMMANDS_POLL_SECONDS,
     active_command,
     count_recent_commands,
     enqueue_command,
@@ -402,6 +403,7 @@ def holdings_page(
         {
             "h": h,
             "plan_sort": plan_sort,
+            "poll_seconds": COMMANDS_POLL_SECONDS,
             "plan_rows": holdings_view.sort_plan_rows(h.plan["rows"], *plan_sort) if h.plan else [],
             # M14 (spec §6.10): thesis checks on the holdings and the selected profile's targets.
             "th": thesis.page_report(engine, _today(), request.app.state.settings.config_dir),

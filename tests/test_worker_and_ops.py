@@ -96,3 +96,64 @@ def test_cassette_replay() -> None:
         mount_cassette(router, "synthetic_acme_example")
         r = httpx.get("https://example.test/acme/status.json")
     assert r.status_code == 200 and r.json()["ticker"] == "ACME"
+
+
+# --------------------------------------------------------------------------- issue #42
+
+
+def test_commands_poll_every_10s_and_record_only_when_there_is_work(
+    rw_engine: Engine, migrated_db: Path
+) -> None:
+    from datetime import timedelta
+
+    from aether.db.commands import COMMANDS_POLL_SECONDS
+    from aether.jobs import build_scheduler
+
+    sched = build_scheduler(rw_engine, make_settings(migrated_db))
+    job_ = sched.get_job("process_commands")
+    assert job_ is not None and COMMANDS_POLL_SECONDS == 10
+    assert job_.trigger.interval == timedelta(seconds=COMMANDS_POLL_SECONDS)
+
+    def runs() -> int:
+        with rw_engine.connect() as conn:
+            return len(
+                conn.execute(select(job_runs).where(job_runs.c.job == "process_commands")).all()
+            )
+
+    job_.func()  # empty queue: one cheap read, no job_runs row
+    assert runs() == 0
+    cmd_engine = make_command_engine(migrated_db)
+    cid = enqueue_command(cmd_engine, "ping", {}, requested_by="192.168.1.10")
+    cmd_engine.dispose()
+    job_.func()
+    assert runs() == 1
+    with rw_engine.connect() as conn:
+        row = conn.execute(select(commands).where(commands.c.id == cid)).one()
+    assert row.status == "done" and "pong" in json.loads(row.result)
+    job_.func()  # drained again: still one row
+    assert runs() == 1
+
+
+def test_busy_commands_tick_skip_warning_is_filtered() -> None:
+    import logging
+    from types import SimpleNamespace
+
+    from aether.jobs import _SKIP_FILTER
+
+    def record(job_id: str) -> logging.LogRecord:
+        return logging.LogRecord(
+            "apscheduler.scheduler",
+            logging.WARNING,
+            __file__,
+            1,
+            'Execution of job "%s" skipped: maximum number of running instances reached (%d)',
+            (SimpleNamespace(id=job_id), 1),
+            None,
+        )
+
+    assert _SKIP_FILTER.filter(record("process_commands")) is False
+    assert _SKIP_FILTER.filter(record("portfolio")) is True  # other jobs' skips still log
+    other = logging.LogRecord(
+        "apscheduler.scheduler", logging.INFO, __file__, 1, "Scheduler started", (), None
+    )
+    assert _SKIP_FILTER.filter(other) is True
