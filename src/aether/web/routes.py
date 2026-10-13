@@ -388,14 +388,19 @@ def strategies_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/holdings", response_class=HTMLResponse)
-def holdings_page(request: Request) -> HTMLResponse:
+def holdings_page(
+    request: Request, sort: str | None = None, dir: str | None = None
+) -> HTMLResponse:
     engine = request.app.state.ro_engine
     h = holdings_view.holdings_page(engine, _today())
+    plan_sort = holdings_view.plan_sort(sort, dir)
     return _render(
         request,
         "holdings.html",
         {
             "h": h,
+            "plan_sort": plan_sort,
+            "plan_rows": holdings_view.sort_plan_rows(h.plan["rows"], *plan_sort) if h.plan else [],
             # M14 (spec §6.10): thesis checks on the holdings and the selected profile's targets.
             "th": thesis.page_report(engine, _today(), request.app.state.settings.config_dir),
             "thesis_profiles": [h.settings.selected_profile],

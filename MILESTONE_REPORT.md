@@ -1,5 +1,22 @@
 # Milestone report
 
+## Fix: sortable Rebalance plan (#36) (2026-10-13)
+
+### Built
+- On `/holdings`, the **Weight**, **Target** and **Drift** headers are links (`?sort=…&dir=…#plan`). A click sorts descending, and clicking the active column flips the direction. The active header shows an arrow and has `aria-sort`.
+- The default is Target, descending. Drift sorts by `|drift|` but still shows the signed value. Ties are broken by symbol (A–Z) in either direction, and rows without a value go last.
+- Cash moved to a `<tfoot>`, so it's always the last row.
+
+### Decisions
+- **Server-side sort with plain links** (an option the issue allows): no JS, so nothing can trip the CSP, and the order is tested in Python. The sort is kept only in the URL: no DB writes, no commands.
+- **First click on any column sorts descending** (largest first), matching the default.
+
+### Owner checklist
+- On `/holdings`, click Weight, Target and Drift twice each. Cash should stay last, and the Trades list shouldn't change.
+
+### How to verify
+`make test` (794 passed), `make lint` and `make secrets-scan` are clean. Browser check against a throwaway synthetic DB: default order, Drift by absolute deviation in both directions, `aria-sort`, Cash last, and no console errors.
+
 ## M15: LLM cost reduction + LLM expense log (2026-10-13)
 
 The research sweep and the backtest/rebalance plan are now **weekly** (Sunday 07:00 / 07:10 SGT). Restarts don't trigger paid sweeps, and conclusions wait for the sweep's items to be classified. Web-search calls no longer use prompt caching: a paid A/B showed the cache marker made them dearer. **Every LLM call** now logs one `llm_calls` row per outcome with the full cost breakdown. You can browse and filter that log on the Ops page and export it as CSV/JSON (`make llm-log`).

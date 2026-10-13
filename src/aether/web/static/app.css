@@ -122,6 +122,10 @@ tbody tr:last-child > * { border-bottom: 0; }
 table.num td, table.num th { white-space: nowrap; }
 table.num td .reason { white-space: normal; display: inline-block; max-width: 18rem; text-align: left; }
 table.compact { width: auto; }
+/* Sortable column headers (issue #36): plain links, so sorting works without JS. */
+th a.sort { color: inherit; text-decoration: none; }
+th a.sort:hover, th a.sort.active { color: var(--fg); }
+th a.sort:hover { text-decoration: underline; }
 th.num, td.num { text-align: right; white-space: nowrap; }
 tr.group th { color: var(--fg); font-weight: 600; padding-top: var(--s4); }
 tbody + tbody tr.group th { padding-top: var(--s5); }
