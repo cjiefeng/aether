@@ -816,9 +816,9 @@ When all three are present, the review pack shows "winner signals present". The 
 
 **6. Gaps:** modalities and supplier sectors with no active name. These feed the monthly review's `fills_gap` flag (§6.7.1).
 
-**8. Pure-play share (M16):** for each profile with `pure_play_min_total` set, flag it when the **post-overlay** published pure-play share is below the minimum (e.g. after an overlay cut with nowhere to go). Shown on Strategies, Holdings and in the review pack. It's information only.
-
 **7. Stepwise building** (thesis rule 3): the rebalance planner's existing **new-cash-only** mode (§6.6) is the stepwise path. The plan shows QTUM's drawdown from its 52-week high and the count of red flags, so "sector drawdown, thesis intact" is visible. It's information only, never a trade instruction.
+
+**8. Pure-play share (M16):** for each profile with `pure_play_min_total` set, flag it when the **post-overlay** published pure-play share is below the minimum (e.g. after an overlay cut with nowhere to go). Shown on Strategies, Holdings and in the review pack. It's information only.
 
 ---
 
