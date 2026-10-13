@@ -15,6 +15,7 @@ Start every session by reading this file, `AETHER_BUILD_PROMPT.md` (the spec), `
 - **S5:** Jinja autoescape stays on. `|safe` and `Markup(` are banned outside `security/sanitize.py` (`scripts/check_no_safe.py` runs in `make lint`). Render rich text with the `md` filter and links with `extlink`.
 - No inline `<script>`, `<style>` or `style=` attributes, because the CSP forbids them. Static assets are vendored in `web/static` (see `VENDORED.txt`).
 - Ask before adding a paid data source or a dependency outside the spec's stack.
+- **Every LLM call is logged and costed, no exceptions** (owner rule 2026-10-13): all calls go through `aether/llm/client.py` (`check_llm_imports.py` enforces it), which writes one `llm_calls` row per outcome (ok, error, refusal, budget refusal, batch submission, each batch result) with tokens, searches, cost, price-table version and context. That includes evals and dev scripts. New call types are added to the wrapper first. The owner exports the log from the Ops page or with `make llm-log` (metadata only, spec §10).
 
 ## SQLite / schema conventions
 - Every table is `sqlite_strict=True`. Column types are only `Integer`, `REAL`, `Text`, `LargeBinary` and `Micros`. `String`/`Boolean`/`Float`/`DateTime` break STRICT.
