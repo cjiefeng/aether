@@ -2,7 +2,7 @@
 
 ## Roadmap change: M15 LLM cost reduction (2026-10-13, owner-approved)
 
-**Why:** the owner reported about $5/day of Anthropic spend and wants it lower. He doesn't need daily rebalancing.
+**Why:** the owner reported about $5/day of Anthropic spend and wants it lower. They don't need daily rebalancing.
 
 **Measured on the running stack (still on M7, migration `0008`; `llm_calls`, priced at list rates):**
 
