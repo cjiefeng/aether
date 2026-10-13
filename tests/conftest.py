@@ -3,6 +3,8 @@ Network is blocked by pytest-socket (see pyproject addopts)."""
 
 from __future__ import annotations
 
+import shutil
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -31,10 +33,22 @@ def db_path(tmp_path: Path) -> Path:
     return tmp_path / "data" / "aether.db"
 
 
+@pytest.fixture(scope="session")
+def migrated_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Migrate once per session. Each test gets a byte copy (a full migrate is ~0.5 s per test).
+    Tests that exercise migrations themselves call `migrate.upgrade` on their own DB."""
+    path = tmp_path_factory.mktemp("template") / "aether.db"
+    ensure_db_file(path)
+    migrate.upgrade(path)
+    with sqlite3.connect(path) as conn:  # fold the WAL into the main file so one copy is complete
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return path
+
+
 @pytest.fixture
-def migrated_db(db_path: Path) -> Path:
-    ensure_db_file(db_path)
-    migrate.upgrade(db_path)
+def migrated_db(db_path: Path, migrated_template: Path) -> Path:
+    ensure_db_file(db_path)  # creates the 0700 dir and 0600 file; copyfile keeps that mode
+    shutil.copyfile(migrated_template, db_path)
     return db_path
 
 

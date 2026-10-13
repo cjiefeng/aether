@@ -95,3 +95,71 @@ def test_web_never_uses_writer_engine() -> None:
     for py in web.rglob("*.py"):
         src = py.read_text()
         assert "make_rw_engine" not in src and "write_tx" not in src, py
+
+
+# --- write_tx: retry BEGIN IMMEDIATE on SQLITE_BUSY ---------------------------------------------
+
+
+class _BusyConn:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def begin(self) -> None:
+        raise OperationalError("BEGIN IMMEDIATE", None, sqlite3.OperationalError(self.message))
+
+    def close(self) -> None:
+        pass
+
+
+class _FlakyEngine:
+    """`fails` connections whose BEGIN raises, then the real engine's."""
+
+    def __init__(self, real: Engine, fails: int, message: str = "database is locked") -> None:
+        self.real, self.fails, self.message = real, fails, message
+
+    def connect(self) -> object:
+        if self.fails:
+            self.fails -= 1
+            return _BusyConn(self.message)
+        return self.real.connect()
+
+
+@pytest.fixture
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    calls: list[float] = []
+    monkeypatch.setattr("aether.db.engine.time.sleep", calls.append)
+    return calls
+
+
+def _symbols(engine: Engine) -> set[str]:
+    with engine.connect() as conn:
+        return set(conn.execute(text("SELECT symbol FROM tickers")).scalars())
+
+
+def test_write_tx_retries_busy_then_commits(rw_engine: Engine, sleeps: list[float]) -> None:
+    flaky = _FlakyEngine(rw_engine, fails=2)
+    with write_tx(flaky) as conn:  # type: ignore[arg-type]
+        conn.execute(insert(tickers).values(symbol="ACME", type="context"))
+    assert _symbols(rw_engine) == {"ACME"}
+    assert len(sleeps) == 2 and all(0 < s <= 2.0 for s in sleeps)
+
+
+def test_write_tx_gives_up_after_attempts(rw_engine: Engine, sleeps: list[float]) -> None:
+    flaky = _FlakyEngine(rw_engine, fails=10)
+    with pytest.raises(OperationalError, match="locked"), write_tx(flaky, attempts=3):  # type: ignore[arg-type]
+        pass
+    assert len(sleeps) == 2  # no sleep after the last attempt
+
+
+def test_write_tx_does_not_retry_other_errors(rw_engine: Engine, sleeps: list[float]) -> None:
+    flaky = _FlakyEngine(rw_engine, fails=1, message="disk I/O error")
+    with pytest.raises(OperationalError, match="disk I/O error"), write_tx(flaky):  # type: ignore[arg-type]
+        pass
+    assert sleeps == []
+
+
+def test_write_tx_rolls_back_when_the_body_raises(rw_engine: Engine) -> None:
+    with pytest.raises(ValueError, match="boom"), write_tx(rw_engine) as conn:
+        conn.execute(insert(tickers).values(symbol="ACME", type="context"))
+        raise ValueError("boom")
+    assert _symbols(rw_engine) == set()

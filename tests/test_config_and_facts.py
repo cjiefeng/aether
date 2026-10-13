@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 import yaml
 from pydantic import ValidationError
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, insert, select
 
 from aether.config import Settings, Watchlist, load_sources, load_watchlist
 from aether.db.engine import write_tx
+from aether.db.models import catalysts
 from aether.db.models import facts as facts_table
 from aether.facts import load_facts, render_for_prompt, render_markdown, sync_facts
 from tests.conftest import CONFIG_DIR, REPO
@@ -98,6 +99,37 @@ def test_sync_facts_idempotent(rw_engine: Engine) -> None:
         rows = conn.execute(select(facts_table)).all()
     assert len(rows) == len(facts)
     assert all(isinstance(json.loads(r.source_urls), list) for r in rows)
+
+
+def test_sync_facts_removes_facts_dropped_from_yaml(rw_engine: Engine) -> None:
+    facts = load_facts(CONFIG_DIR)
+    kept, gone, cited = facts[0], facts[1], facts[2]
+    with write_tx(rw_engine) as conn:
+        sync_facts(conn, facts)
+        conn.execute(
+            insert(catalysts).values(
+                key="seed:acme_test",
+                origin="seed",
+                title="ACME synthetic catalyst",
+                kind="roadmap",
+                window_start="2026-01-01",
+                fact_id=cited.id,
+                updated_at="2026-01-01T00:00:00Z",
+            )
+        )
+    with write_tx(rw_engine) as conn:
+        sync_facts(conn, [kept])  # `gone` and `cited` left facts.yaml
+    with rw_engine.connect() as conn:
+        ids = set(conn.execute(select(facts_table.c.id)).scalars())
+    # `cited` stays while a catalyst references it (foreign key); `gone` is deleted.
+    assert gone.id not in ids
+    assert ids == {kept.id, cited.id}
+
+    with write_tx(rw_engine) as conn:
+        conn.execute(catalysts.delete())
+        sync_facts(conn, [kept])
+    with rw_engine.connect() as conn:
+        assert set(conn.execute(select(facts_table.c.id)).scalars()) == {kept.id}
 
 
 def test_fact_sources_must_be_http(tmp_path: Path) -> None:

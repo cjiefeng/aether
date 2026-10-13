@@ -22,9 +22,9 @@ with >= `min_t1_sources` of them T1, floors met, not excluded, and not escalated
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from sqlalchemy import Engine, select
@@ -39,7 +39,6 @@ from aether.db.models import (
 )
 from aether.portfolio.overlay import layer1_findings
 
-DEFAULT_LOOKBACK_DAYS = 31
 EXPOSURE_RANK = {"high": 0, "med": 1, "low": 2, None: 3}
 
 
@@ -147,27 +146,6 @@ def qualifying_triggers(
     return out
 
 
-def previous_review_date(history_rows: Iterable[Mapping[str, Any]], as_of: date) -> date:
-    """The previous done review's date, else `as_of` minus a month."""
-    for h in history_rows:
-        if h.get("as_of"):
-            return date.fromisoformat(h["as_of"])
-    return as_of - timedelta(days=DEFAULT_LOOKBACK_DAYS)
-
-
-def gate_removal(
-    proposed: str | None, cited: Sequence[str], triggers: Sequence[Trigger]
-) -> tuple[bool, str | None]:
-    """(qualifies, note) for a `remove` with no structural trigger."""
-    refs = {t.ref for t in triggers}
-    hit = [r for r in cited if r in refs]
-    if proposed == "remove" and hit:
-        return True, "qualifying event (code): " + "; ".join(
-            t.text for t in triggers if t.ref in hit
-        )
-    return False, None
-
-
 # --------------------------------------------------------------------------- evidence counts
 
 
@@ -176,23 +154,6 @@ class EvidenceCount:
     independent: int  # distinct domains among qualifying (T1/T2) items in the last 12 months
     t1: int
     latest: str | None  # newest qualifying item's date
-
-
-def count_evidence(items: Iterable[Any], as_of: date, days: int = 365) -> EvidenceCount:
-    """`items`: objects with trust_tier, domain, published (YYYY-MM-DD or None). Undated items
-    count only when T1 (a filing, dated by SEC) is impossible to tell; they're skipped."""
-    since = (as_of - timedelta(days=days)).isoformat()
-    domains: set[str] = set()
-    t1: set[str] = set()
-    latest: str | None = None
-    for e in items:
-        if e.trust_tier not in ("T1", "T2") or not e.published or e.published < since:
-            continue
-        domains.add(e.domain)
-        if e.trust_tier == "T1":
-            t1.add(e.domain if e.kind != "business_excerpt" else f"sec.gov:{e.id}")
-        latest = max(latest or "", e.published)
-    return EvidenceCount(len(domains), len(t1), latest)
 
 
 # --------------------------------------------------------------------------- slots

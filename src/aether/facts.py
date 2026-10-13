@@ -17,9 +17,10 @@ from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import Connection
+from sqlalchemy import Connection, delete, select
 
 from aether.db.dialect import upsert
+from aether.db.models import catalysts
 from aether.db.models import facts as facts_table
 from aether.db.types import utcnow_iso
 
@@ -79,7 +80,9 @@ def render_for_prompt(facts: Sequence[Fact]) -> str:
 
 
 def sync_facts(conn: Connection, facts: Sequence[Fact]) -> int:
-    """Upsert the registry into the `facts` table (worker only, inside write_tx)."""
+    """Mirror the registry into the `facts` table (worker only, inside write_tx): upsert every
+    fact, then delete rows whose id left `facts.yaml`. A removed fact that a stored catalyst
+    still cites is kept (foreign key) and goes on a later sync once nothing cites it."""
     now = utcnow_iso()
     rows = [
         {
@@ -94,7 +97,14 @@ def sync_facts(conn: Connection, facts: Sequence[Fact]) -> int:
         }
         for f in facts
     ]
-    return upsert(conn, facts_table, rows, key_cols=["id"])
+    n = upsert(conn, facts_table, rows, key_cols=["id"])
+    cited = select(catalysts.c.fact_id).where(catalysts.c.fact_id.is_not(None))
+    conn.execute(
+        delete(facts_table).where(
+            facts_table.c.id.not_in([f.id for f in facts]), facts_table.c.id.not_in(cited)
+        )
+    )
+    return n
 
 
 _STATUS_BADGE = {
