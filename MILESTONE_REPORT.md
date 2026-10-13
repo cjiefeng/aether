@@ -1,5 +1,31 @@
 # Milestone report
 
+## Roadmap change: Medium per-name cap 20% → 15% (2026-10-13, owner decision relayed by the portfolio-manager session)
+
+**Why:** in the Medium target, KEYS sat at the 20% cap. That made it the largest position after QTUM (45%) and about equal to all five pure-plays combined (~20.5%). The owner wants each position kept smaller.
+
+**Rule (spec §6.5):**
+- **Medium `max_per_name` = 15%** for every non-QTUM name (pure-play and adjacent).
+- **QTUM stays fixed at 45%.**
+- **Safe (10%) and Aggressive (35%) are unchanged**, pending the owner's confirmation via the portfolio-manager session.
+- **Floors are unchanged** (Medium `min_per_name` 3%).
+
+**What will shift (so it's no surprise):**
+- **KEYS loses ~5 pp** (20% → 15%).
+- **Within the base strategy,** that freed weight goes pro rata to the other sleeve names still below 15% (`cap_weights`). Only weight that no name can take goes to QTUM.
+  - With 8 eligible names, Medium's 55% sleeve has room for up to 120% (8 × 15%), so **QTUM stays at 45%** and the ~5 pp moves to the other names.
+  - Mostly that means the pure-plays and FEIM/PANW, in proportion to their method weights.
+- **The research overlay runs after that** (§6.6.1) and is unchanged. If it then zeroes or halves a name (e.g. the IONQ dilution haircut), the freed weight goes to the other pure-plays within the 15% cap, then to QTUM.
+- **Edge case:** with fewer than 4 eligible names, Medium can't place its whole sleeve under a 15% cap, and the remainder goes to QTUM. The spec now says ≥ 4 instead of the old "three".
+
+**Implementation note (for whoever builds it):**
+- `config/strategies.yaml` → `profiles.medium.max_per_name: 0.15`. No schema change.
+- The config-change rerun (#13) recomputes the backtest and **republishes** targets automatically after deploy, with trigger `config_change`. **Publish targets now** also works.
+- **Tests:**
+  - in every strategy family, no Medium name's base or published weight exceeds 15%
+  - the Medium sleeve still sums to 55% with 8 eligible names, and QTUM stays at 45%
+  - with only 3 eligible names, the 10 pp remainder goes to QTUM and the page note shows
+
 ## Fix: sortable Rebalance plan (#36) (2026-10-13)
 
 ### Built

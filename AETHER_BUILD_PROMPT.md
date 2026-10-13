@@ -538,13 +538,13 @@ The system must show whether its own calls have been any good.
 |---|---|---|---|
 | QTUM weight (fixed) | 75% | 45% | 15% |
 | Pure-play sleeve | 25% | 55% | 85% |
-| Max weight per pure-play | 10% | 20% | 35% |
+| Max weight per name (pure-play or adjacent) | 10% | **15%** (was 20%; owner, 2026-10-13) | 35% |
 | **Min weight per name (floor, M14)** | 1.5% | 3% | 4% |
 | Volatility limit | none (shown) | none (shown) | none (shown) |
 | Max-drawdown limit | none (shown) | none (shown) | none (shown) |
 | Ranking metric | lowest CVaR95 | highest Sortino | highest Sortino |
 
-Sleeve weight the per-name caps can't place goes to QTUM (M4 decision 2). Each profile's sleeve fits within its caps whenever at least three pure-plays are eligible.
+Sleeve weight the per-name caps can't place goes to QTUM (M4 decision 2). Within the sleeve, weight above a name's cap is first spread pro rata over the other sleeve names below their caps (`cap_weights`), and only what still can't be placed goes to QTUM. A sleeve fits within its caps when enough names are eligible: safe needs ≥ 3 (25% ÷ 10%), **medium ≥ 4** (55% ÷ 15%) and aggressive ≥ 3 (85% ÷ 35%). With fewer, the remainder goes to QTUM and the Strategies page says so.
 
 **Every name gets a slice (minimum weight per name, M14; owner decision 2026-10-08).** Every eligible sleeve name (pure-play or adjacent, ≥ `min_sessions` of history) is given at least the profile's floor, `min_per_name` in `config/strategies.yaml`. The family's method (equal, inverse-vol, min-variance, momentum) then allocates only the **rest** of the sleeve, and each name's total stays within `max_per_name`. So momentum still favours its top 3, and min-variance or inverse-vol can still tilt toward steadier names, but no name is left at zero. If the floors don't fit (eligible names × floor > sleeve), the floor shrinks to `sleeve ÷ eligible names` and the page says so. With the 9-name cap the floors use at most 13.5% / 27% / 36% of the portfolio (safe / medium / aggressive). The floor applies to the **base** model strategy only: the research overlay (§6.6.1) still zeroes or halves a name on evidence (going concern, delisting, heavy dilution, short runway, stance), and the floor never overrides it.
 
