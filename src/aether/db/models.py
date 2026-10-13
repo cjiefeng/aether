@@ -163,16 +163,28 @@ llm_calls = Table(
     Column("web_searches", Integer, nullable=False, server_default="0"),
     Column("cost_micros", Micros, nullable=False, server_default="0"),
     Column("created_at", Text, nullable=False),
-    # M6: one row per call attempt (prompts are never stored). `budget_refused` rows cost 0 and
-    # record that the soft budget guard stopped a call before any request was sent.
+    # M6/M15: one row per call outcome (prompts are never stored; never pruned). `refused_budget`
+    # rows cost 0 and record that a budget guard stopped a call before any request was sent;
+    # `batch_submitted` (cost 0) marks a Message Batch, and each item logs a `batch_result`.
     Column("status", Text, nullable=False, server_default="ok"),
     Column("batch", Integer, nullable=False, server_default="0"),
     Column("cache_write_tokens", Integer, nullable=False, server_default="0"),
     Column("request_id", Text),
     Column("research_run_id", Integer, ForeignKey("research_runs.id")),
     Column("error", Text),
-    CheckConstraint("status IN ('ok','error','budget_refused')", name="status"),
+    Column("stop_reason", Text),
+    Column("attempts", Integer, nullable=False, server_default="1"),  # SDK retries included
+    Column("latency_ms", Integer),
+    Column("effort", Text),
+    Column("price_version", Text),  # the config/llm.yaml price table the cost was computed with
+    Column("context", Text, nullable=False, server_default="{}"),  # symbol, job, run ids, ...
+    CheckConstraint(
+        "status IN ('ok','error','refusal','refused_budget','batch_submitted','batch_result')",
+        name="status",
+    ),
     CheckConstraint("batch IN (0, 1)", name="batch_bool"),
+    _json_ck("context"),
+    CheckConstraint("attempts >= 0", name="attempts_pos"),
     CheckConstraint(
         "input_tokens >= 0 AND output_tokens >= 0 AND cache_read_tokens >= 0 "
         "AND cache_write_tokens >= 0 AND web_searches >= 0 AND cost_micros >= 0",

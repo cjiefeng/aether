@@ -19,7 +19,7 @@
 {% if h.rebalance_stale %}
 <p class="banner stale">
   {% if h.rebalance_last_ok %}Targets and plan stale since {{ h.rebalance_last_ok }} (last successful run).
-  {% else %}No targets yet. They appear after the first daily run (07:10 SGT) once a backtest exists.{% endif %}
+  {% else %}No targets yet. They appear after the first weekly run (Sunday 07:10 SGT) once a backtest exists.{% endif %}
 </p>
 {% endif %}
 {% if tiger_mode and h.tiger_stale %}
@@ -142,7 +142,7 @@
   <div class="card-head"><h2>Published targets: {{ s.selected_profile|capitalize }}</h2>
     {% if h.targets %}<span class="muted small">Targets published {{ h.targets.as_of }}{% if h.targets.trigger == "off_cycle" %} (off-cycle{% if h.targets.trigger_event_id %}, event #{{ h.targets.trigger_event_id }}{% endif %}){% elif h.targets.trigger == "config_change" %} (republished after a config change){% endif %}; next publish {{ h.next_publish }}</span>{% endif %}</div>
   {% if not h.targets %}
-  <p class="muted">No targets published yet. The first publish happens after the first backtest (daily 07:10 SGT), then on the 1st of each month.</p>
+  <p class="muted">No targets published yet. The first publish happens after the first backtest (weekly, Sunday 07:10 SGT), then on the 1st of each month.</p>
   {% else %}
   <p class="muted small">From prices through {{ h.targets.prices_as_of }}{% if h.targets.strategy_id %} · {{ family_labels.get(h.targets.strategy_id.split(":")[1], h.targets.strategy_id) }}{% endif %}.
     Base weights from the model strategy, then the research overlay (filing hard rules, then stance multipliers,
@@ -176,7 +176,7 @@
 {% if h.holdings.empty %}
 <section class="card"><p class="muted">No holdings saved, so there's no plan. Enter your positions and cash above.</p></section>
 {% elif not h.plan %}
-<section class="card"><p class="muted">No plan yet. It's built once targets are published, and refreshed daily (07:10 SGT) and after each update.</p></section>
+<section class="card"><p class="muted">No plan yet. It's built once targets are published, and refreshed weekly (Sunday 07:10 SGT) and after each update or publish.</p></section>
 {% else %}
 {% set plan = h.plan %}
 <section class="card">

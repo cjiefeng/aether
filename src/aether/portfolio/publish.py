@@ -7,8 +7,9 @@ nothing leaves the machine.
   and an input hash. Runs on the 1st of the month (10:30 SGT, with the review pack) and when the
   owner presses "Publish targets now" (`publish_targets` command, trigger `off_cycle`). Between
   publishes the targets don't move.
-- `run_rebalance`: the daily plan against the latest published targets (07:10 SGT and after any
-  holdings/settings/Tiger update). If nothing was ever published, it publishes first (bootstrap).
+- `run_rebalance`: the plan against the latest published targets, weekly (Sunday 07:10 SGT, M15)
+  and after any holdings/settings/Tiger update. If nothing was ever published, it publishes first
+  (bootstrap).
   If the latest backtest ran under a different `strategies.yaml` (backtest/profiles) than the run
   behind the published targets, it republishes at once (trigger `config_change`, issue #13): the
   monthly freeze stops market-driven churn, but a config edit is the owner's decision.

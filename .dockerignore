@@ -4,6 +4,7 @@
 !.env.example
 config/positions.yaml
 data/
+exports/
 
 # --- not needed in images ---
 .git/

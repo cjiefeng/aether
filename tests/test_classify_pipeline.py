@@ -403,8 +403,16 @@ def test_backlog_goes_to_one_batch_and_poll_ingests(engine: Engine, migrated_db:
     assert _state(engine, ids[0]).status == "done" and _cls(engine, ids[0]) is not None
     assert {_state(engine, i).status for i in ids[1:]} == {"retry"}
     with engine.connect() as conn:
-        rows = conn.execute(select(llm_calls.c.purpose, llm_calls.c.batch)).all()
-    assert [tuple(r) for r in rows] == [("classify_batch", 1), ("classify_batch", 1)]
+        rows = conn.execute(
+            select(llm_calls.c.purpose, llm_calls.c.batch, llm_calls.c.status)
+        ).all()
+    # M15: the submission, then one row per result item (the errored one at $0).
+    assert [tuple(r) for r in rows] == [
+        ("classify_batch", 1, "batch_submitted"),
+        ("classify_batch", 1, "batch_result"),
+        ("classify_batch", 1, "batch_result"),
+        ("classify_batch", 1, "error"),
+    ]
     assert poll_batches(engine, client, ctx, NOW) is None  # nothing open
     assert has_classifier_work(engine)  # the three retries wait for the next run
 

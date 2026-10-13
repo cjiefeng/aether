@@ -108,9 +108,14 @@ def research_message(
     return message(content, use=usage(searches=searches))
 
 
+# Every FakeApi built during a test, with the engine its client logs to (see `make_client`);
+# the autouse `llm_rows_match_calls` fixture in conftest checks them at teardown (M15).
+CREATED: list[FakeApi] = []
+
+
 @dataclass
 class FakeApi:
-    """Routes requests to canned responses and records every request."""
+    """Routes requests to canned responses and records every request (and its status code)."""
 
     messages: list[dict[str, Any]] = field(default_factory=list)  # queue for POST /v1/messages
     batch_status: str = "in_progress"
@@ -118,11 +123,24 @@ class FakeApi:
     status_code: int = 200
     requests: list[httpx2.Request] = field(default_factory=list)
     on_request: Callable[[httpx2.Request], None] | None = None
+    responses: list[tuple[str, str, int]] = field(default_factory=list)  # (method, path, status)
+    engine: Any = None
+
+    def __post_init__(self) -> None:
+        CREATED.append(self)
 
     def bodies(self) -> list[dict[str, Any]]:
         return [json.loads(r.content) for r in self.requests if r.method == "POST"]
 
     def handler(self, request: httpx2.Request) -> httpx2.Response:
+        resp = self._handle(request)
+        self.responses.append((request.method, request.url.path, resp.status_code))
+        return resp
+
+    def ok_count(self, method: str, path: str) -> int:
+        return sum(1 for m, p, c in self.responses if m == method and p == path and c == 200)
+
+    def _handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         if self.on_request:
             self.on_request(request)
@@ -182,6 +200,8 @@ def llm_config() -> LlmConfig:
 
 def make_client(engine: Any, settings: Settings, api: FakeApi, **kw: Any) -> LlmClient:
     http = anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(api.handler))
+    api.engine = engine
+    kw.setdefault("sleep", lambda _s: None)  # retries back off instantly in tests
     return LlmClient(engine, settings, llm_config(), http_client=http, **kw)
 
 

@@ -107,6 +107,10 @@ def symbol_stale(last_d: str | None, today: date) -> bool:
     return (today - date.fromisoformat(last_d)).days > SYMBOL_MAX_LAG_DAYS
 
 
+# M15 (spec §9): weekly jobs (research sweep, backtests + rebalance plan) are stale after 8 days.
+WEEKLY_JOB_MAX_AGE = timedelta(days=8)
+
+
 def job_stale(last_ok: str | None, now: datetime, max_age: timedelta) -> bool:
     if last_ok is None:
         return True

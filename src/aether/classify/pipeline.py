@@ -360,6 +360,7 @@ def classify_one(
             max_tokens=ctx.params.max_tokens,
             effort=ctx.params.effort,
             output_format=output_format(),
+            context={"event_id": event_id},
         )
         try:
             c = parse_and_validate(msg, ev, ctx.rubric)
@@ -497,22 +498,38 @@ def poll_batches(
     written = 0
     pending: list[str] = []
     for batch_id in sorted({r.batch_id for r in open_rows}):
-        status = llm.batch_status(batch_id)
+        status = llm.batch_status(batch_id, purpose="classify_batch")
         if status != "ended":
             pending.append(f"{batch_id}: {status}")
             continue
         by_cid = {r.custom_id: r.event_id for r in open_rows if r.batch_id == batch_id}
         with engine.connect() as conn:
             inputs = load_inputs(conn, list(by_cid.values()), ctx.aliases)
-        for res in llm.batch_results(batch_id):
+        for res in llm.batch_results(batch_id, purpose="classify_batch"):
             eid = by_cid.pop(res.custom_id, None)
-            if eid is None or eid not in inputs:
-                continue
+            # Every result item gets an llm_calls row (M15), even one we no longer track.
             if res.status != "succeeded" or res.message is None:
-                record_failure(engine, eid, res.error or res.status, ctx.params.max_attempts, now)
+                llm.record_batch_failure(
+                    purpose="classify_batch",
+                    model=ctx.model,
+                    result=res,
+                    context={"batch_id": batch_id},
+                )
+                if eid is not None and eid in inputs:
+                    record_failure(
+                        engine, eid, res.error or res.status, ctx.params.max_attempts, now
+                    )
                 continue
             model = str(res.message.get("model") or ctx.model)
-            llm.record_batch_result(purpose="classify_batch", model=model, message=res.message)
+            llm.record_batch_result(
+                purpose="classify_batch",
+                model=model,
+                message=res.message,
+                custom_id=res.custom_id,
+                context={"batch_id": batch_id},
+            )
+            if eid is None or eid not in inputs:
+                continue
             try:
                 c = parse_and_validate(res.message, inputs[eid], ctx.rubric)
             except InvalidOutput as exc:

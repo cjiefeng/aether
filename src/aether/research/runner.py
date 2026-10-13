@@ -86,10 +86,15 @@ def build_prompt(target: Target, start: date, end: date) -> str:
 def request_params(
     cfg: LlmConfig, model: str, sources: Sources, target: Target, start: date, end: date, uses: int
 ) -> dict[str, Any]:
+    """Batch request params (the synchronous sweep sends the same through `LlmClient.complete`).
+    The system prompt is the only cache breakpoint, and only with `research.cache_prefix`."""
+    system: dict[str, Any] = {"type": "text", "text": SYSTEM_PROMPT}
+    if cfg.research.cache_prefix:
+        system["cache_control"] = {"type": "ephemeral"}
     return {
         "model": model,
         "max_tokens": cfg.research.max_tokens,
-        "system": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        "system": [system],
         "messages": [{"role": "user", "content": build_prompt(target, start, end)}],
         "tools": [web_search_tool(uses, sources.allowed_domains())],
         "output_config": {"effort": cfg.research.effort},
@@ -330,6 +335,7 @@ def run_sweep(
                 tools=params["tools"],
                 effort=cfg.research.effort,
                 research_run_id=run_id,
+                context={"symbol": target.symbol},
             )
         except BudgetExceeded as exc:
             _finish(engine, run_id, "budget_refused", str(exc), now)
@@ -430,6 +436,7 @@ def run_verify(
             tools=[web_search_tool(max_uses, sources.allowed_domains())],
             effort=cfg.research.effort,
             research_run_id=run_id,
+            context={"symbol": target.symbol, "event_id": target.event_id},
         )
     except BudgetExceeded as exc:
         _finish(engine, run_id, "budget_refused", str(exc), now)
@@ -572,24 +579,38 @@ def poll_backfill(
     new_total = 0
     pending: list[str] = []
     for batch_id in sorted({r.batch_id for r in open_rows if r.batch_id}):
-        status = llm.batch_status(batch_id)
+        status = llm.batch_status(batch_id, purpose="research_backfill")
         if status != "ended":
             pending.append(f"{batch_id}: {status}")
             continue
         by_cid = {r.custom_id: r for r in open_rows if r.batch_id == batch_id}
-        for res in llm.batch_results(batch_id):
+        for res in llm.batch_results(batch_id, purpose="research_backfill"):
             row = by_cid.pop(res.custom_id, None)
-            if row is None:
-                continue
+            # Every result item gets an llm_calls row (M15), even one we no longer track.
+            model = row.model if row is not None else str((res.message or {}).get("model"))
+            ctx = {"batch_id": batch_id, "symbol": row.symbol if row is not None else None}
+            rid = row.id if row is not None else None
             if res.status != "succeeded" or res.message is None:
-                _finish(engine, row.id, "failed", res.error or res.status, now)
+                llm.record_batch_failure(
+                    purpose="research_backfill",
+                    model=model,
+                    result=res,
+                    research_run_id=rid,
+                    context=ctx,
+                )
+                if row is not None:
+                    _finish(engine, row.id, "failed", res.error or res.status, now)
                 continue
             llm.record_batch_result(
                 purpose="research_backfill",
-                model=row.model,
+                model=model,
                 message=res.message,
-                research_run_id=row.id,
+                research_run_id=rid,
+                custom_id=res.custom_id,
+                context=ctx,
             )
+            if row is None:
+                continue
             items, seen = extract_items(
                 res.message,
                 row.symbol,

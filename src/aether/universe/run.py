@@ -641,8 +641,10 @@ def run_universe_review(
         days = deps.cfg.full_review_cooldown_days
         raise FullReviewCooldown(f"a full re-evaluation already ran in the last {days} days")
     rid = _claim(engine, deps, today, kind, now)
-    budget = RunBudget(deps.budget_usd)
-    adj_budget = RunBudget(deps.adjacent_budget_usd)
+    budget = RunBudget(deps.budget_usd, context={"universe_review_id": rid, "track": "pure_play"})
+    adj_budget = RunBudget(
+        deps.adjacent_budget_usd, context={"universe_review_id": rid, "track": "adjacent"}
+    )
     full_budget: RunBudget | None = None
     payload: dict[str, Any] = {
         "as_of": today.isoformat(),
@@ -900,7 +902,9 @@ def run_universe_review(
 
         if kind == "full":
             left = deps.budget_usd + deps.adjacent_budget_usd - budget.spent - adj_budget.spent
-            full_budget = RunBudget(max(Decimal(0), left))
+            full_budget = RunBudget(
+                max(Decimal(0), left), context={"universe_review_id": rid, "track": "full"}
+            )
             pool = _pool(all_rows, evidence, names, checks, qual)
             fctx, fknown = full_context(
                 today.isoformat(), deps.cfg.max_names_ex_qtum, pool, trigger_refs

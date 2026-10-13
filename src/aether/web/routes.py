@@ -32,6 +32,8 @@ from aether.db.commands import (
     get_command,
     rate_limit_resets_at,
 )
+from aether.llm.pricing import SGT
+from aether.ops import llm_log
 from aether.ops import view as ops_view
 from aether.options.view import options_panel, options_stale
 from aether.portfolio import holdings_view, performance, thesis
@@ -286,6 +288,7 @@ def news_page(request: Request, symbol: str = "", origin: str = "") -> HTMLRespo
             "backfill": news_view.backfill_summary(engine),
             "feeds": news_view.feeds(engine),
             "stale": news_view.rss_stale(engine),
+            "sweep_stale": news_view.sweep_stale(engine),
         },
     )
 
@@ -501,6 +504,7 @@ def ops_page(request: Request) -> HTMLResponse:
     state = request.app.state
     engine, settings = state.ro_engine, state.settings
     hours = load_alerts_config(settings.config_dir).job_failing_hours
+    llm_cfg = load_llm_config(settings.config_dir)
     return _render(
         request,
         "ops.html",
@@ -517,9 +521,46 @@ def ops_page(request: Request) -> HTMLResponse:
                 budget=settings.escalation_daily_budget_usd,
             ),
             "messages": ops_view.message_counts(engine),
-            "esc_params": load_llm_config(settings.config_dir).escalation,
+            "esc_params": llm_cfg.escalation,
             "evals": ops_view.eval_scores(engine),
             "backups": ops_view.backups(engine, settings.resolved_backup_dir),
+            "components": ops_view.component_spend(engine, llm_cfg),
+            "log": ops_view.expense_log(
+                engine,
+                d_from=request.query_params.get("from"),
+                d_to=request.query_params.get("to"),
+                purpose=request.query_params.get("purpose"),
+                model=request.query_params.get("model"),
+                status=request.query_params.get("status"),
+            ),
+        },
+    )
+
+
+@router.get("/ops/llm-log.{fmt}")
+def ops_llm_log(request: Request, fmt: str) -> Response:
+    """M15 expense export (spec §10): metadata only, read-only engine, never cached."""
+    if fmt not in ("csv", "json"):
+        raise HTTPException(status_code=404)
+    state = request.app.state
+    try:
+        d_from, d_to = llm_log.parse_range(
+            request.query_params.get("from"),
+            request.query_params.get("to"),
+            datetime.now(SGT).date(),
+        )
+    except llm_log.RangeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    body = llm_log.export(
+        state.ro_engine, load_llm_config(state.settings.config_dir), d_from, d_to, fmt
+    )
+    name = f"llm-log-{d_from.isoformat()}-{d_to.isoformat()}.{fmt}"
+    return Response(
+        body,
+        media_type="text/csv; charset=utf-8" if fmt == "csv" else "application/json",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{name}"',
         },
     )
 

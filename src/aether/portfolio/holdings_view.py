@@ -20,7 +20,7 @@ from aether.db.models import (
     review_packs,
     tickers,
 )
-from aether.market import job_stale, last_ok_finished, symbol_stale
+from aether.market import WEEKLY_JOB_MAX_AGE, job_stale, last_ok_finished, symbol_stale
 from aether.portfolio.holdings import (
     Holdings,
     PortfolioSettings,
@@ -33,7 +33,7 @@ from aether.portfolio.publish import Published, last_prices, latest_published, n
 from aether.portfolio.rebalance import drift_summary
 from aether.review.pack import latest_fx
 
-REBALANCE_JOB_MAX_AGE = timedelta(hours=30)
+REBALANCE_JOB_MAX_AGE = WEEKLY_JOB_MAX_AGE  # weekly from M15 (spec §9)
 TIGER_SYNC_MAX_AGE = timedelta(hours=30)
 OWNER_COMMANDS = (
     "update_holdings",

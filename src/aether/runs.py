@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from sqlalchemy import Engine, insert, update
@@ -18,6 +19,10 @@ from aether.db.models import job_runs
 from aether.db.types import utcnow_iso
 
 log = logging.getLogger(__name__)
+
+# M15: the job a thread is running, as (name, job_runs.id). The LLM wrapper copies it into each
+# `llm_calls.context`, so call sites only add their domain IDs.
+current_job: ContextVar[tuple[str, int] | None] = ContextVar("current_job", default=None)
 
 
 @dataclass(frozen=True)
@@ -37,9 +42,11 @@ def run_job(engine: Engine, name: str, fn: Callable[[], JobResult]) -> JobResult
         ).scalar_one()
     t0 = time.monotonic()
     log.info("job %s started", name, extra={"job": name, "run_id": run_id})
+    token = current_job.set((name, run_id))
     try:
         result = fn()
     except Exception as exc:
+        current_job.reset(token)
         log.exception(
             "job %s failed",
             name,
@@ -57,6 +64,7 @@ def run_job(engine: Engine, name: str, fn: Callable[[], JobResult]) -> JobResult
                 .values(finished_at=utcnow_iso(), status="failed", error=repr(exc)[:500])
             )
         return None
+    current_job.reset(token)
     with write_tx(engine) as conn:
         conn.execute(
             update(job_runs)

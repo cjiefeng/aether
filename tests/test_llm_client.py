@@ -82,7 +82,7 @@ def test_budget_breach_stops_calls(rw_engine: Engine, migrated_db: Path) -> None
         _complete(client)
     assert api.requests == []
     refused = _rows(rw_engine)[-1]
-    assert refused.status == "budget_refused"
+    assert refused.status == "refused_budget"
     assert refused.cost_micros == Decimal(0)
     assert "budget" in refused.error
 

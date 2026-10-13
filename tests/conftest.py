@@ -105,3 +105,45 @@ def seed_tickers(engine: Engine, rows: list[tuple[str, str]]) -> None:
             [{"symbol": s, "type": t, "active": 1} for s, t in rows],
             key_cols=["symbol"],
         )
+
+
+@pytest.fixture(autouse=True)
+def llm_rows_match_calls() -> Iterator[None]:
+    """M15 (spec §10): every LLM call made through the fake transport logs exactly one
+    `llm_calls` row. Per engine: each answered POST /v1/messages ↔ one ok/refusal row with its
+    request id, and each answered batch submission ↔ one `batch_submitted` row."""
+    from sqlalchemy import func, select
+
+    from aether.db.models import llm_calls
+    from tests import llm_fakes
+
+    llm_fakes.CREATED.clear()
+    yield
+    by_engine: dict[int, tuple[Engine, int, int]] = {}
+    for api in llm_fakes.CREATED:
+        if api.engine is None:
+            continue
+        eng, msgs, batches = by_engine.get(id(api.engine), (api.engine, 0, 0))
+        by_engine[id(api.engine)] = (
+            eng,
+            msgs + api.ok_count("POST", "/v1/messages"),
+            batches + api.ok_count("POST", "/v1/messages/batches"),
+        )
+    llm_fakes.CREATED.clear()
+    for eng, msgs, batches in by_engine.values():
+        try:
+            with eng.connect() as conn:
+                logged = conn.execute(
+                    select(func.count()).where(
+                        llm_calls.c.batch == 0,
+                        llm_calls.c.status.in_(("ok", "refusal")),
+                        llm_calls.c.request_id.is_not(None),
+                    )
+                ).scalar_one()
+                submitted = conn.execute(
+                    select(func.count()).where(llm_calls.c.status == "batch_submitted")
+                ).scalar_one()
+        except Exception:  # the test disposed of or deleted its DB
+            continue
+        assert logged == msgs, f"{msgs} answered LLM calls but {logged} llm_calls rows"
+        assert submitted == batches, f"{batches} batch submissions but {submitted} rows"

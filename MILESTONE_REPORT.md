@@ -1,5 +1,88 @@
 # Milestone report
 
+## M15: LLM cost reduction + LLM expense log (2026-10-13)
+
+The research sweep and the backtest/rebalance plan are now **weekly** (Sunday 07:00 / 07:10 SGT). Restarts don't trigger paid sweeps, and conclusions wait for the sweep's items to be classified. Web-search calls no longer use prompt caching: a paid A/B showed the cache marker made them dearer. **Every LLM call** now logs one `llm_calls` row per outcome with the full cost breakdown. You can browse and filter that log on the Ops page and export it as CSV/JSON (`make llm-log`).
+
+### Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| `research_sweep` and `portfolio` are weekly Sunday jobs | ✅ | `tests/test_weekly_schedule.py::test_weekly_jobs_are_sunday_crons`; `test_research.py` / `test_portfolio_job.py` scheduler tests updated |
+| Restart 2 days after the last sweep → no sweep; 9 days after → one | ✅ | `test_restart_2_days_after_sweep_runs_none_9_days_runs_one` (built with an API key, so the catch-up path is live); `test_sweep_catch_up_only_after_8_days` |
+| A sweep looks back 7 days | ✅ | `llm.yaml` `sweep_days: 7`; `test_sweep_writes_events_and_runs` (window 2026-09-29 → 2026-10-05) |
+| A holdings update and a publish still recompute the plan the same day | ✅ | unchanged `replan()` / `publish_now` paths; existing holdings/publish tests green |
+| Conclusions run after the sweep's items are classified (or after 60 min) | ✅ | `jobs.wait_for_classification`, called by the scheduled conclusions job; `test_conclusions_wait_for_classification` (finishes early; gives up at exactly 60 min) |
+| A research request carries `cache_control` only on the static system prefix (none on messages with tool or search results); a second identical sweep's prefix reads from cache | ✅ (synthetic fixture) | `test_cache_marker_only_on_static_system_prefix` (walks every request body, including a follow-up whose `messages` carry search results); `test_second_identical_sweep_reads_prefix_from_cache` (byte-identical bodies; write then read on the rows). The fixture is synthetic, shaped like the API; the live A/B below is the real measurement |
+| Ops shows cache-write spend | ✅ | "LLM spend by cost component" card (input, output, cache write, cache read, searches, batch discount, other) against the $0.60–0.90/day target |
+| On recorded usage, a sweep's cost drops vs the 2026-10-13 baseline, target well under $0.10/call | ⚠️ partly | Live A/B (IONQ, 2 searches each arm): **$0.192 without the marker vs $0.217 with it**. The live 2026-10-13 average was ~$0.29 per ok call (≈$0.17 counting the 5 errored calls). Per call is lower, but **not under $0.10**: ~35k tokens of search results at Opus input price is ~$0.14 on its own. Per day the weekly cadence does most of the work (Decision 3) |
+| Every call site produces exactly one row per outcome on a fake transport, including a raised API error and a budget refusal ($0, `refused_budget`) | ✅ | the autouse `llm_rows_match_calls` fixture (`tests/conftest.py`) checks **every** test in the suite: each answered `POST /v1/messages` has exactly one `ok`/`refusal` row and each answered batch submission one `batch_submitted` row. That covers sweep, verify, classify (sync and batch), synthesis, universe/adjacent/full, escalation and eval tests. Outcome tests: `test_retried_error_logs_one_row_with_attempts` (3 attempts → 1 row), `test_refusal_is_logged_and_returned`, `test_budget_refusal_row_is_free_with_context` |
+| A 3-item batch → 1 submission row + 3 result rows at the batch price | ✅ | `test_batch_submission_and_results`; errored items get a $0 `error` row (`test_batch_failure_item_logs_error_row`; classify and backfill poll tests updated) |
+| The export for a range contains every row in it; daily summary totals = sum of rows; no prompt text, holdings, account number or key | ✅ | `test_export_rows_and_summary_add_up` (each summary row's components add to its cost exactly); `test_export_files_are_metadata_only` (a planted `error` text and the key never appear; no `error` column) |
+| `/ops/llm-log.csv` without a session → 303; the endpoint never writes | ✅ | `test_export_routes` (303, `no-store`, attachment, row snapshot unchanged; the route uses `ro_engine`) |
+| Migration | ✅ | `0017_llm_expense_log`; `test_migration_converts_old_statuses` (upgrade converts `budget_refused` and batch `ok`; downgrade restores them); `test_strict_schema.py` green |
+| Tests green, no network | ✅ | `make test`: 792 passed |
+| ruff / mypy / pip-audit | ✅ | `make lint` clean |
+| `make secrets-scan` clean | ✅ | gitleaks: no leaks |
+
+### What was built
+- **Schedule (`jobs.py`):**
+  - `research_sweep` runs Sunday 07:00 and `portfolio` Sunday 07:10.
+  - `WEEKLY_CATCH_UP_AFTER = 8 days`. The sweep's startup catch-up exists only with an API key and fires 2 min after boot.
+  - The conclusions job waits for the classifier (including open batches) for up to 60 minutes.
+  - Stale banners use `WEEKLY_JOB_MAX_AGE = 8 days` for strategies and rebalance, plus a new weekly-sweep banner on `/news` (shown only once a sweep has run).
+  - Page texts are updated.
+- **`config/llm.yaml`:** `sweep_days: 7`, `sweep_max_uses: 3` (was 5), `research.cache_prefix: false`, and `price_version: "2026-10-05"`.
+- **Wrapper (`llm/client.py`), one row per outcome:**
+  - statuses `ok`, `error`, `refusal`, `refused_budget`, `batch_submitted`, `batch_result`
+  - new fields `stop_reason`, `attempts`, `latency_ms`, `effort`, `price_version` and a JSON `context`
+  - The context holds the running job and job run (via `runs.current_job`, a context variable set by `run_job`) plus call-site IDs: symbol, event, universe review and track, batch/custom ID. Keys are allow-listed and must be scalars, so holdings can't be attached.
+  - The SDK's retries are off. The wrapper retries 408/409/429/5xx and connection errors itself (2 retries, backoff, honours `retry-after`), so `attempts` is exact.
+  - Batch status and result-stream failures also log an `error` row.
+  - Refusals are returned to callers unchanged, with their own status.
+- **Migration `0017_llm_expense_log`:** the new columns, the status set, `json_valid(context)`, and the conversion of existing rows.
+- **Export (`ops/llm_log.py`):**
+  - rows for an SGT date range, plus a daily summary by purpose with components recomputed from the price table. `other` closes the gap to the recorded cost, so totals always match.
+  - CSV/JSON, `append_dev_log` and a CLI.
+  - Routes `/ops/llm-log.csv|json`; `make llm-log FROM= TO=` (runs read-only in the worker and writes `exports/llm-log-<from>-<to>.csv` on the host).
+- **Ops page:**
+  - spend by purpose and component over 30 days, with the daily average against the target
+  - the expense log: the latest 100 calls with every field, filters (date range, purpose, model, status) and export links
+- **Evals and dev scripts:**
+  - `make eval` logs with purpose `eval`, and its temp-DB rows are appended to `exports/llm-dev-log.csv`.
+  - New `make sweep-ab SYMBOL=…` (`scripts/sweep_ab.py`) for the cache A/B.
+  - `exports/` is git- and docker-ignored.
+
+### Decisions (deviations from the spec / plan)
+1. **No cache marker on web-search calls (owner-approved A/B, 2026-10-13).** The spec's fix ("breakpoints only on the static prefix") was already what the code did. The live rows showed the writes come from the API itself: with a marker present, web search inserts its own cache writes after each search result. In the A/B those writes were mostly not read back (33.5k written, 2.9k read). The no-marker call cost 11% less. `research.cache_prefix: false` now applies to the sweep, verify, backfill batch and universe research calls. Classification, synthesis and universe proposals (no tools) keep the system-prompt marker; the classifier's live rows read more than they write (74k vs 19k on 2026-10-06). One sample per arm; the switch is in `llm.yaml` if Ops shows otherwise.
+2. **Web-search evals log as `research_eval`, not `eval`.** The S1 tool gate allows tools only for `research*` purposes, and loosening it for evals wasn't worth it. Classifier evals use `eval`.
+3. **Sweep spend estimate:** ~$0.19 per name × 9 names ≈ **$1.7 per weekly sweep ≈ $0.25/day**. That's a little over the §10 split's $0.10–0.20/day. Total spend should land around **$0.85–1.05/day**: at or just over the top of the $0.60–0.90 target. The rest of the cost is search-result tokens at Opus rates. The next lever is `RESEARCH_MODEL=claude-sonnet-5-5` (about half the token cost), which you chose not to take for now.
+4. **`sweep_max_uses` 5 → 3.** Both A/B calls used 2 searches on a 7-day window. 3 caps the expensive tail.
+5. **Exports leave out the `error` text.** It can echo request fragments. Errors are still on the row and on the Ops page's job list.
+6. **The "one row per call" check is a suite-wide fixture** rather than a separate test per call site, so a new call site with a test is covered automatically.
+7. **Old rows:** `budget_refused` became `refused_budget`, and batch `ok` rows became `batch_result`. Rows from before M15 have no `price_version`, effort, latency or context. Their `attempts` shows 1, though the SDK may have retried them.
+
+### Facts
+- No facts added or changed. The A/B numbers are measurements, recorded above and in `exports/llm-dev-log.csv` (local only).
+
+### Open questions
+- **Console vs Aether spend** (from the roadmap note). Aether logs ~$1.5–3/day; you reported ~$5/day. The export's request IDs now make reconciliation possible: export a few days with `make llm-log` and compare by request ID in the Console. Calls in the Console with no matching row didn't come from Aether's wrapper.
+- Whether to move sweeps to Sonnet 5.5 if the Ops page shows research above target after a few Sundays.
+
+### Owner checklist
+- [ ] Merge, then `./deploy.sh`. The migration runs at worker start.
+- [ ] After the first Sunday (2026-10-18), check Ops → "LLM spend by cost component" (research cache-write should now be ~$0) and the daily average vs $0.60–0.90.
+- [ ] Reconcile one day against the Console: `make llm-log FROM=2026-10-18 TO=2026-10-18`.
+- [ ] Optional: `DAILY_LLM_BUDGET_USD=2.00` in `.env` (from the roadmap note).
+
+### How to verify
+```bash
+make test        # 792 passed, network blocked
+make lint        # ruff, mypy --strict, |safe ban, broker + LLM-import checks, pip-audit
+make secrets-scan
+make llm-log FROM=2026-10-01 TO=2026-10-13   # after deploy: exports/llm-log-2026-10-01-2026-10-13.csv
+```
+
 ## Roadmap change: M15 LLM cost reduction (2026-10-13, owner-approved)
 
 **Why:** the owner reported about $5/day of Anthropic spend and wants it lower. They don't need daily rebalancing.

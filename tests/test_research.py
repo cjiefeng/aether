@@ -192,7 +192,7 @@ def test_sweep_writes_events_and_runs(engine: Engine, migrated_db: Path) -> None
     assert [r.symbol for r in runs] == names
     assert all(r.status == "done" and r.items_found == 1 and r.events_new == 1 for r in runs)
     assert all(r.cost_micros > 0 for r in runs)
-    assert all(r.window_start == "2026-10-03" and r.window_end == "2026-10-05" for r in runs)
+    assert all(r.window_start == "2026-09-29" and r.window_end == "2026-10-05" for r in runs)
     with engine.connect() as conn:
         calls = conn.execute(select(llm_calls.c.purpose, llm_calls.c.research_run_id)).all()
         tick = set(conn.execute(select(event_tickers.c.symbol)).scalars())
@@ -325,7 +325,9 @@ def test_backfill_submit_poll_ingest_once(engine: Engine, migrated_db: Path) -> 
     assert after[second.custom_id].status == "failed"
     assert sum(r.status == "failed" for r in after.values()) == len(runs) - 1
     with engine.connect() as conn:
-        (call,) = conn.execute(select(llm_calls)).all()
+        (call,) = conn.execute(select(llm_calls).where(llm_calls.c.status == "batch_result")).all()
+        statuses = sorted(conn.execute(select(llm_calls.c.status)).scalars())
+    assert statuses.count("batch_submitted") == 1 and statuses.count("error") == 1
     assert call.batch == 1 and call.web_searches == 4 and call.purpose == "research_backfill"
     # Batch price: tokens at 50% (1000 in x $4, 200 out x $20 per MTok), searches at full price.
     assert call.cost_micros == (Decimal("0.004") + Decimal("0.004")) / 2 + Decimal("0.04")
@@ -384,7 +386,8 @@ def test_scheduler_registers_news_and_research_jobs(engine: Engine, migrated_db:
     } <= ids
     sweep = sched.get_job("research_sweep")
     fields = {f.name: str(f) for f in sweep.trigger.fields}
-    assert (fields["hour"], fields["minute"]) == ("8,20", "0")  # 08:00 / 20:00 SGT (spec §9)
+    # Weekly, Sunday 07:00 SGT (spec §9, M15; was 08:00 / 20:00 daily).
+    assert (fields["day_of_week"], fields["hour"], fields["minute"]) == ("sun", "7", "0")
     # No API key: research jobs are no-ops (no job_runs rows, no requests).
     sweep.func()
     sched.get_job("research_backfill_submit").func()
