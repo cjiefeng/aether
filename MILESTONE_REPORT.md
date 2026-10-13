@@ -1,5 +1,38 @@
 # Milestone report
 
+## Roadmap change: M15 LLM cost reduction (2026-10-13, owner-approved)
+
+**Why:** the owner reported about $5/day of Anthropic spend and wants it lower. He doesn't need daily rebalancing.
+
+**Measured on the running stack (still on M7, migration `0008`; `llm_calls`, priced at list rates):**
+
+| Day | Research sweeps (Opus 5.5) | Classifier (Sonnet 5.5) | Total |
+|---|---|---|---|
+| 2026-10-05 | 12-month backfill (one-off) | | $9.23 |
+| 2026-10-06 | $3.02 | $0.14 | $3.16 |
+| 2026-10-07 | $2.96 | $0.09 | $3.05 |
+| 2026-10-08 | $1.41 | $0.11 | $1.53 |
+| 2026-10-09 | $1.43 | $0.08 | $1.51 |
+| 2026-10-13 | $2.03 | $0.08 | $2.09 |
+
+- **Research sweeps are ~95% of the spend.** Rebalancing, backtests and targets make **no** LLM calls, so making them weekly saves nothing on its own.
+- **Prompt-cache writes are most of the sweep cost.** On 2026-10-13 sweeps wrote ~308k tokens to cache (~$1.54 of $2.03) at 1.25× input price, and they were never read back.
+- **Aether's own logged spend is ~$1.5–3/day, not $5.** The rest isn't explained by Aether's worker; the milestone live checks all ran with the API key blanked. **Owner check:** compare with the Anthropic Console's Usage/Cost page grouped by API key. If Aether's key alone is ~$5/day, some calls aren't being logged, and M15 must find them.
+
+**M15:**
+- **Weekly research sweep** (Sunday 07:00, 7-day lookback) instead of 2×/day.
+- **Weekly backtest and rebalance plan** (Sunday 07:10), as the owner asked. It's still recomputed after holdings, settings, Tiger, config changes and publishes.
+- **Prompt caching on the static prefix only.**
+- **Weekly-job catch-up after 8 days,** so restarts don't trigger paid sweeps.
+- **Conclusions wait** for the sweep's items to be classified.
+- **Ops page:** spend by purpose and by cost component against a target of **~$0.60–0.90/day** with M8–M15 deployed (vs ~$2.50–3 at the old cadence).
+
+**Trade-off:** news found only by web search can arrive up to a week late. SEC filings (every 30 min) and RSS (hourly) stay real-time and free.
+
+**Owner checklist**
+- [ ] Check the Console spend by API key (see above).
+- [ ] Set `DAILY_LLM_BUDGET_USD` in `.env` (e.g. 2.00) as Aether's own ceiling.
+
 ## M14: Adjacent industries, thesis checks, full re-evaluation (2026-10-09)
 
 Phase 4 ends. Three **adjacent-industry names** (KEYS, FEIM, PANW) now get the full per-name pipeline under a **9-name cap**. Every strategy family gives each name a **minimum weight**. Your Quantum Thesis is applied as **deterministic checks**: concentration by modality and sector, four red-flag monitors, winner signals, the QTUM hyperscaler check and gaps. The monthly review gains the **adjacent track**, the **slot rules** and a **strong-candidate** alert, and there's an owner-triggered **full re-evaluation** for issue #29. Everything stays a proposal: nothing edits the watchlist, a weight or a trade on its own.

@@ -31,7 +31,7 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 | **1b. Portfolio** | M4–M5 | Backtested model strategies per risk profile, password login, holdings page, monthly targets with the filing-rule overlay, rebalance planner, SGD view, monthly review pack, options snapshots | **$0** |
 | **2. Intelligence** | M6–M10 | News classification, catalysts, options analytics, scorecards, event reactions, conclusions with track record, the stance overlay, weekly brief | Budgeted |
 | **3. Hardening** | M11 | Escalation flow, ops, backups, K8s (optional) | — |
-| **4. Discovery & tuning** | M12–M14 | Monthly universe review of pure-plays (M12); tighter escalation and less alert noise and cost (M13); adjacent-industry names KEYS, FEIM, PANW, the adjacent review track, thesis checks and the full re-evaluation (M14) | Budgeted (separate caps; M13 lowers spend) |
+| **4. Discovery & tuning** | M12–M15 | Monthly universe review of pure-plays (M12); tighter escalation and less alert noise and cost (M13); adjacent-industry names KEYS, FEIM, PANW, the adjacent review track, thesis checks and the full re-evaluation (M14); weekly research sweeps and weekly rebalancing with a prompt-cache fix, for about $0.6–0.9/day (M15) | Budgeted (separate caps; M13 and M15 lower spend) |
 
 ### 1.2 Watchlist (in `config/watchlist.yaml`; editable without code changes)
 
@@ -558,7 +558,7 @@ Sleeve weight the per-name caps can't place goes to QTUM (M4 decision 2). Each p
 
 **Monthly targets (amended 2026-10-04: the owner decides monthly, §1.4).** Targets are **published once a month** from the latest close, for the review pack on the 1st (§6.9). Between publish dates the published targets don't move. This replaces the original daily caps (1 pp per name, 3 pp total) and the market-shock (−3σ) override, which are dropped.
 
-- The rebalance plan is still recomputed daily against the published targets, so drift stays current.
+- The rebalance plan is recomputed **weekly** (Sunday 07:10 SGT, from M15; daily before), and also after any holdings, settings or Tiger change and after every publish, so it's current whenever the owner looks after acting.
 - A trade is suggested only when a holding's drift is **≥ 3 pp or ≥ 25% of its target weight**, **and** the trade is **≥ $100**.
 - The page says "targets published YYYY-MM-DD; next publish YYYY-MM-DD".
 
@@ -904,12 +904,12 @@ Dark mode, responsive, fast. Everything renders from SQLite read-only; the page 
 | Earnings calendar | Daily 07:15 |
 | Short interest | Daily check; new data arrives about twice a month |
 | RSS news | Hourly |
-| Claude web-search sweep | 2×/day (08:00, 20:00) |
+| Claude web-search sweep | **Weekly, Sunday 07:00** with a 7-day lookback (M15; was 2×/day at 08:00 and 20:00), plus on demand (**Run research sweep now**) |
 | Classification | On ingest (queue) |
 | Event reactions | Daily 06:45 |
 | Theme decomposition + scorecards | Daily 07:00 |
 | Tiger holdings sync (M5, if configured) | Daily 07:05, and on demand |
-| Dividends + backtests + model strategies (M4); rebalance plan against published targets (M5) | Daily 07:10, and after a holdings update |
+| Dividends + backtests + model strategies (M4); rebalance plan against published targets (M5) | **Weekly, Sunday 07:10** (M15; was daily), after a holdings, settings or Tiger update, after a `strategies.yaml` change (#13) and after every publish |
 | Options snapshot (M5; analytics from M8) | Daily 06:40 |
 | USD/SGD rate (M5) | Daily 06:50 |
 | Publish targets (overlay) + monthly review pack (M5) | 1st of each month, 10:30 (retried once the next day if it fails); off-cycle only via **Publish targets now** |
@@ -923,13 +923,21 @@ Dark mode, responsive, fast. Everything renders from SQLite read-only; the page 
 
 All jobs run in the single worker's APScheduler with `max_instances=1`. Network I/O and LLM calls happen **outside** write transactions.
 
+**Weekly jobs (M15):**
+- **Startup catch-up:** a weekly job catches up at startup only when its last ok run is more than **8 days** old, not the 24 h used for daily jobs. Otherwise every restart would trigger a paid sweep.
+- **Stale banners:** these use an 8-day tolerance.
+- **Sunday ordering:** sweep 07:00 → classification of the new items → calibration 08:00 → conclusions 08:30. If classification of the sweep's items is still running at 08:30, conclusions wait for it (up to 60 min) rather than run on half-classified evidence.
+
 ---
 
 ## 10. LLM usage & cost control
 
 - One wrapper, `llm/client.py`:
   - soft budget guard (`DAILY_LLM_BUDGET_USD`, default 3.00; alert at 80%, hard stop at 100%)
-  - prompt caching for static system prompts
+  - prompt caching **only for the static prefix**: system prompt, tool definitions and fixed instructions. **Never** place a cache breakpoint after tool results, web-search results or per-request content (M15).
+    - Measured on 2026-10-13: research sweeps wrote ~308k tokens to cache in one day (~$1.54 of $2.03) that were never read back.
+    - A cache write costs 1.25× input, so caching one-off content raises cost.
+    - The wrapper records `cache_write_tokens` per call, and the Ops page shows cache-write spend separately.
   - retries with backoff
   - redacted logging
   - a row in `llm_calls` for every call
@@ -939,6 +947,14 @@ All jobs run in the single worker's APScheduler with `max_instances=1`. Network 
 - Escalations: `MAX_ESCALATIONS_PER_DAY` and a per-ticker cooldown (§5.2).
 - Monthly universe review (§6.7): `RESEARCH_DEEP_MODEL` (strongest Opus tier) for both the research and the no-tools proposal call, capped per run by `UNIVERSE_REVIEW_BUDGET_USD` (plus `UNIVERSE_ADJACENT_BUDGET_USD` for the M14 track). Adjacent names (M14) add their own research sweeps and weekly conclusions, roughly +$0.3–0.7/day at the §10 assumptions.
 - Backfill uses the **Message Batches API**.
+- **Spend targets (M15):** about **$0.60–0.90/day** for normal running after M8–M15 are deployed. The rough split:
+  - weekly sweeps: $0.10–0.20/day
+  - classifier: under $0.10/day
+  - weekly conclusions: ~$0.20/day
+  - monthly universe reviews: $0.30–0.50/day averaged
+  - escalations: rare (M13)
+
+  The Ops page shows the last 30 days against this target, by purpose and by cost component (input, output, cache write, cache read, searches).
 - Options analytics may enter synthesis prompts as computed metrics (§6.8). The mandate (§1.4) never does.
 - Holdings (manual or Tiger-synced, and the deprecated `positions.yaml`), the broker account number, secrets and the owner's email never go into prompts. The SEC User-Agent goes only to SEC.
 
@@ -987,6 +1003,7 @@ Each milestone ends with: tests green (no network), `ruff`/`mypy` clean, `make s
 | **M12** | Monthly universe review | `config/universe.yaml` (criteria), deterministic discovery (QTUM holdings, EDGAR full-text search, current pure-plays), deep research on `RESEARCH_DEEP_MODEL`, deterministic eligibility checks, no-tools proposal with citation validator, `universe_reviews` / `universe_candidates`, Telegram summary + Universe page, proposals also in the monthly review pack (§6.9), monthly job, per-run budget cap. Depends on M3 (Telegram), M6 (research runner, LLM wrapper) and M10 (citation validator). | On recorded fixtures: a candidate below the market-cap or liquidity floor is never proposed as `add`, even when the model says add; a candidate without a T1 business excerpt is never `add`; a synthetic acquisition 8-K (Item 2.01) on a pure-play → `remove`; a recent listing with <60 sessions → `watch`; unknown evidence IDs are rejected; the Telegram text is plain, ≤4096 chars, and sent once per review; a month with no changes sends "No changes proposed"; hitting the budget cap marks the run `failed` and sends nothing; the job is registered for the 1st of the month at 10:00 SGT |
 | **M13** | Escalation & alert-noise tuning | Built after M12 and before M14 (M14 adds 3 names, which would add noise and cost under the M11 rules). §5.2.5 M13 rules: RISK-only triggers, materiality 5 or ≥ 4 in a severe category (`going_concern`, `short_report`, `guidance_cut`, deficiency/common-stock `delisting_or_compliance` via the M5 overlay parser, `dilution` ≥ 10% of FD shares when parsed); verification research only for events without a T1 source; `MAX_ESCALATIONS_PER_DAY` 2, 72 h per-ticker cooldown; `ESCALATION_DAILY_BUDGET_USD` sub-budget. §5.2.6 notification policy: one Telegram message per event (merging `risk_event`, `off_cycle_review` and `escalation`), escalation results sent only on a stance or overlay change, immediate vs 08:00 SGT daily digest, `alerts.delivery` and the `digest` kind (migration), Ops-page counts. Config: `config/llm.yaml` → `escalation`, `config/alerts.yaml`. | A SIGNAL event at materiality 5 never escalates; an S-3, a 424B5 under 10% of FD shares, a warrant-only Form 25 and an 8-K 3.02 alert but don't escalate; a going-concern event (5) and a 424B5 at 12% of FD shares escalate; a T1 escalation runs no verification search but does re-synthesize, and a T2-only escalation runs both; the 3rd escalation in a day is refused (`daily_cap`), as is a 2nd on the same ticker within 72 h; hitting the escalation sub-budget refuses further escalations (`budget`) while classification and sweeps still run; a 424B5 that triggers RISK, off-cycle and escalation alerts sends **one** Telegram message with all three labels; an unchanged re-synthesis sends no result message, while a stance change does; RISK materiality 3 and T−7 reminders go to the 08:00 digest, and an empty digest sends nothing; all alerts still appear on `/alerts` |
 | **M14** | Adjacent industries | Migration: `tickers.type` gains `adjacent`, new `tickers.sector`; `universe_candidates` gains the §6.7.1 columns. `watchlist.yaml` adds **KEYS, FEIM, PANW** (CIKs above) with sectors; `max_names_ex_qtum: 9` enforced by the watchlist loader, holdings validation and the review. Adjacent names go through prices, dividends, EDGAR, news/research, classification, reactions and track record (benchmark QQQ), scorecards, conclusions, the strategy sleeve (`sleeve_types`), overlay, Tiger sync and the Holdings page; excluded from the theme basket. Facts for the three names' quantum evidence in `facts.yaml` (`unverified` until checked against sources). **Thesis checks (§6.10)**: `tickers.modality` with T1-sourced facts, `config/thesis.yaml`, concentration by modality/sector, the four red-flag monitors, winner signals, the QTUM hyperscaler-weight check, gaps feeding `fills_gap`, shown on Holdings, Strategies, ticker pages and in the review pack. **Minimum weight per name** in every strategy family (`min_per_name`, §6.5; overlay still overrides). **§6.7.1 adjacent track** in the monthly review: sector config, seeds, code exclusions (hyperscaler list, SIC 3674, pure-plays, already held), eligibility, market-cap bucket, overlap, exposure cap, **§6.7.2 slot rules** (removal of any of the 9 on a qualifying bad-news trigger; strong-candidate Telegram notification when all slots are full), shortlist ≤ 5, Universe tab, Telegram section, review-pack lines, own budget cap. Depends on M12. | KEYS/FEIM/PANW appear on the Overview, ticker pages and Holdings, with EDGAR filings and scorecards; a 10th active name makes the watchlist loader fail with a clear error; the theme decomposition basket is unchanged; a reaction for an adjacent name uses QQQ; **floors:** in every family each eligible name's base weight is ≥ `min_per_name` and ≤ `max_per_name` and the sleeve still sums to its target; momentum's non-top-3 names sit at the floor; floors that don't fit shrink to sleeve ÷ names with a page note; a name zeroed by an overlay hard rule stays at 0. **Thesis checks (synthetic fixtures):** a pure-play without a modality fails the loader; a sleeve with one modality over 50% raises the concentration flag; each red flag fires on its synthetic trigger and not just below it (2 vs 1 financing; 23 vs 25 months of runway; +4% revenue with +30% opex vs +6%; acquisitions at 26% vs 24% of liquidity); winner signals need all three; a QTUM snapshot with 11% hyperscaler weight is flagged; no thesis check changes a weight or writes a trade; **full re-evaluation:** a current name with no §6.7.2 trigger can still be proposed as a drop, with cited reasons; the proposed set never exceeds 9 or includes an excluded name; a set breaking a concentration flag is marked; the command is CSRF-protected and refused a second time within 7 days; `STRATEGY.md` text never appears in a prompt (a test greps the prompt builders). **Review (recorded fixtures):** an excluded hyperscaler or a SIC-3674 company is never researched or proposed; a candidate with only T3 evidence is never `add`; `high` exposure without a T1 principal-product excerpt is capped to `med`; an already-active name is never `add`; a `remove` proposal for any of the 9 needs a qualifying trigger (RISK ≥ 4 with T1 or 2×T2, an overlay hard rule, or an accepted AVOID), otherwise it's downgraded to a `watch` note; with all 9 slots full no `add` is proposed; a candidate meeting the strong-candidate thresholds sends exactly one `universe_strong_candidate` Telegram message naming the weakest current name, and isn't re-sent within 3 reviews without new evidence; one that misses a threshold stays `watch` with no notification; market cap, bucket and overlap (QTUM weight) are computed in code; a private company appears only as "not investable"; the shortlist has ≤ 5 entries; the adjacent budget cap stops only the adjacent track; **§6.7.3 full re-evaluation** (owner-triggered `universe_full_review` command, complete proposed set of ≤ 9, no protection for current names, cited reasons for every drop, before/after modality and sector weights); **close-out:** the M14 report's owner checklist must raise cjiefeng/aether#29 (the deferred **full holdings review**, which may repopulate the set) and offer to run the first full re-evaluation; #29 is **resolved** (outcome comment, then closed) only after that review and the owner's decision, never auto-closed by the M14 PR |
+| **M15** | LLM cost reduction | **Weekly research sweep** (Sunday 07:00 SGT, `sweep_days: 7`, `sweep_max_uses` reviewed for the longer window) in place of 2×/day; **weekly backtest and rebalance plan** (Sunday 07:10) in place of daily, still recomputed after holdings, settings, Tiger, `strategies.yaml` changes and publishes; weekly-job startup catch-up only after 8 days, and 8-day stale tolerance; Sunday ordering (sweep → classify → conclusions wait up to 60 min); **prompt-cache fix**: cache breakpoints only on the static prefix in research, classification, synthesis and universe calls, never after tool or search results; Ops page: spend by purpose and by cost component (incl. cache writes) vs the §10 target; spec §6.6, §9 and §10 updated. No schema change expected. | The scheduler registers `research_sweep` and `portfolio` as weekly Sunday jobs; a worker restart 2 days after the last sweep runs **no** sweep, one 9 days after runs one; a sweep looks back 7 days; a holdings update and a publish still recompute the plan the same day; conclusions run after the sweep's items are classified (or after the 60-min wait); **recorded-fixture test:** a research request carries `cache_control` only on the static system prefix (none on messages containing tool or search results), and a second identical sweep's prefix reads from cache; Ops shows cache-write spend; on recorded usage, a sweep's cost drops versus the 2026-10-13 baseline (~$0.17 per sweep call → target well under $0.10); `make test`, `make lint` and `make secrets-scan` are clean |
 
 ---
 
