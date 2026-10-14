@@ -22,6 +22,10 @@ trade**: the research overlay (§6.6.1) stays the only automatic weight adjustme
 6. Gaps: modalities and supplier sectors with no active name (feeds the review's `fills_gap`).
 7. Stepwise building: QTUM's drawdown from its 52-week high and the red-flag count, next to the
    rebalance planner's new-cash-only mode. Information only.
+8. Pure-play share (M16): every breakdown carries the "QTUM / pure-play / adjacent" split and the
+   look-through pure-play exposure (direct + QTUM's weight x QTUM's holdings of the tracked
+   pure-plays, from the latest snapshot). A profile with `pure_play_min_total` is flagged when its
+   post-overlay published pure-play share is below it. Information only.
 """
 
 from __future__ import annotations
@@ -92,8 +96,40 @@ def load_names(conn: Connection) -> list[Name]:
 # --------------------------------------------------------------------------- 2. concentration
 
 
+def pure_play_split(
+    weights: Mapping[str, float],
+    names: Sequence[Name],
+    qtum: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    """Shares of the whole (QTUM included) in QTUM, pure-plays and adjacent names, and the
+    look-through pure-play exposure. `qtum`: QTUM's holdings in percent (`latest_qtum`); with no
+    snapshot the look-through is None."""
+    by_symbol = {n.symbol: n for n in names}
+    out: dict[str, Any] = {"qtum": 0.0, "pure_play": 0.0, "adjacent": 0.0}
+    for s, w in weights.items():
+        if s == CORE:
+            out["qtum"] += max(0.0, float(w))
+        elif s in by_symbol:
+            out[by_symbol[s].type] += max(0.0, float(w))
+    whole = out["qtum"] + out["pure_play"] + out["adjacent"]
+    if whole > 0:
+        out = {k: v / whole for k, v in out.items()}
+    via = (
+        sum(float(qtum.get(n.symbol, 0.0)) for n in names if n.type == "pure_play") / 100.0
+        if qtum
+        else None
+    )
+    out["qtum_pure_play"] = via
+    out["look_through"] = None if via is None else out["pure_play"] + out["qtum"] * via
+    return out
+
+
 def breakdown(
-    weights: Mapping[str, float], names: Sequence[Name], cfg: ThesisConfig
+    weights: Mapping[str, float],
+    names: Sequence[Name],
+    cfg: ThesisConfig,
+    qtum: Mapping[str, float] | None = None,
+    pure_play_min: float | None = None,
 ) -> dict[str, Any]:
     """Weights by modality and by supplier sector, with the concentration flags. `weights` are
     fractions of the whole sleeve (QTUM included); names outside `names` other than QTUM are
@@ -154,6 +190,7 @@ def breakdown(
                 f"the minimum is {cfg.min_modalities}",
             }
         )
+    split = pure_play_split(weights, names, qtum)
     return {
         "rows": rows,
         "flags": flags,
@@ -161,6 +198,12 @@ def breakdown(
         "whole": whole,
         "qtum": float(weights.get(CORE, 0.0)),
         "modalities_held": modalities,
+        "split": split,
+        # Check 8 (M16): set only where the caller passes the profile's minimum.
+        "pure_play_min": pure_play_min,
+        "pure_play_flag": None
+        if pure_play_min is None or not held
+        else split["pure_play"] < pure_play_min - 1e-9,
     }
 
 
@@ -577,6 +620,7 @@ def thesis_report(
     holdings: Mapping[str, Decimal] | None = None,
     targets: Mapping[str, Mapping[str, float]] | None = None,
     with_names: bool = True,
+    pure_play_min: Mapping[str, float | None] | None = None,
 ) -> dict[str, Any]:
     """Everything the pages and the review pack show. Read-only; never writes."""
     with engine.connect() as conn:
@@ -596,8 +640,12 @@ def thesis_report(
         "per_name": per_name,
         "red_flag_total": sum(v["n_flags"] for v in per_name.values()),
         "winners": sorted(s for s, v in per_name.items() if v["winner"] and v["winner"]["present"]),
-        "holdings": breakdown(held, names, cfg) if held else None,
-        "targets": {p: breakdown(w, names, cfg) for p, w in (targets or {}).items()},
+        "holdings": breakdown(held, names, cfg, qtum) if held else None,
+        "targets": {
+            p: breakdown(w, names, cfg, qtum, (pure_play_min or {}).get(p))
+            for p, w in (targets or {}).items()
+        },
+        "qtum_snapshot": snap,
         "hyperscaler": hyperscaler_check(qtum, snap, excluded, cfg),
         "gaps": gaps(names),
         "qtum_drawdown": dd,
@@ -610,6 +658,7 @@ def summary_lines(report: Mapping[str, Any], profile: str | None = None) -> list
     cap = report["cap"]
     lines = [f"Names: {cap['used']} of {cap['max']} used (QTUM excluded)."]
     t = (report.get("targets") or {}).get(profile) if profile else None
+    lines += split_lines(report)
     for label, b in (
         ("Holdings", report.get("holdings")),
         (f"{profile} targets" if profile else "", t),
@@ -648,6 +697,28 @@ def summary_lines(report: Mapping[str, Any], profile: str | None = None) -> list
     return lines
 
 
+def split_text(sp: Mapping[str, Any]) -> str:
+    text = (
+        f"QTUM {sp['qtum']:.0%} / pure-play {sp['pure_play']:.0%} / adjacent {sp['adjacent']:.0%}"
+    )
+    if sp.get("look_through") is not None:
+        text += f" (look-through pure-play {sp['look_through']:.0%})"
+    return text
+
+
+def split_lines(report: Mapping[str, Any]) -> list[str]:
+    """M16: every profile's published split and the pure-play-share flag (weights only)."""
+    lines = []
+    for p, b in (report.get("targets") or {}).items():
+        lines.append(f"{p.capitalize()} targets: {split_text(b['split'])}.")
+        if b.get("pure_play_flag"):
+            lines.append(
+                f"{p.capitalize()} pure-play share {b['split']['pure_play']:.0%} is below the "
+                f"{b['pure_play_min']:.0%} minimum (information only)."
+            )
+    return lines
+
+
 # --------------------------------------------------------------------------- pages
 
 
@@ -656,7 +727,7 @@ def page_report(
 ) -> dict[str, Any]:
     """The thesis panel for Holdings / Strategies / the review pack: actual holdings (if any) and
     every profile's published targets. Read-only."""
-    from aether.config import PROFILES, load_thesis_config, load_universe_config
+    from aether.config import PROFILES, load_strategies, load_thesis_config, load_universe_config
     from aether.portfolio.holdings import load_holdings
     from aether.portfolio.publish import latest_published
 
@@ -677,6 +748,9 @@ def page_report(
         load_universe_config(config_dir),
         holdings=positions,
         targets=targets,
+        pure_play_min={
+            p: pp.pure_play_min_total for p, pp in load_strategies(config_dir).profiles.items()
+        },
     )
 
 

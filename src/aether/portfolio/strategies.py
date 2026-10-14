@@ -11,19 +11,25 @@ Minimum weight per name (M14, spec §6.5): every eligible name first gets the fl
 each name's total kept within the cap (so the family sees a cap of `cap - f`). Momentum's names
 outside the top N therefore sit at the floor. The research overlay runs later and can still cut a
 name to 0.
+
+Buckets (M16, spec §6.5; aggressive): the adjacent names and the pure-plays are weighted
+separately by the same family, each with the floor inside its bucket:
+1. adjacent: `adj_total` over the eligible adjacent names, each <= `adj_cap`;
+2. pure-plays: the rest of the sleeve, so whatever the adjacent bucket can't place goes to the
+   pure-plays first, each <= `cap`;
+3. QTUM takes what the pure-plays can't place. Nothing ever overflows into an adjacent name.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
 
+from aether.config import FAMILIES as FAMILIES  # re-exported: the families live in config (M16)
 from aether.config import BacktestParams
-
-Family = Literal["core_equal", "core_inv_vol", "core_min_var", "core_momentum"]
-FAMILIES: tuple[Family, ...] = ("core_equal", "core_inv_vol", "core_min_var", "core_momentum")
+from aether.config import Family as Family
 
 Vec = NDArray[np.float64]
 VOL_FLOOR = 1e-12
@@ -175,6 +181,37 @@ def _method_weights(
     raise ValueError(f"unknown family {family!r}")
 
 
+@dataclass(frozen=True)
+class Buckets:
+    """Column indexes of the pure-plays and the adjacent names, and the adjacent bucket's limits."""
+
+    pure: list[int]
+    adjacent: list[int]
+    adj_total: float
+    adj_cap: float
+
+
+def bucketed_sleeve(
+    family: Family,
+    R: NDArray[np.float64],
+    t: int,
+    *,
+    sleeve: float,
+    cap: float,
+    buckets: Buckets,
+    params: BacktestParams,
+    floor: float = 0.0,
+) -> tuple[list[int], Vec, list[int], Vec]:
+    """(adjacent names, their weights, pure-play names, their weights) for session t."""
+    adj = eligible(R, t, buckets.adjacent, params.min_sessions)
+    pure = eligible(R, t, buckets.pure, params.min_sessions)
+    aw = sleeve_weights(
+        family, R, t, adj, min(buckets.adj_total, sleeve), buckets.adj_cap, params, floor
+    )
+    pw = sleeve_weights(family, R, t, pure, sleeve - float(aw.sum()), cap, params, floor)
+    return adj, aw, pure, pw
+
+
 def target_weights(
     family: Family,
     R: NDArray[np.float64],
@@ -186,9 +223,26 @@ def target_weights(
     cap: float,
     params: BacktestParams,
     floor: float = 0.0,
+    buckets: Buckets | None = None,
 ) -> Vec:
-    """Full weight vector (columns of R) held during session t, from `R[:t]` only."""
+    """Full weight vector (columns of R) held during session t, from `R[:t]` only. With
+    `buckets` the sleeve is allocated per bucket (M16) and `sleeve` is ignored."""
     w = np.zeros(R.shape[1])
+    if buckets is not None:
+        adj, aw, pure, pw = bucketed_sleeve(
+            family,
+            R,
+            t,
+            sleeve=1.0 - qtum_weight,
+            cap=cap,
+            buckets=buckets,
+            params=params,
+            floor=floor,
+        )
+        w[adj] = aw
+        w[pure] = pw
+        w[core] = 1.0 - float(aw.sum()) - float(pw.sum())
+        return w
     names = eligible(R, t, sleeve, params.min_sessions)
     sw = sleeve_weights(family, R, t, names, 1.0 - qtum_weight, cap, params, floor)
     w[names] = sw

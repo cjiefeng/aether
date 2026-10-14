@@ -31,6 +31,9 @@ sleeve_types: [pure_play, adjacent]
 # min_per_name; the family method allocates only the rest, each name within max_per_name. If the
 # floors don't fit (names x floor > sleeve) the floor shrinks to sleeve / names and the page says so.
 # The research overlay still zeroes or halves a name on evidence: the floor never overrides it.
+# M16: optional per profile: adjacent_max_total / adjacent_max_per_name (buckets; null = one
+# sleeve as above), pure_play_min_total (flag only) and families (allow-list; default all four).
+# Safe and medium leave them out, so they behave exactly as before.
 profiles:
   safe:
     qtum_weight: 0.75
@@ -48,11 +51,20 @@ profiles:
     rank_metric: sortino_high
   aggressive:
     qtum_weight: 0.15
-    max_per_name: 0.35
+    max_per_name: 0.35        # pure-plays
     min_per_name: 0.04
     vol_limit_x: null
     max_dd_limit_pp: null
     rank_metric: sortino_high
+    # M16 (spec §6.5, owner 2026-10-14): Aggressive = least QTUM, most pure-play. Adjacent names
+    # share at most 20% (10% each); the pure-plays get the rest of the sleeve. Adjacent overflow
+    # goes to the pure-plays, then QTUM; pure-play overflow goes to QTUM, never to adjacent names.
+    # Pure-plays below 65% after the overlay raise the §6.10 pure-play-share flag (no trade).
+    adjacent_max_total: 0.20
+    adjacent_max_per_name: 0.10
+    pure_play_min_total: 0.65
+    # Risk-based families favour the low-volatility adjacent names: not allowed here.
+    families: [core_equal, core_momentum]
 
 # Rebalance planner (spec §6.6, M5). A holding trades only if its drift is >= 3 pp or >= 25% of
 # its target weight, and the trade is at least min_trade_usd.

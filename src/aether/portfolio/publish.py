@@ -39,15 +39,21 @@ from aether.db.models import (
     rebalance_plans,
     strategy_runs,
     strategy_weights,
+    tickers,
 )
 from aether.db.types import utcnow_iso
 from aether.portfolio.holdings import read_holdings, read_settings, universe_symbols
 from aether.portfolio.job import canon, run_config_digest
-from aether.portfolio.overlay import apply_overlay, layer1_findings, stance_adjustments
+from aether.portfolio.overlay import (
+    OverlayBuckets,
+    apply_overlay,
+    layer1_findings,
+    stance_adjustments,
+)
 from aether.portfolio.rebalance import PlanInputs, build_plan
 from aether.runs import JobResult
 
-ALGO_VERSION = "m10.1"
+ALGO_VERSION = "m16"  # m16: bucketed redistribution for profiles with buckets
 SGT = ZoneInfo("Asia/Singapore")
 
 
@@ -177,14 +183,28 @@ def compute_targets(
             weights.track_record,
         )
     )
+    pure = frozenset(
+        conn.execute(
+            select(tickers.c.symbol).where(
+                tickers.c.symbol.in_(sleeve), tickers.c.type != "adjacent"
+            )
+        ).scalars()
+    )
     now = utcnow_iso()
     rows = []
     for profile in PROFILES:
         pp = config.profiles[profile]
         sid = run.summary["profiles"][profile].get("strategy_id")
+        buckets = (
+            OverlayBuckets(pure, pp.adjacent_max_per_name, pp.adjacent_max_total)
+            if pp.adjacent_max_total is not None and pp.adjacent_max_per_name is not None
+            else None
+        )
         if sid:
             base = _base_weights(conn, run.id, sid)
-            published, chain = apply_overlay(base, sleeve, pp.max_per_name, findings, stances)
+            published, chain = apply_overlay(
+                base, sleeve, pp.max_per_name, findings, stances, buckets
+            )
             adjustments: dict[str, Any] = {"chain": chain, "note": None}
         else:
             prev = latest_published(conn, profile)
@@ -198,6 +218,13 @@ def compute_targets(
         digest = hashlib.sha256(
             canon(
                 {
+                    **(
+                        {}
+                        if buckets is None
+                        else {
+                            "buckets": [sorted(pure), buckets.adj_cap, buckets.adj_total],
+                        }
+                    ),
                     "algo": ALGO_VERSION,
                     "run": run.input_hash.hex(),
                     "profile": profile,

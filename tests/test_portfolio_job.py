@@ -59,8 +59,8 @@ def test_run_stores_everything(seeded: Engine) -> None:
     res = run_strategies(seeded, CONFIG)
     assert res.rows_written > 0
     assert _count(seeded, strategy_runs) == 1
-    # 4 families x (2 + 3 + 3) grid points + 3 benchmarks
-    assert _count(seeded, strategy_metrics) == 4 * 3 + 3  # 4 families x 3 fixed-QTUM profiles
+    # safe + medium: 4 families each; aggressive (M16): core_equal + core_momentum; 3 benchmarks
+    assert _count(seeded, strategy_metrics) == 4 + 4 + 2 + 3
     with seeded.connect() as conn:
         summary = json.loads(conn.execute(select(strategy_runs.c.summary)).scalar_one())
         sums = conn.execute(
@@ -68,7 +68,7 @@ def test_run_stores_everything(seeded: Engine) -> None:
                 strategy_weights.c.strategy_id
             )
         ).all()
-    assert len(sums) == 12 and all(abs(s - 1) < 1e-9 for _, s in sums)
+    assert len(sums) == 10 and all(abs(s - 1) < 1e-9 for _, s in sums)
     assert summary["universe"] == ["QTUM", *SLEEVE]
     assert any(c.startswith("FAKE has 90 sessions of history") for c in summary["caveats"])
     for p in ("safe", "medium", "aggressive"):
@@ -174,7 +174,7 @@ def test_old_curves_are_pruned(seeded: Engine, monkeypatch: pytest.MonkeyPatch) 
         runs = set(conn.execute(select(strategy_curves.c.run_id)).scalars())
         latest = conn.execute(select(func.max(strategy_runs.c.id))).scalar_one()
     assert runs == {latest}
-    assert _count(seeded, strategy_metrics) == 2 * 15  # metrics and weights are kept
+    assert _count(seeded, strategy_metrics) == 2 * 13  # metrics and weights are kept
 
 
 def test_scheduler_registers_portfolio_job(rw_engine: Engine, migrated_db: Path) -> None:

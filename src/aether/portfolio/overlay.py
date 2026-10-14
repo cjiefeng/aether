@@ -29,7 +29,13 @@ The owner can clear a reviewed filing by accession (`overlay.cleared_accessions`
 M10 layer 2: each pure-play's latest stance (after hysteresis, not older than
 `conclusions.stance_max_age_days`) scales its weight by `overlay.stance_multipliers`; while the
 ticker's track record is unproven (score/track_record.py) the multiplier is clamped to
-`overlay.unproven_clamp`. Hard rules are never clamped. Every adjustment cites its evidence
+`overlay.unproven_clamp`. Hard rules are never clamped.
+
+M16 buckets (spec §6.6.1; a profile with `adjacent_max_total` set, i.e. aggressive): adjacent
+names are capped at `adjacent_max_per_name` each and `adjacent_max_total` together (a stance
+can't lift them past either), and freed weight, whether from a pure-play or an adjacent name,
+goes only to the uncut pure-plays within their caps, then QTUM. It never goes to an adjacent
+name. Without buckets (safe, medium) nothing changes. Every adjustment cites its evidence
 (event, filing or conclusion id); options analytics and valuation never enter the overlay.
 """
 
@@ -135,12 +141,22 @@ class StanceAdj:
         }
 
 
+@dataclass(frozen=True)
+class OverlayBuckets:
+    """M16: the pure-play symbols and the adjacent bucket's limits for one profile."""
+
+    pure: frozenset[str]
+    adj_cap: float
+    adj_total: float
+
+
 def apply_overlay(
     base: Mapping[str, float],
     sleeve: Iterable[str],
     cap: float,
     findings: Iterable[Finding],
     stances: Iterable[StanceAdj] = (),
+    buckets: OverlayBuckets | None = None,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """Published weights and the per-name adjustment chain.
 
@@ -150,6 +166,8 @@ def apply_overlay(
       rata to their adjusted weights, so QTUM's fixed weight is never squeezed;
     - weight over a cap, or freed by cuts, goes to the uncut names pro rata within caps; the
       remainder goes to QTUM.
+    With `buckets` (M16) the adjacent names have their own caps and only uncut pure-plays receive
+    freed weight.
     """
     sleeve = sorted(set(sleeve))
     hits: dict[str, list[Finding]] = {}
@@ -185,16 +203,34 @@ def apply_overlay(
             redistributed[s] -= w[s] - w[s] * scale
             w[s] *= scale
     freed = max(0.0, -excess)
+    adjacent = [] if buckets is None else [s for s in sleeve if s not in buckets.pure]
+
+    def cap_of(s: str) -> float:
+        return buckets.adj_cap if buckets is not None and s in adjacent else cap
+
     # Layer 2 can't lift a name over its cap (the base itself already respects it).
     for s in sleeve:
-        limit = max(cap, float(base.get(s, 0.0)))
+        limit = max(cap_of(s), float(base.get(s, 0.0)))
         if w[s] > limit + EPS:
             freed += w[s] - limit
             redistributed[s] -= w[s] - limit
             w[s] = limit
+    if buckets is not None:
+        # ... nor the adjacent bucket over its total: the adjacent names give back pro rata.
+        held = sum(w[s] for s in adjacent)
+        limit = max(buckets.adj_total, sum(float(base.get(s, 0.0)) for s in adjacent))
+        if held > limit + EPS:
+            over = held - limit
+            for s in adjacent:
+                give = over * w[s] / held
+                w[s] -= give
+                redistributed[s] -= give
+            freed += over
 
-    # Freed weight → the uncut, still held pure-plays pro rata, within caps.
-    open_ = [s for s in sleeve if s not in reduced and w[s] > EPS and w[s] < cap - EPS]
+    # Freed weight → the uncut, still held sleeve names pro rata, within caps (with buckets:
+    # the pure-plays only).
+    takers = sleeve if buckets is None else [s for s in sleeve if s in buckets.pure]
+    open_ = [s for s in takers if s not in reduced and w[s] > EPS and w[s] < cap - EPS]
     for _ in range(len(sleeve) + 1):
         if freed <= EPS or not open_:
             break

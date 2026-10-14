@@ -8,6 +8,8 @@
   <tr><td>QTUM</td><td></td><td></td><td>{{ b.qtum|pct(False) }}</td></tr></tbody>
 </table>
 {% for f in b.flags %}<p class="warn small">Concentration: {{ f.text }}.</p>{% else %}<p class="muted small">No concentration flag.</p>{% endfor %}
+{% if b.split %}<p class="small">Split: QTUM {{ b.split.qtum|pct(False) }} / pure-play {{ b.split.pure_play|pct(False) }} / adjacent {{ b.split.adjacent|pct(False) }}{% if b.split.look_through is not none %} · look-through pure-play {{ b.split.look_through|pct(False) }} (direct + QTUM's holdings of the tracked pure-plays, snapshot {{ th.qtum_snapshot }}){% endif %}.</p>{% endif %}
+{% if b.pure_play_flag %}<p class="warn small">Pure-play share {{ b.split.pure_play|pct(False) }} is below the {{ b.pure_play_min|pct(False) }} minimum (information only).</p>{% endif %}
 {%- endmacro %}
 <section class="card" id="thesis">
   <div class="card-head"><h2>Thesis checks</h2>

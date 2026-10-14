@@ -39,12 +39,12 @@ from aether.db.types import utcnow_iso
 from aether.portfolio.backtest import oos_start, run_backtest
 from aether.portfolio.metrics import compute_metrics, equity
 from aether.portfolio.select import Candidate, choose, qualify
-from aether.portfolio.strategies import FAMILIES, effective_floor, eligible
+from aether.portfolio.strategies import FAMILIES, Buckets, effective_floor, eligible
 from aether.portfolio.total_return import align, simple_returns, total_return_levels
 from aether.runs import JobResult
 
 # Bump when the computation changes, so identical prices still produce a fresh run.
-ALGO_VERSION = "m14.1"  # m5: fixed QTUM weight per profile; m14: per-name floor + adjacent
+ALGO_VERSION = "m16"  # m5: fixed QTUM weight; m14: floor + adjacent; m16: buckets, families
 CORE = "QTUM"
 BENCHMARKS = ("QQQ", "SOXX")
 FLOAT_DP = 10
@@ -59,17 +59,21 @@ class Inputs:
     sleeve: tuple[str, ...]  # active names of the configured sleeve types, sorted
     closes: Mapping[str, list[tuple[str, float]]]
     dividends: Mapping[str, dict[str, Decimal]] = field(default_factory=dict)
+    # M16: symbol -> tickers.type for the sleeve; a symbol missing here counts as a pure-play.
+    types: Mapping[str, str] = field(default_factory=dict)
 
 
 def load_inputs(engine: Engine, sleeve_types: Sequence[str] = ("pure_play", "adjacent")) -> Inputs:
     with engine.connect() as conn:
-        sleeve = tuple(
-            conn.execute(
-                select(tickers.c.symbol)
+        types = {
+            r.symbol: r.type
+            for r in conn.execute(
+                select(tickers.c.symbol, tickers.c.type)
                 .where(tickers.c.type.in_(list(sleeve_types)), tickers.c.active == 1)
                 .order_by(tickers.c.symbol)
-            ).scalars()
-        )
+            )
+        }
+        sleeve = tuple(types)
         wanted = [CORE, *sleeve, *BENCHMARKS]
         closes: dict[str, list[tuple[str, float]]] = {s: [] for s in wanted}
         for sym, d, c in conn.execute(
@@ -85,7 +89,7 @@ def load_inputs(engine: Engine, sleeve_types: Sequence[str] = ("pure_play", "adj
             .order_by(dividends.c.symbol, dividends.c.ex_date)
         ):
             divs.setdefault(sym, {})[ex] = amt
-    return Inputs(sleeve, closes, divs)
+    return Inputs(sleeve, closes, divs, types)
 
 
 # --------------------------------------------------------------------------- canonical JSON
@@ -143,6 +147,7 @@ def input_hash(inputs: Inputs, config: StrategiesConfig) -> bytes:
         "algo": ALGO_VERSION,
         "config": config.model_dump(mode="json", include=set(BACKTEST_CONFIG_KEYS)),
         "sleeve": list(inputs.sleeve),
+        "types": [inputs.types.get(s, "pure_play") for s in inputs.sleeve],
         "closes": {s: [[d, repr(c)] for d, c in rows] for s, rows in inputs.closes.items()},
         "dividends": inputs.dividends,
     }
@@ -181,6 +186,88 @@ def floor_note(
         if shrunk
         else None,
     }
+
+
+def bucket_floor_note(
+    R: Any,
+    t: int,
+    buckets: Buckets,
+    pp: ProfileParams,
+    params: BacktestParams,
+) -> dict[str, Any]:
+    """The floor per bucket (M16): configured vs applied in each, and why it shrank, if it did."""
+    sleeve = 1.0 - pp.qtum_weight
+    n_adj = len(eligible(R, t, buckets.adjacent, params.min_sessions))
+    n_pure = len(eligible(R, t, buckets.pure, params.min_sessions))
+    adj_budget = min(buckets.adj_total, sleeve)
+    adj = min(effective_floor(n_adj, adj_budget, pp.min_per_name), buckets.adj_cap)
+    pure_budget = sleeve - min(adj_budget, n_adj * buckets.adj_cap)
+    pure = min(effective_floor(n_pure, pure_budget, pp.min_per_name), pp.max_per_name)
+    notes = [
+        f"The {label} floor shrank from {pp.min_per_name:.1%} to {applied:.2%} per name: "
+        f"{n} eligible names x {pp.min_per_name:.1%} is more than the {budget:.0%} bucket."
+        for label, n, applied, budget in (
+            ("adjacent", n_adj, adj, adj_budget),
+            ("pure-play", n_pure, pure, pure_budget),
+        )
+        if n > 0 and applied < pp.min_per_name
+    ]
+    return {
+        "configured": pp.min_per_name,
+        "applied": min(adj, pure) if n_adj and n_pure else (adj if n_adj else pure),
+        "applied_adjacent": adj,
+        "applied_pure_play": pure,
+        "eligible": n_adj + n_pure,
+        "note": " ".join(notes) or None,
+    }
+
+
+def split(weights: Mapping[str, float], types: Mapping[str, str]) -> dict[str, float]:
+    """QTUM / pure-play / adjacent shares of a target (M16), from `tickers.type`."""
+    out = {"qtum": 0.0, "pure_play": 0.0, "adjacent": 0.0}
+    for s, w in weights.items():
+        key = "qtum" if s == CORE else ("adjacent" if types.get(s) == "adjacent" else "pure_play")
+        out[key] += float(w)
+    return out
+
+
+def bucket_summary(
+    weights: Mapping[str, float],
+    types: Mapping[str, str],
+    pp: ProfileParams,
+    n_pure: int,
+    n_adj: int,
+) -> dict[str, Any]:
+    """The base split, and for a bucketed profile the configured buckets, the note when sleeve
+    weight had to go to QTUM, and the pure-play-share check on the base target."""
+    sp = split(weights, types)
+    out: dict[str, Any] = {
+        "split": sp,
+        "buckets": None,
+        "bucket_note": None,
+        "pure_play_flag": None,
+    }
+    if pp.pure_play_min_total is not None:
+        out["pure_play_flag"] = sp["pure_play"] < pp.pure_play_min_total - 1e-9
+    if not pp.buckets:
+        return out
+    assert pp.adjacent_max_total is not None and pp.adjacent_max_per_name is not None
+    out["buckets"] = {
+        "adjacent_max_total": pp.adjacent_max_total,
+        "adjacent_max_per_name": pp.adjacent_max_per_name,
+        "pure_play_max_per_name": pp.max_per_name,
+        "pure_play_min_total": pp.pure_play_min_total,
+    }
+    extra = sp["qtum"] - pp.qtum_weight
+    if extra > 1e-9:
+        out["bucket_note"] = (
+            f"{extra:.1%} of the sleeve couldn't be placed and goes to QTUM: "
+            f"{n_pure} eligible pure-play{'s' if n_pure != 1 else ''} at most "
+            f"{pp.max_per_name:.0%} each, and {n_adj} adjacent name{'s' if n_adj != 1 else ''} "
+            f"at most {pp.adjacent_max_per_name:.0%} each ({pp.adjacent_max_total:.0%} in all). "
+            "Pure-play weight never overflows into an adjacent name."
+        )
+    return out
 
 
 def strategy_id(profile: str, family: str, q: float) -> str:
@@ -236,10 +323,18 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
     weights: dict[str, dict[str, float]] = {}
     returns_by_id: dict[str, Any] = {}
     profiles_out: dict[str, Any] = {}
+    types = {s: inputs.types.get(s, "pure_play") for s in inputs.sleeve}
+    pure_idx = [j for j in sleeve_idx if types[cols[j]] != "adjacent"]
+    adj_idx = [j for j in sleeve_idx if types[cols[j]] == "adjacent"]
     for profile in PROFILES:
         pp = config.profiles[profile]
+        buckets = (
+            Buckets(pure_idx, adj_idx, pp.adjacent_max_total, pp.adjacent_max_per_name)
+            if pp.adjacent_max_total is not None and pp.adjacent_max_per_name is not None
+            else None
+        )
         cands: list[Candidate] = []
-        for family in FAMILIES:
+        for family in pp.families:  # M16: only the profile's allowed families are backtested
             for q in (pp.qtum_weight,):  # one fixed QTUM weight per profile (§6.5)
                 sid = strategy_id(profile, family, q)
                 res = run_backtest(
@@ -252,10 +347,11 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
                     cap=pp.max_per_name,
                     params=params,
                     floor=pp.min_per_name,
+                    buckets=buckets,
                 )
                 m = compute_metrics(res.returns, oos_dates, vs, ann=ann, turnovers=res.turnovers)
                 qual = qualify(m, bench_metrics[CORE], pp)
-                cands.append(Candidate(sid, m, qual))
+                cands.append(Candidate(sid, m, qual, family))
                 returns_by_id[sid] = res.returns
                 weights[sid] = {
                     cols[j]: min(1.0, float(w)) for j, w in enumerate(res.current) if w > 1e-12
@@ -273,8 +369,24 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
                 )
         q_vol = bench_metrics[CORE]["volatility"]
         q_dd = bench_metrics[CORE]["max_drawdown"]
+        chosen = choose(cands, pp)
+        t_now = len(calendar)
+        bsum = (
+            bucket_summary(
+                weights[chosen["strategy_id"]],
+                types,
+                pp,
+                len(eligible(R, t_now, pure_idx, params.min_sessions)),
+                len(eligible(R, t_now, adj_idx, params.min_sessions)),
+            )
+            if chosen["strategy_id"]
+            else {}
+        )
         profiles_out[profile] = {
-            **choose(cands, pp),
+            **chosen,
+            **bsum,
+            "families": list(pp.families),
+            "not_allowed": [f for f in FAMILIES if f not in pp.families],
             "rank_metric": pp.rank_metric,
             "limits": {
                 "volatility": None if pp.vol_limit_x is None else pp.vol_limit_x * q_vol,
@@ -285,7 +397,9 @@ def compute_run(inputs: Inputs, config: StrategiesConfig) -> RunOutput | None:
             "qtum_weight": pp.qtum_weight,
             "max_per_name": pp.max_per_name,
             "min_per_name": pp.min_per_name,
-            "floor": floor_note(R, len(calendar), sleeve_idx, pp, params),
+            "floor": floor_note(R, t_now, sleeve_idx, pp, params)
+            if buckets is None
+            else bucket_floor_note(R, t_now, buckets, pp, params),
         }
 
     base = calendar[t0 - 1]

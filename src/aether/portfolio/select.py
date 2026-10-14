@@ -51,6 +51,7 @@ class Candidate:
     strategy_id: str
     metrics: Metrics
     qualifies: Mapping[str, Any]
+    family: str | None = None  # M16: a family outside the profile's allow-list is never chosen
 
 
 RANK_LABELS = {"cvar95_low": "lowest CVaR95", "sortino_high": "highest Sortino"}
@@ -74,6 +75,7 @@ def _rank_key(c: Candidate, rank_metric: str) -> tuple[int, float, float, str]:
 
 def choose(candidates: Sequence[Candidate], params: ProfileParams) -> dict[str, Any]:
     """{"strategy_id": id | None, "reason": str, "ranking": [ids, best first]}."""
+    candidates = [c for c in candidates if c.family is None or c.family in params.families]
     passing = [c for c in candidates if c.qualifies.get("ok")]
     if not candidates:
         return {"strategy_id": None, "reason": "no candidates were backtested", "ranking": []}

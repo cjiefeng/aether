@@ -1,0 +1,300 @@
+{
+ "medium": {
+  "chain": [
+   {
+    "base": 0.03,
+    "final": 0.0,
+    "redistributed": 0.0,
+    "steps": [
+     {
+      "accession": "0000000000-26-000001",
+      "detail": null,
+      "event_id": 1,
+      "filed_at": "2025-06-01",
+      "form": "10-K",
+      "label": "going concern",
+      "multiplier": 0.0,
+      "rule": "going_concern",
+      "url": "",
+      "weight": 0.0
+     }
+    ],
+    "symbol": "ACME"
+   },
+   {
+    "base": 0.1433333333,
+    "final": 0.1772863568,
+    "redistributed": -0.0018803098,
+    "steps": [
+     {
+      "accession": null,
+      "clamped": false,
+      "conclusion_as_of": "2025-06-01",
+      "conclusion_id": 7,
+      "detail": null,
+      "event_id": null,
+      "filed_at": null,
+      "form": null,
+      "label": "ACCUMULATE \u00d7 1.25",
+      "multiplier": 1.25,
+      "raw_multiplier": 1.25,
+      "rule": "stance",
+      "trust": "proven",
+      "url": null,
+      "weight": 0.1791666667
+     }
+    ],
+    "symbol": "ADJA"
+   },
+   {
+    "base": 0.1433333333,
+    "final": 0.1418290855,
+    "redistributed": -0.0015042479,
+    "steps": [],
+    "symbol": "ADJB"
+   },
+   {
+    "base": 0.1433333333,
+    "final": 0.1418290855,
+    "redistributed": -0.0015042479,
+    "steps": [],
+    "symbol": "ADJC"
+   },
+   {
+    "base": 0.03,
+    "final": 0.0296851574,
+    "redistributed": -0.0003148426,
+    "steps": [],
+    "symbol": "DEMO"
+   },
+   {
+    "base": 0.03,
+    "final": 0.0296851574,
+    "redistributed": -0.0003148426,
+    "steps": [],
+    "symbol": "EXMP"
+   },
+   {
+    "base": 0.03,
+    "final": 0.0296851574,
+    "redistributed": -0.0003148426,
+    "steps": [],
+    "symbol": "FAKE"
+   },
+   {
+    "base": 0.45,
+    "final": 0.45,
+    "redistributed": 0.0,
+    "steps": [],
+    "symbol": "QTUM"
+   }
+  ],
+  "published": {
+   "ADJA": 0.1772863568,
+   "ADJB": 0.1418290855,
+   "ADJC": 0.1418290855,
+   "DEMO": 0.0296851574,
+   "EXMP": 0.0296851574,
+   "FAKE": 0.0296851574,
+   "QTUM": 0.45
+  },
+  "ranking": [
+   "medium:core_momentum:q45",
+   "medium:core_min_var:q45",
+   "medium:core_inv_vol:q45",
+   "medium:core_equal:q45"
+  ],
+  "strategy_id": "medium:core_momentum:q45",
+  "weights": {
+   "medium:core_equal:q45": {
+    "ACME": 0.0785714286,
+    "ADJA": 0.0785714286,
+    "ADJB": 0.0785714286,
+    "ADJC": 0.0785714286,
+    "DEMO": 0.0785714286,
+    "EXMP": 0.0785714286,
+    "FAKE": 0.0785714286,
+    "QTUM": 0.45
+   },
+   "medium:core_inv_vol:q45": {
+    "ACME": 0.0547920384,
+    "ADJA": 0.1092632309,
+    "ADJB": 0.1157779449,
+    "ADJC": 0.1314802407,
+    "DEMO": 0.0487955348,
+    "EXMP": 0.0461114663,
+    "FAKE": 0.043779544,
+    "QTUM": 0.45
+   },
+   "medium:core_min_var:q45": {
+    "ACME": 0.039237919,
+    "ADJA": 0.1309024732,
+    "ADJB": 0.1350857924,
+    "ADJC": 0.134043164,
+    "DEMO": 0.0430104078,
+    "EXMP": 0.0324090294,
+    "FAKE": 0.0353112142,
+    "QTUM": 0.45
+   },
+   "medium:core_momentum:q45": {
+    "ACME": 0.03,
+    "ADJA": 0.1433333333,
+    "ADJB": 0.1433333333,
+    "ADJC": 0.1433333333,
+    "DEMO": 0.03,
+    "EXMP": 0.03,
+    "FAKE": 0.03,
+    "QTUM": 0.45
+   }
+  }
+ },
+ "safe": {
+  "chain": [
+   {
+    "base": 0.0189397007,
+    "final": 0.0,
+    "redistributed": 0.0,
+    "steps": [
+     {
+      "accession": "0000000000-26-000001",
+      "detail": null,
+      "event_id": 1,
+      "filed_at": "2025-06-01",
+      "form": "10-K",
+      "label": "going concern",
+      "multiplier": 0.0,
+      "rule": "going_concern",
+      "url": "",
+      "weight": 0.0
+     }
+    ],
+    "symbol": "ACME"
+   },
+   {
+    "base": 0.0580319371,
+    "final": 0.0738490333,
+    "redistributed": 0.0013091119,
+    "steps": [
+     {
+      "accession": null,
+      "clamped": false,
+      "conclusion_as_of": "2025-06-01",
+      "conclusion_id": 7,
+      "detail": null,
+      "event_id": null,
+      "filed_at": null,
+      "form": null,
+      "label": "ACCUMULATE \u00d7 1.25",
+      "multiplier": 1.25,
+      "raw_multiplier": 1.25,
+      "rule": "stance",
+      "trust": "proven",
+      "url": null,
+      "weight": 0.0725399214
+     }
+    ],
+    "symbol": "ADJA"
+   },
+   {
+    "base": 0.0598159997,
+    "final": 0.0608954858,
+    "redistributed": 0.0010794861,
+    "steps": [],
+    "symbol": "ADJB"
+   },
+   {
+    "base": 0.0593713494,
+    "final": 0.060442811,
+    "redistributed": 0.0010714616,
+    "steps": [],
+    "symbol": "ADJC"
+   },
+   {
+    "base": 0.0205485563,
+    "final": 0.0209193915,
+    "redistributed": 0.0003708352,
+    "steps": [],
+    "symbol": "DEMO"
+   },
+   {
+    "base": 0.0160273802,
+    "final": 0.0163166228,
+    "redistributed": 0.0002892426,
+    "steps": [],
+    "symbol": "EXMP"
+   },
+   {
+    "base": 0.0172650766,
+    "final": 0.0175766557,
+    "redistributed": 0.000311579,
+    "steps": [],
+    "symbol": "FAKE"
+   },
+   {
+    "base": 0.75,
+    "final": 0.75,
+    "redistributed": 0.0,
+    "steps": [],
+    "symbol": "QTUM"
+   }
+  ],
+  "published": {
+   "ADJA": 0.0738490333,
+   "ADJB": 0.0608954858,
+   "ADJC": 0.060442811,
+   "DEMO": 0.0209193915,
+   "EXMP": 0.0163166228,
+   "FAKE": 0.0175766557,
+   "QTUM": 0.75
+  },
+  "ranking": [
+   "safe:core_min_var:q75",
+   "safe:core_inv_vol:q75",
+   "safe:core_momentum:q75",
+   "safe:core_equal:q75"
+  ],
+  "strategy_id": "safe:core_min_var:q75",
+  "weights": {
+   "safe:core_equal:q75": {
+    "ACME": 0.0357142857,
+    "ADJA": 0.0357142857,
+    "ADJB": 0.0357142857,
+    "ADJC": 0.0357142857,
+    "DEMO": 0.0357142857,
+    "EXMP": 0.0357142857,
+    "FAKE": 0.0357142857,
+    "QTUM": 0.75
+   },
+   "safe:core_inv_vol:q75": {
+    "ACME": 0.0255730752,
+    "ADJA": 0.0488034367,
+    "ADJB": 0.0515817706,
+    "ADJC": 0.0582783379,
+    "DEMO": 0.0230157428,
+    "EXMP": 0.0218710665,
+    "FAKE": 0.0208765702,
+    "QTUM": 0.75
+   },
+   "safe:core_min_var:q75": {
+    "ACME": 0.0189397007,
+    "ADJA": 0.0580319371,
+    "ADJB": 0.0598159997,
+    "ADJC": 0.0593713494,
+    "DEMO": 0.0205485563,
+    "EXMP": 0.0160273802,
+    "FAKE": 0.0172650766,
+    "QTUM": 0.75
+   },
+   "safe:core_momentum:q75": {
+    "ACME": 0.015,
+    "ADJA": 0.0633333333,
+    "ADJB": 0.0633333333,
+    "ADJC": 0.0633333333,
+    "DEMO": 0.015,
+    "EXMP": 0.015,
+    "FAKE": 0.015,
+    "QTUM": 0.75
+   }
+  }
+ }
+}
