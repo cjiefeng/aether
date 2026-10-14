@@ -33,7 +33,7 @@ sleeve_types: [pure_play, adjacent]
 # The research overlay still zeroes or halves a name on evidence: the floor never overrides it.
 # M16: optional per profile: adjacent_max_total / adjacent_max_per_name (buckets; null = one
 # sleeve as above), pure_play_min_total (flag only) and families (allow-list; default all four).
-# Safe and medium leave them out, so they behave exactly as before.
+# Safe leaves them out, so it behaves exactly as before. M17: medium uses them with middle values.
 profiles:
   safe:
     qtum_weight: 0.75
@@ -49,6 +49,15 @@ profiles:
     vol_limit_x: null
     max_dd_limit_pp: null
     rank_metric: sortino_high
+    # M17 (spec §6.5, owner 2026-10-14): Medium sits in the middle of the ladder. Same 20% / 10%
+    # adjacent budget as aggressive; the pure-plays (each <= 20%) get the rest of the sleeve, and
+    # below 35% after the overlay they raise the §6.10 pure-play-share flag (no trade). Routing is
+    # aggressive's: adjacent overflow -> pure-plays -> QTUM; pure-play overflow -> QTUM only.
+    adjacent_max_total: 0.20
+    adjacent_max_per_name: 0.10
+    pure_play_min_total: 0.35
+    # Families step down one at a time: min-var (the most low-vol-concentrated) is dropped first.
+    families: [core_equal, core_momentum, core_inv_vol]
   aggressive:
     qtum_weight: 0.15
     max_per_name: 0.35        # pure-plays

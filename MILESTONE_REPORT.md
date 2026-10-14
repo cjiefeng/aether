@@ -1,5 +1,31 @@
 # Milestone report
 
+## M17: Medium in the middle (2026-10-14)
+
+### Built
+- **Config only** (`config/strategies.yaml`): `profiles.medium` gets `adjacent_max_total: 0.20`, `adjacent_max_per_name: 0.10`, `pure_play_min_total: 0.35` and `families: [core_equal, core_momentum, core_inv_vol]`. QTUM 45%, pure-play cap 20%, floor 3% and `sortino_high` are unchanged.
+- **No new code paths.** M16's bucketed allocation, families allow-list, bucketed overlay redistribution (`publish.py` builds `OverlayBuckets` from any profile with buckets), check 8, split and look-through were already per profile. Only the docstrings in `strategies.py` and `overlay.py` changed ("aggressive" → "aggressive, and medium from M17").
+- **Tests:** `tests/test_m17_medium.py` (14) covers every §11 M17 case: buckets for each allowed family, `not_allowed == [core_min_var]`, selection never picks min-var but keeps inverse-vol, adjacent overflow → pure-plays (per family), 2 pure-plays → 17.5% each with nothing to QTUM, 1 pure-play → 20 / 20 / QTUM 60 with the note and flag, overlay cuts → other pure-plays → QTUM (never adjacent), the pure-play-share flag below 35% with its review-pack line, illustrative full-review weights, and an end-to-end `publish_targets` run where a proven AVOID's weight skips the adjacent name.
+- **Golden:** `test_m16_golden.py` now compares only the **Safe** slice of the M15-generated fixture (still byte-identical). Medium's M15 slice stays in the file as history. Existing tests that assumed Medium was unbucketed now use Safe (`test_buckets.py`), and `test_portfolio_job.py` counts 3 Medium families.
+
+### Decisions
+- **`ALGO_VERSION` stays `m16`** in `job.py` and `publish.py`: the algorithm didn't change, and the new config keys already change the input hash. So the first deploy reruns the backtest and republishes with trigger `config_change` (#13); Safe's numbers stay the same, Aggressive's too.
+- **Spec unchanged:** §6.5, §6.6.1, §6.10 check 8 and §11 already describe M17 (roadmap PR #47).
+
+### Open questions
+- None new. The look-through question from M16 (count QTUM's untracked quantum names?) is still open.
+
+### Facts
+- None added or changed. All tests use synthetic names (ACME…, ADJA…).
+
+### Owner checklist
+- [ ] Run `./deploy.sh`, then check `/strategies`: Medium ≈ QTUM 45 / pure-play 35 / adjacent 20, KEYS ≤ 10%, and min-var "not allowed for this profile" (inverse-vol still listed).
+- [ ] Check the republished Medium targets on `/holdings` (trigger "config change") and the thesis panel's split, look-through and flag.
+- [ ] If you hold Medium, review the rebalance plan: KEYS drops from 20% to at most 10%.
+
+### How to verify
+- `make test` (865 passed), `make lint` and `make secrets-scan` are clean.
+
 ## Roadmap change: M17 Medium in the middle (2026-10-14, owner-approved, written by the portfolio-manager session)
 
 **Why:** Medium's QTUM weight (45%) is already halfway between Safe (75%) and Aggressive (15%), but its sleeve still behaved like Safe's, with no buckets and all four families. The portfolio-manager session's Medium target was QTUM 45%, adjacent suppliers 34.3% (KEYS 20% at the cap, PANW 8.0%, FEIM 6.3%) and pure-plays 20.5%. Two causes, the same ones M16 fixed for Aggressive:

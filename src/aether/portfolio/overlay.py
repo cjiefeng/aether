@@ -31,11 +31,11 @@ M10 layer 2: each pure-play's latest stance (after hysteresis, not older than
 ticker's track record is unproven (score/track_record.py) the multiplier is clamped to
 `overlay.unproven_clamp`. Hard rules are never clamped.
 
-M16 buckets (spec §6.6.1; a profile with `adjacent_max_total` set, i.e. aggressive): adjacent
-names are capped at `adjacent_max_per_name` each and `adjacent_max_total` together (a stance
-can't lift them past either), and freed weight, whether from a pure-play or an adjacent name,
-goes only to the uncut pure-plays within their caps, then QTUM. It never goes to an adjacent
-name. Without buckets (safe, medium) nothing changes. Every adjustment cites its evidence
+M16 buckets (spec §6.6.1; a profile with `adjacent_max_total` set: aggressive, and medium from
+M17): adjacent names are capped at `adjacent_max_per_name` each and `adjacent_max_total`
+together (a stance can't lift them past either), and freed weight, whether from a pure-play or
+an adjacent name, goes only to the uncut pure-plays within their caps, then QTUM. It never goes
+to an adjacent name. Without buckets (safe) nothing changes. Every adjustment cites its evidence
 (event, filing or conclusion id); options analytics and valuation never enter the overlay.
 """
 
