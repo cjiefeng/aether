@@ -1,5 +1,6 @@
-"""M16 no-regression golden (spec §11): Safe and Medium targets must be byte-identical before and
-after the pure-play tilt. The fixture was generated from the M15 code on `main` (2b31e28) with
+"""M16/M17 no-regression golden (spec §11): Safe's targets must be byte-identical before and
+after the pure-play tilt (M16) and Medium's buckets (M17). The fixture was generated from the M15
+code on `main` (2b31e28), when it covered Medium too (M17 bucketed Medium), with
 
     docker compose run --rm -T dev uv run --frozen python -m tests.m16_golden
 
@@ -20,7 +21,7 @@ from tests.portfolio_data import panel, random_closes, weekdays
 FIXTURE = Path(__file__).parent / "fixtures" / "m16_safe_medium_golden.json"
 PURE = ("ACME", "DEMO", "EXMP", "FAKE")
 ADJACENT = ("ADJA", "ADJB", "ADJC")
-PROFILES = ("safe", "medium")
+PROFILES = ("safe",)  # medium is bucketed from M17; its M15 slice stays in the fixture
 
 
 def inputs(n: int = 260) -> Inputs:
@@ -56,6 +57,7 @@ def payload() -> dict[str, Any]:
 
 
 def write() -> None:
+    # Only ever regenerate from the M15 code: the fixture is the "before" side.
     FIXTURE.write_text(json.dumps(payload(), indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 

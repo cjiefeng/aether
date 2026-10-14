@@ -1,5 +1,5 @@
 """M16 pure-play tilt for Aggressive (spec §6.5, §6.6.1, §6.10 check 8, §11). Synthetic data only:
-ACME… are pure-plays, ADJA… adjacent names."""
+ACME… are pure-plays, ADJA… adjacent names. Medium's buckets (M17) are in test_m17_medium.py."""
 
 from __future__ import annotations
 
@@ -61,9 +61,8 @@ def test_config_aggressive_buckets_and_families() -> None:
     )
     assert AGG.families == ("core_equal", "core_momentum")
     assert AGG.max_per_name == 0.35 and AGG.qtum_weight == 0.15
-    for p in ("safe", "medium"):
-        pp = CFG.profiles[p]  # type: ignore[index]
-        assert not pp.buckets and pp.pure_play_min_total is None and len(pp.families) == 4
+    safe = CFG.profiles["safe"]
+    assert not safe.buckets and safe.pure_play_min_total is None and len(safe.families) == 4
 
 
 @pytest.mark.parametrize(
@@ -78,7 +77,7 @@ def test_config_aggressive_buckets_and_families() -> None:
     ],
 )
 def test_config_rejects_bad_buckets(update: dict[str, Any]) -> None:
-    raw = {**CFG.profiles["medium"].model_dump(mode="json"), **update}
+    raw = {**CFG.profiles["safe"].model_dump(mode="json"), **update}
     with pytest.raises(ValidationError):
         ProfileParams.model_validate(raw)
 
@@ -104,10 +103,9 @@ def test_aggressive_buckets_hold_for_every_allowed_family() -> None:
     assert sel["not_allowed"] == ["core_inv_vol", "core_min_var"]
     assert sel["split"]["pure_play"] == pytest.approx(0.65)
     assert sel["bucket_note"] is None and sel["pure_play_flag"] is False
-    # Safe and medium keep all four families and no buckets.
-    for p in ("safe", "medium"):
-        assert out.summary["profiles"][p]["buckets"] is None
-        assert out.summary["profiles"][p]["not_allowed"] == []
+    # Safe keeps all four families and no buckets (medium: test_m17_medium.py).
+    assert out.summary["profiles"]["safe"]["buckets"] is None
+    assert out.summary["profiles"]["safe"]["not_allowed"] == []
 
 
 def test_select_never_picks_a_disallowed_family() -> None:
@@ -193,9 +191,9 @@ def test_full_review_illustrative_weights_follow_the_buckets() -> None:
     assert sum(w[s] for s in ADJACENT) == pytest.approx(0.20)
     assert sum(w[s] for s in PURE) == pytest.approx(0.65)
     assert w["QTUM"] == pytest.approx(0.15)
-    # Medium (no buckets) is unchanged: equal weight over every name within the cap.
-    med = illustrative_weights([*PURE, *ADJACENT], CFG.profiles["medium"], set(ADJACENT))
-    assert len({round(med[s], 12) for s in (*PURE, *ADJACENT)}) == 1
+    # Safe (no buckets) is unchanged: equal weight over every name within the cap.
+    safe = illustrative_weights([*PURE, *ADJACENT], CFG.profiles["safe"], set(ADJACENT))
+    assert len({round(safe[s], 12) for s in (*PURE, *ADJACENT)}) == 1
 
 
 # --------------------------------------------------------------------------- overlay
@@ -228,7 +226,7 @@ def test_pure_play_cuts_beyond_the_caps_go_to_qtum_not_adjacent() -> None:
 def test_without_buckets_freed_weight_still_reaches_adjacent_names() -> None:
     base = {**BASE, "ADJA": 0.05, "ADJB": 0.05, "QTUM": 0.25}
     pub, _ = apply_overlay(base, SLEEVE, 0.35, [cut("ACME")])
-    assert pub["ADJA"] > 0.05  # the M14 behaviour safe and medium keep
+    assert pub["ADJA"] > 0.05  # the M14 behaviour safe keeps
 
 
 def test_adjacent_cut_goes_to_the_pure_plays() -> None:
@@ -314,4 +312,5 @@ def test_strategies_page_shows_buckets_split_and_not_allowed(
     text = client.get("/strategies").text
     assert "Buckets: adjacent names ≤ 20.0% in all and ≤ 10.0% each" in text
     assert "(base, before the research overlay): QTUM 15.0% / pure-play 65.0%" in text
-    assert text.count("not allowed for this profile") == 2  # min-var and inv-vol on aggressive
+    # min-var and inv-vol on aggressive, min-var on medium (M17)
+    assert text.count("not allowed for this profile") == 3

@@ -12,8 +12,8 @@ each name's total kept within the cap (so the family sees a cap of `cap - f`). M
 outside the top N therefore sit at the floor. The research overlay runs later and can still cut a
 name to 0.
 
-Buckets (M16, spec §6.5; aggressive): the adjacent names and the pure-plays are weighted
-separately by the same family, each with the floor inside its bucket:
+Buckets (M16, spec §6.5; aggressive, and medium from M17): the adjacent names and the
+pure-plays are weighted separately by the same family, each with the floor inside its bucket:
 1. adjacent: `adj_total` over the eligible adjacent names, each <= `adj_cap`;
 2. pure-plays: the rest of the sleeve, so whatever the adjacent bucket can't place goes to the
    pure-plays first, each <= `cap`;
