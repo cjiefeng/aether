@@ -533,6 +533,9 @@ class AlertsConfig(_Strict):
 Profile = Literal["safe", "medium", "aggressive"]
 PROFILES: tuple[Profile, ...] = ("safe", "medium", "aggressive")
 Fraction = Annotated[float, Field(ge=0, le=1)]
+# Strategy families (spec §6.5): a QTUM core weight + a sleeve weighted by this method.
+Family = Literal["core_equal", "core_inv_vol", "core_min_var", "core_momentum"]
+FAMILIES: tuple[Family, ...] = ("core_equal", "core_inv_vol", "core_min_var", "core_momentum")
 
 
 class BacktestParams(_Strict):
@@ -565,11 +568,36 @@ class ProfileParams(_Strict):
     # M14 (spec §6.5, owner decision 2026-10-08): every eligible sleeve name gets at least this
     # base weight; the family allocates only the rest. The overlay can still cut a name to 0.
     min_per_name: Annotated[float, Field(ge=0, le=1)] = 0.0
+    # M16 (spec §6.5, owner 2026-10-14): separate adjacent and pure-play buckets. All null keeps
+    # the M14 behaviour (one sleeve, overflow to any sleeve name). With buckets, the adjacent
+    # names share at most `adjacent_max_total` (each <= `adjacent_max_per_name`) and the
+    # pure-plays get the rest of the sleeve; `pure_play_min_total` only sets the §6.10 flag.
+    adjacent_max_total: Fraction | None = None
+    adjacent_max_per_name: Fraction | None = None
+    pure_play_min_total: Fraction | None = None
+    # M16: the sleeve families backtested (and selectable) for this profile.
+    families: tuple[Family, ...] = FAMILIES
+
+    @property
+    def buckets(self) -> bool:
+        return self.adjacent_max_total is not None
 
     @model_validator(mode="after")
     def _floor_below_cap(self) -> ProfileParams:
         if self.min_per_name > self.max_per_name:
             raise ValueError("min_per_name must not exceed max_per_name")
+        if (self.adjacent_max_total is None) != (self.adjacent_max_per_name is None):
+            raise ValueError("set adjacent_max_total and adjacent_max_per_name together")
+        # No fit check against the sleeve: a larger QTUM weight just shrinks the adjacent bucket
+        # (it gets min(total, sleeve)) and makes the pure-play-share flag fire.
+        if (
+            self.adjacent_max_total is not None
+            and self.adjacent_max_per_name is not None
+            and self.adjacent_max_per_name > self.adjacent_max_total
+        ):
+            raise ValueError("adjacent_max_per_name must not exceed adjacent_max_total")
+        if not self.families or len(set(self.families)) != len(self.families):
+            raise ValueError("families must be non-empty and unique")
         return self
 
 

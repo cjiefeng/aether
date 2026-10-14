@@ -598,7 +598,9 @@ base weights (selected sleeve method, §6.5)
     weights, within caps; any remainder to QTUM
     (M16: for a profile with buckets, weight freed from a pure-play goes only to the
     other uncut pure-plays, then QTUM, never to adjacent names; weight freed from an
-    adjacent name goes to the uncut pure-plays first, then QTUM)
+    adjacent name goes to the uncut pure-plays first, then QTUM; a stance can't lift an
+    adjacent name past `adjacent_max_per_name` or the adjacent names past
+    `adjacent_max_total`, and the excess goes the same way)
   → published target
 ```
 

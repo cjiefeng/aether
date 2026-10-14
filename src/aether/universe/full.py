@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
@@ -299,11 +299,29 @@ def validate(
 # --------------------------------------------------------------------------- weights
 
 
-def illustrative_weights(symbols: Sequence[str], pp: ProfileParams) -> dict[str, float]:
+def illustrative_weights(
+    symbols: Sequence[str], pp: ProfileParams, adjacent: Collection[str] = ()
+) -> dict[str, float]:
     """Equal-weight sleeve under the profile's fixed QTUM weight, per-name cap and floor; weight
-    the caps can't place goes to QTUM (spec §6.5). Illustrative only, never published."""
-    n = len(symbols)
+    the caps can't place goes to QTUM (spec §6.5). With buckets (M16) the `adjacent` names share
+    at most `adjacent_max_total` and the pure-plays get the rest. Illustrative only, never
+    published."""
     sleeve = 1.0 - pp.qtum_weight
+    if pp.adjacent_max_total is not None and pp.adjacent_max_per_name is not None:
+        adj = sorted(s for s in symbols if s in adjacent)
+        pure = sorted(s for s in symbols if s not in adjacent)
+        a_each = (
+            min(pp.adjacent_max_per_name, min(pp.adjacent_max_total, sleeve) / len(adj))
+            if adj
+            else 0.0
+        )
+        rest = sleeve - a_each * len(adj)
+        p_each = min(pp.max_per_name, rest / len(pure)) if pure else 0.0
+        w = {**{s: a_each for s in adj}, **{s: p_each for s in pure}}
+        w = dict(sorted(w.items()))
+        w["QTUM"] = 1.0 - sum(w.values())
+        return w
+    n = len(symbols)
     # An equal split is never below the floor (the floor shrinks to sleeve / n when it can't fit).
     each = min(pp.max_per_name, sleeve / n) if n else 0.0
     w = {s: each for s in sorted(symbols)}
@@ -342,8 +360,9 @@ def assess(
             labels[p.symbol] = "model-proposed modality" if mod else "modality not given"
         else:
             after_names.append(Name(p.symbol, "adjacent", None, p.category))
-    before_w = illustrative_weights([n.symbol for n in names], pp)
-    after_w = illustrative_weights([n.symbol for n in after_names], pp)
+    adjacent = {n.symbol for n in (*names, *after_names) if n.type == "adjacent"}
+    before_w = illustrative_weights([n.symbol for n in names], pp, adjacent)
+    after_w = illustrative_weights([n.symbol for n in after_names], pp, adjacent)
     before = thesis.breakdown(before_w, names, cfg)
     after = thesis.breakdown(after_w, after_names, cfg)
     pool_syms = {p.symbol for p in pool if not p.current}

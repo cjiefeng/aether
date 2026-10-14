@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from aether.config import BacktestParams
-from aether.portfolio.strategies import Family, target_weights
+from aether.portfolio.strategies import Buckets, Family, target_weights
 
 Vec = NDArray[np.float64]
 
@@ -49,6 +49,7 @@ def run_backtest(
     cap: float,
     params: BacktestParams,
     floor: float = 0.0,
+    buckets: Buckets | None = None,
 ) -> BacktestResult:
     T, N = R.shape
     t0 = oos_start(params)
@@ -66,6 +67,7 @@ def run_backtest(
             cap=cap,
             params=params,
             floor=floor,
+            buckets=buckets,
         )
 
     cost_rate = params.cost_bps / 10_000.0

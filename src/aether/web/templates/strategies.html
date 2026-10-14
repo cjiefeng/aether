@@ -62,6 +62,14 @@
       ≤ {{ (p.selection.max_per_name * 100)|round|int }}% per name{% if p.selection.min_per_name %}, ≥ {{ p.selection.min_per_name|pct(False) }} floor{% endif %};
       ranked by {{ "lowest CVaR95" if p.selection.rank_metric == "cvar95_low" else "highest Sortino" }}</span>
   </div>
+  {% set bk = p.selection.buckets %}
+  {% if bk %}<p class="small">Buckets: adjacent names ≤ {{ bk.adjacent_max_total|pct(False) }} in all and ≤ {{ bk.adjacent_max_per_name|pct(False) }} each;
+    pure-plays get the rest of the sleeve, ≤ {{ bk.pure_play_max_per_name|pct(False) }} each{% if bk.pure_play_min_total is not none %}, at least {{ bk.pure_play_min_total|pct(False) }} in all (flag only){% endif %}.
+    Adjacent overflow goes to the pure-plays, then QTUM; pure-play overflow goes to QTUM, never to adjacent names.</p>{% endif %}
+  {% if p.selection.split %}<p class="small">Recommended split (base, before the research overlay): QTUM {{ p.selection.split.qtum|pct(False) }} / pure-play {{ p.selection.split.pure_play|pct(False) }} / adjacent {{ p.selection.split.adjacent|pct(False) }}.
+    Look-through on the published targets is in the thesis checks below.</p>{% endif %}
+  {% if p.selection.bucket_note %}<p class="warn small">{{ p.selection.bucket_note }}</p>{% endif %}
+  {% if p.selection.pure_play_flag %}<p class="warn small">Pure-play share {{ p.selection.split.pure_play|pct(False) }} is below the {{ bk.pure_play_min_total|pct(False) if bk else "configured" }} minimum (information only).</p>{% endif %}
   {% if p.selection.floor and p.selection.floor.note %}<p class="warn small">{{ p.selection.floor.note }}</p>{% endif %}
   {% if p.recommended %}
   <p>Model strategy: <strong>{{ label(p.recommended) }}</strong> <span class="muted small">({{ p.recommended.strategy_id }})</span></p>
@@ -109,6 +117,9 @@
       <td>{{ fmt(r.metrics.sortino, "r") }}</td>
       <td>{{ checks(r.qualifies) }}</td>
     </tr>
+    {% endfor %}
+    {% for f in p.selection.not_allowed or [] %}
+    <tr class="muted"><td>—</td><td>{{ family_labels.get(f, f) }}</td><td colspan="6">not allowed for this profile (not backtested)</td></tr>
     {% endfor %}
     </tbody>
   </table>

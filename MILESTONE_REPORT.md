@@ -1,5 +1,38 @@
 # Milestone report
 
+## M16: Pure-play tilt for Aggressive (2026-10-14)
+
+### Built
+- **Config** (`config.py`, `strategies.yaml`): per-profile `adjacent_max_total`, `adjacent_max_per_name`, `pure_play_min_total` (all default `null`) and `families` (default all four). Aggressive: 0.20 / 0.10 / 0.65 and `[core_equal, core_momentum]`. Safe and Medium leave them out. `Family`/`FAMILIES` moved to `config.py` (re-exported from `portfolio/strategies.py`).
+- **Bucketed allocation** (`portfolio/strategies.py::bucketed_sleeve`, `target_weights(..., buckets=)`): adjacent bucket first (≤ total, ≤ per name, floor and momentum top-N inside it), then the pure-plays get the rest of the sleeve (so adjacent overflow lands there first), then QTUM. Without buckets the M14 code path runs untouched.
+- **Backtest job** (`portfolio/job.py`, `ALGO_VERSION = "m16"`): reads `tickers.type`, backtests only the profile's families, and stores per profile `split`, `buckets`, `bucket_note`, `pure_play_flag`, `families`, `not_allowed` and a per-bucket floor note in the run summary. `select.choose` also drops any candidate whose family isn't allowed.
+- **Overlay** (`overlay.py::apply_overlay(..., buckets=OverlayBuckets)`, `publish.py`): for Aggressive, freed weight goes only to the uncut pure-plays within caps, then QTUM; adjacent names are capped at 10% each and 20% together after stances.
+- **§6.10 check 8** (`thesis.py`): `pure_play_split` (QTUM / pure-play / adjacent + look-through via the latest QTUM holdings snapshot), carried by every `breakdown`; the pure-play-share flag on each profile's published targets; `split_lines` for every profile in the review pack and its Telegram text (weights only).
+- **Pages:** Strategies (bucket line, base split, overflow note, flag, disallowed families listed as "not allowed for this profile"), the thesis panel on Holdings and Strategies (split, look-through, flag), review pack lines. The full re-evaluation's illustrative weights follow the buckets too.
+- **Tests:** `tests/test_buckets.py` (21) and `tests/test_m16_golden.py`, whose fixture was generated from the M15 code before any change.
+
+### Decisions
+- **Adjacent total under stances** (the spec was silent): an ACCUMULATE can't lift the adjacent names past 20% together; the excess goes to the pure-plays, then QTUM. Spec §6.6.1 updated.
+- **No "fits in the sleeve" validation** on the bucket totals: a bigger QTUM weight simply shrinks the adjacent bucket (`min(total, sleeve)`) and makes the flag fire, so editing `qtum_weight` alone never breaks worker startup.
+- **Look-through counts only the tracked active pure-plays** inside QTUM (identifiable from `tickers.type`); other quantum names in QTUM aren't counted. It shows "—" with no QTUM snapshot.
+- **Two flags:** the run summary flags the *base* split (Strategies), and check 8 flags the *published, post-overlay* split (thesis panel, review pack), as §6.5 step 4 and §6.10 describe.
+- **Safe/Medium byte-identical** is checked on weights, selection and the published overlay output. Input hashes still change (algo version, new config keys), so the first deploy reruns the backtest and republishes with trigger `config_change`; Safe/Medium numbers stay the same.
+
+### Open questions
+- Medium's milder version (e.g. adjacent ≤ 25%) is still undecided (see the roadmap entry below).
+- Should the look-through also count QTUM's untracked quantum names (e.g. via the universe review's pure-play candidates)? Not done: they aren't typed in `tickers`.
+
+### Facts
+- None added or changed. All tests use synthetic names (ACME…, ADJA…).
+
+### Owner checklist
+- [ ] After deploy, check `/strategies`: Aggressive ≈ QTUM 15 / pure-play 65 / adjacent 20, and min-var / inv-vol are "not allowed".
+- [ ] Check the republished targets on `/holdings` (trigger "config change") and the thesis panel's split and look-through.
+- [ ] Decide on Medium (adjacent cap or unchanged).
+
+### How to verify
+- `make test` (all green, including the Safe/Medium golden), `make lint` and `make secrets-scan` are clean.
+
 ## Roadmap change: M16 pure-play tilt for Aggressive (2026-10-14, owner-approved, relayed by the portfolio-manager session)
 
 **Why:** in Aether, Aggressive meant "less QTUM", not "more pure-play". The portfolio-manager session's Aggressive target was QTUM 15%, adjacent suppliers 56.6% (KEYS 35% at the cap, PANW 12.5%, FEIM 9.1%) and pure-plays only 28.3%. Two causes:
