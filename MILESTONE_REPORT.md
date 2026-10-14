@@ -1,5 +1,41 @@
 # Milestone report
 
+## Roadmap change: M17 Medium in the middle (2026-10-14, owner-approved, written by the portfolio-manager session)
+
+**Why:** Medium's QTUM weight (45%) is already halfway between Safe (75%) and Aggressive (15%), but its sleeve still behaved like Safe's, with no buckets and all four families. The portfolio-manager session's Medium target was QTUM 45%, adjacent suppliers 34.3% (KEYS 20% at the cap, PANW 8.0%, FEIM 6.3%) and pure-plays 20.5%. Two causes, the same ones M16 fixed for Aggressive:
+- **Min-variance and inverse-vol** favour the low-volatility, large-cap adjacent names.
+- **Overflow and overlay-freed weight go to any sleeve name,** adjacent included. For example, the dilution haircuts on pure-plays could end up in KEYS.
+
+The owner wants Medium to be **in the middle** of the Safe→Aggressive ladder.
+
+**M17 (spec §1.1, §6.5, §6.6.1, §11):**
+- **Medium buckets:**
+  - adjacent ≤ **20%** total and ≤ **10%** per name (KEYS drops from 20% to at most 10%)
+  - pure-plays ≥ **35%**, each still ≤ 20%
+  - QTUM stays **45%**
+- **Medium families:** `core_equal`, `core_momentum`, `core_inv_vol` (min-var excluded). The ladder steps down one family at a time: Safe 4, Medium 3, Aggressive 2.
+- **Allocation, overflow and overlay routing exactly as Aggressive (M16):** adjacent overflow → pure-plays → QTUM; weight freed from a pure-play → other pure-plays → QTUM, never adjacent names.
+- **The ladder:**
+
+  | | Safe | Medium | Aggressive |
+  |---|---|---|---|
+  | QTUM | 75% | 45% | 15% |
+  | Pure-plays | unbucketed | ≥ 35% | ≥ 65% |
+  | Adjacent | unbucketed (10% each) | ≤ 20% (10% each) | ≤ 20% (10% each) |
+  | Families | 4 | 3 (no min-var) | 2 (equal, momentum) |
+
+- **Illustrative result** (not computed): Medium ≈ QTUM 45 / pure-play 35 / adjacent 20. Look-through pure-play exposure goes from ~22% to ~37%.
+- **Build is config + tests:** M16's mechanism is already per profile, so M17 sets four keys in `profiles.medium` and adds tests. The M16 golden test narrows to **Safe** byte-identical. $0 LLM; no migration.
+- **Fit (worked out for the acceptance tests):** 2 eligible pure-plays hold 40% ≥ 35%, so it fits (17.5% each). With 1 eligible pure-play: 20% pure-play + 20% adjacent, 15% to QTUM (QTUM 60%), and the flag fires.
+
+**Decided:** M16's open question ("should Medium get a milder version?"). Yes: these values.
+
+**Open question:** whether Safe should get buckets too. Safe is unchanged. Its 10% per-name cap already limits KEYS, but its sleeve is still unbucketed.
+
+**Owner checklist**
+- [ ] Review the Medium values above (§6.5).
+- [ ] After M17 is built and deployed: the config-change rerun republishes targets (trigger `config_change`). Check `/strategies` (Medium ≈ 45 / 35 / 20, min-var "not allowed") and the new Medium targets on `/holdings`. Your current holdings stay as they are; only targets and the plan change.
+
 ## M16: Pure-play tilt for Aggressive (2026-10-14)
 
 ### Built
@@ -19,7 +55,7 @@
 - **Safe/Medium byte-identical** is checked on weights, selection and the published overlay output. Input hashes still change (algo version, new config keys), so the first deploy reruns the backtest and republishes with trigger `config_change`; Safe/Medium numbers stay the same.
 
 ### Open questions
-- Medium's milder version (e.g. adjacent ≤ 25%) is still undecided (see the roadmap entry below).
+- Medium's milder version (e.g. adjacent ≤ 25%) is still undecided (see the roadmap entry below). **Decided 2026-10-14: see the M17 roadmap change above.**
 - Should the look-through also count QTUM's untracked quantum names (e.g. via the universe review's pure-play candidates)? Not done: they aren't typed in `tickers`.
 
 ### Facts
