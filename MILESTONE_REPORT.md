@@ -1,5 +1,25 @@
 # Milestone report
 
+## Fix: one offering filed as two 424Bs counts once (#51) (2026-11-01)
+
+### Built
+- **Ingest:** when a primary 424B (424B1/2/4/5) has the same issuer, filing date and parsed offering size as another 424B that already has an event, it's recorded as a second SEC source on that event (`event_sources`), not as a new event. One dilution event then lists both accessions, and the review, alerts and escalation see one financing.
+- **Thesis:** `financings_for` (the "repeated issuance" red flag, §6.10) counts such a pair once and lists the extra accession under `also`. It reads `filings` directly, so it's also right for duplicates stored before this fix.
+- **Lockfile:** no change in the end. This branch made the same certifi / opentelemetry-api / pyasn1 bump as #52 on `main`, so after merging `main` the lockfile matches it.
+
+### Decisions
+- **Merge only when the sizes agree:** if either cover's size couldn't be parsed, the filings stay separate, so different offerings are never merged on a guess.
+- **Existing duplicates aren't rewritten:** the IONQ pair (#1141, #1142) stays as two events. Alerts and escalations reference events without cascade, and conclusions and reviews cite event ids, so deleting one would break those references. The thesis count is already correct for them.
+- **No independent-source bump:** both sources are the same issuer on sec.gov, so `independent_source_count` isn't incremented.
+
+### Open questions
+- **Deferred documents:** a merge needs both documents parsed. If the first filing's document fetch fails, or the second is classified before its document arrives (the 400-document per-run cap), the pair stays as two events. The thesis count still dedupes them once both are parsed.
+
+### How to verify
+- `make test` (875 passed), `make lint` and `make secrets-scan` are clean.
+- **New tests:** a fake SEC client and synthetic ACME filings cover same-day same-size (one event, two sources, idempotent re-run); different size, different day or unparsed size (two events); and the thesis count for 424B5+424B5, 424B5+424B2, different size, different day and unparsed.
+- With the fix disabled, the three merge cases fail.
+
 ## Config change: 12-name cap and supplier-gap review priorities (2026-11-01, owner-approved)
 
 Requested by the owner after the 2026-11-01 universe review, via the portfolio-manager session. No new behaviour: the cap and the sector priorities were already config-driven.
