@@ -725,7 +725,7 @@ def _load_yaml(path: Path) -> object:
         return yaml.safe_load(fh)
 
 
-DEFAULT_MAX_NAMES = 9
+DEFAULT_MAX_NAMES = 12
 
 
 def load_watchlist(config_dir: Path) -> Watchlist:

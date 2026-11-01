@@ -228,7 +228,7 @@ def test_thesis_panels_render(rw_engine: Engine, client: TestClient) -> None:
     for path in ("/holdings", "/strategies"):
         html = client.get(path).text
         _no_inline(html)
-        assert "Thesis checks" in html and "2 of 9 names used" in html, path
+        assert "Thesis checks" in html and "2 of 12 names used" in html, path
         assert "never change a weight" in html and "Repeated share issuance" in html
         assert "supplier sectors with no name" in html
     t = client.get("/t/ACME").text

@@ -198,19 +198,19 @@ def _wl(n_pure: int, extra: dict | None = None) -> dict:
     return {"tickers": tickers}
 
 
-def test_tenth_active_name_fails_the_loader(tmp_path: Path) -> None:
+def test_thirteenth_active_name_fails_the_loader(tmp_path: Path) -> None:
     import shutil
 
     shutil.copy(CONFIG_DIR / "universe.yaml", tmp_path / "universe.yaml")
-    (tmp_path / "watchlist.yaml").write_text(yaml.safe_dump(_wl(9)))
-    assert len(load_watchlist(tmp_path).sleeve()) == 9
-    tenth = {"symbol": "ADJA", "type": "adjacent", "cik": "0000000099", "sector": "pqc_cyber"}
-    (tmp_path / "watchlist.yaml").write_text(yaml.safe_dump(_wl(9, tenth)))
-    with pytest.raises(ValueError, match=r"10 active pure_play \+ adjacent names .* cap is 9"):
+    (tmp_path / "watchlist.yaml").write_text(yaml.safe_dump(_wl(12)))
+    assert len(load_watchlist(tmp_path).sleeve()) == 12
+    extra = {"symbol": "ADJA", "type": "adjacent", "cik": "0000000099", "sector": "pqc_cyber"}
+    (tmp_path / "watchlist.yaml").write_text(yaml.safe_dump(_wl(12, extra)))
+    with pytest.raises(ValueError, match=r"13 active pure_play \+ adjacent names .* cap is 12"):
         load_watchlist(tmp_path)
-    # An inactive 10th name doesn't count.
-    (tmp_path / "watchlist.yaml").write_text(yaml.safe_dump(_wl(9, {**tenth, "active": False})))
-    assert len(load_watchlist(tmp_path).sleeve()) == 9
+    # An inactive 13th name doesn't count.
+    (tmp_path / "watchlist.yaml").write_text(yaml.safe_dump(_wl(12, {**extra, "active": False})))
+    assert len(load_watchlist(tmp_path).sleeve()) == 12
 
 
 def test_pure_play_without_modality_fails_the_loader() -> None:
@@ -256,7 +256,7 @@ def test_m14_configs_load() -> None:
         "aggressive": 0.04,
     }
     u = load_universe_config(CONFIG_DIR)
-    assert u.max_names_ex_qtum == 9 and u.adjacent is not None
+    assert u.max_names_ex_qtum == 12 and u.adjacent is not None
     assert u.adjacent.excluded_symbols == ("AMZN", "MSFT", "GOOGL", "ORCL", "BABA")
     assert u.adjacent.excluded_sics == ("3674",)
     assert u.strong_candidate.cooldown_reviews == 3 and u.removal.min_materiality == 4
