@@ -34,6 +34,7 @@ from typing import Any
 from sqlalchemy import Engine, select
 
 from aether.config import OverlayParams, RemovalRule, StrongCandidateRule
+from aether.db.event_filters import dated_event
 from aether.db.models import (
     conclusions,
     event_classifications,
@@ -98,6 +99,7 @@ def qualifying_triggers(
                 event_classifications.c.materiality >= rule.min_materiality,
                 events.c.quarantined == 0,
                 events.c.injection_suspected == 0,
+                dated_event(conn.dialect.name),  # #50: retrieval-dated events can't remove
                 events.c.published_at >= since_iso,
                 events.c.published_at <= as_of.isoformat() + "T23:59:59Z",
             )

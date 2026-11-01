@@ -859,3 +859,68 @@ def test_job_registered_for_the_first_at_ten(rw_engine: Engine, migrated_db: Pat
     fields = {f.name: str(f) for f in job.trigger.fields}
     assert (fields["day"], fields["hour"], fields["minute"]) == ("1,2", "10", "0")
     assert str(job.trigger.timezone) == "Asia/Singapore"
+
+
+# --------------------------------------------------------------------------- issue #49
+
+
+def test_own_despac_closing_8k_is_not_an_acquired_trigger(rw_engine: Engine) -> None:
+    """A company's own business-combination closing 8-K reports 2.01 + 5.01 (plus 5.06); it
+    isn't the company being acquired. A later 2.01 + 5.01 still is."""
+    from aether.config import load_strategies
+    from aether.db.dialect import upsert
+    from aether.db.models import prices_daily
+    from aether.db.types import utcnow_iso
+    from aether.universe.triggers import own_combination_closing, structural_triggers
+
+    seed_tickers(rw_engine, [("ACME", "pure_play"), ("DEMO", "pure_play")])
+    with write_tx(rw_engine) as conn:  # ACME's (synthetic) stock starts trading 2026-02-17
+        upsert(
+            conn,
+            prices_daily,
+            [
+                {
+                    "symbol": "ACME",
+                    "d": d,
+                    "o": 10.0,
+                    "h": 10.0,
+                    "l": 10.0,
+                    "c": 10.0,
+                    "volume": 1,
+                    "provider": "synthetic",
+                    "fetched_at": utcnow_iso(),
+                }
+                for d in ("2026-02-17", "2026-02-18", "2026-10-20")
+            ],
+            key_cols=["symbol", "d"],
+        )
+    despac = [
+        "1.01",
+        "2.01",
+        "3.02",
+        "3.03",
+        "5.01",
+        "5.02",
+        "5.03",
+        "5.05",
+        "5.06",
+        "8.01",
+        "9.01",
+    ]
+    add_filing(rw_engine, "ACME", "8-K", "2026-02-17", items=despac)  # the closing super 8-K
+    add_filing(rw_engine, "ACME", "8-K", "2026-02-13", items=["2.01", "5.01"])  # before trading
+    add_filing(rw_engine, "DEMO", "8-K", "2026-02-17", items=despac)  # no prices stored: 5.06 alone
+    overlay = load_strategies(CONFIG_DIR).overlay
+    out = structural_triggers(rw_engine, ["ACME", "DEMO"], TODAY, overlay)
+    assert out == {"ACME": [], "DEMO": []}
+
+    # Being acquired later (no 5.06, after the stock trades) is still a trigger.
+    acc, _ = add_filing(rw_engine, "ACME", "8-K", "2026-10-20", items=["2.01", "5.01", "9.01"])
+    out = structural_triggers(rw_engine, ["ACME", "DEMO"], TODAY, overlay)
+    assert out["ACME"] == [f"acquired: 8-K Items 2.01 + 5.01 {acc} filed 2026-10-20"]
+    assert out["DEMO"] == []
+
+    assert own_combination_closing({"2.01", "5.01", "5.06"}, "2026-10-20", "2026-02-17")
+    assert own_combination_closing({"2.01", "5.01"}, "2026-02-17", "2026-02-17")
+    assert not own_combination_closing({"2.01", "5.01"}, "2026-02-18", "2026-02-17")
+    assert not own_combination_closing({"2.01", "5.01"}, "2026-02-17", None)

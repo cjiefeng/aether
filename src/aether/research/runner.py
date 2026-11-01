@@ -5,8 +5,12 @@ ingestion like any other source.
 **Anti-fabrication.** Events are built only from `web_search_result` blocks: the URL and title come
 from the search engine, never from model text. The excerpt is a citation's `cited_text` (verbatim
 source text, ≤150 chars) for that URL, or nothing. The date is the result's `page_age` when it
-parses, else the retrieval time (`raw.date_source = "retrieved"`). The model's own prose is kept
-only in `research_runs.payload` for audit and never becomes an event.
+parses; else, for an SEC document whose accession is already in `filings`, its EDGAR filing date
+(`raw.date_source = "edgar"`, then the window check applies, so an old filing is dropped; issue
+#50); else the retrieval time (`raw.date_source = "retrieved"`). A retrieval-dated event is shown
+but never drives a decision (removal trigger, escalation, off-cycle review): see
+`db.event_filters`. The model's own prose is kept only in `research_runs.payload` for audit and
+never becomes an event.
 
 **Prompts hold identifiers only** (ticker, company name, dates): no facts, opinions, holdings or
 config commentary. Search results enter the model's context, so the system prompt carries the S1
@@ -33,7 +37,7 @@ from sqlalchemy import Engine, delete, insert, select, update
 
 from aether.config import SLEEVE_TYPES, LlmConfig, Sources, Watchlist
 from aether.db.engine import write_tx
-from aether.db.models import llm_calls, research_runs, tickers
+from aether.db.models import filings, llm_calls, research_runs, tickers
 from aether.db.types import micros_sum, micros_to_decimal, to_iso
 from aether.ingest.news_events import NewsItem, canonical_url, write_news_item
 from aether.llm.client import BudgetExceeded, LlmClient, LlmError, web_search_tool
@@ -152,6 +156,26 @@ def _citations(content: Sequence[Mapping[str, Any]]) -> dict[str, str]:
     return out
 
 
+# An EDGAR accession in an sec.gov URL path: 0001193125-26-421072, or the 18-digit folder form.
+_SEC_ACCESSION = re.compile(r"/(\d{10})-?(\d{2})-?(\d{6})(?=[/.\-]|$)")
+SEC_HOSTS = ("sec.gov", "www.sec.gov")
+
+
+def sec_accession(url: str) -> str | None:
+    """The accession number in an sec.gov document URL, dashed (None for other URLs)."""
+    m = re.match(r"https?://([^/]+)(/[^?#]*)", url, re.IGNORECASE)
+    if not m or m.group(1).lower() not in SEC_HOSTS:
+        return None
+    a = _SEC_ACCESSION.search(m.group(2))
+    return None if a is None else f"{a.group(1)}-{a.group(2)}-{a.group(3)}"
+
+
+def filing_dates(engine: Engine) -> dict[str, str]:
+    """accession -> EDGAR filing date, for dating undated SEC search results."""
+    with engine.connect() as conn:
+        return dict(conn.execute(select(filings.c.accession, filings.c.filed_at)).all())
+
+
 def extract_items(
     message: Mapping[str, Any],
     symbol: str,
@@ -161,8 +185,10 @@ def extract_items(
     *,
     run_id: int,
     kind: str,
+    filed: Mapping[str, str] | None = None,
 ) -> tuple[list[NewsItem], int]:
-    """Items from the search-result blocks only. Returns (items, results_seen)."""
+    """Items from the search-result blocks only. Returns (items, results_seen). `filed` maps an
+    accession to its EDGAR filing date (see `filing_dates`)."""
     content = [b for b in message.get("content") or () if isinstance(b, Mapping)]
     cites = _citations(content)
     lo = datetime.combine(start, time(0), tzinfo=UTC)
@@ -194,12 +220,17 @@ def extract_items(
                 "page_age": page_age,
                 "prompt_version": PROMPT_VERSION,
             }
+            source = "page_age"
+            if published is None and filed:
+                acc = sec_accession(url)
+                if acc is not None and acc in filed:
+                    d = date.fromisoformat(filed[acc])
+                    published, source = datetime.combine(d, time(12), tzinfo=UTC), "edgar"
             if published is None:
-                published, raw["date_source"] = retrieved_at, "retrieved"
+                published, source = retrieved_at, "retrieved"
             elif not lo <= published < hi:
                 continue  # dated outside the requested window
-            else:
-                raw["date_source"] = "page_age"
+            raw["date_source"] = source
             if key not in items:
                 items[key] = NewsItem(
                     url=url,
@@ -307,6 +338,7 @@ def run_sweep(
     new_total = done = 0
     warning = None
     failures: list[str] = []
+    filed = filing_dates(engine)
     for target in targets(watchlist, _known(engine)):
         with write_tx(engine) as conn:
             run_id: int = conn.execute(
@@ -346,7 +378,7 @@ def run_sweep(
             failures.append(target.symbol)
             continue
         items, seen = extract_items(
-            message, target.symbol, start, end, now, run_id=run_id, kind="sweep"
+            message, target.symbol, start, end, now, run_id=run_id, kind="sweep", filed=filed
         )
         new_total += _ingest(engine, sources, run_id, items, seen, audit_payload(message), now)
         done += 1
@@ -445,7 +477,14 @@ def run_verify(
         _finish(engine, run_id, "failed", str(exc), now)
         raise
     items, seen = extract_items(
-        message, target.symbol, start, end, now, run_id=run_id, kind="verify"
+        message,
+        target.symbol,
+        start,
+        end,
+        now,
+        run_id=run_id,
+        kind="verify",
+        filed=filing_dates(engine),
     )
     return run_id, _ingest(engine, sources, run_id, items, seen, audit_payload(message), now)
 
@@ -578,6 +617,7 @@ def poll_backfill(
         return None
     new_total = 0
     pending: list[str] = []
+    filed = filing_dates(engine)
     for batch_id in sorted({r.batch_id for r in open_rows if r.batch_id}):
         status = llm.batch_status(batch_id, purpose="research_backfill")
         if status != "ended":
@@ -619,6 +659,7 @@ def poll_backfill(
                 now,
                 run_id=row.id,
                 kind="backfill",
+                filed=filed,
             )
             new_total += _ingest(
                 engine, sources, row.id, items, seen, audit_payload(res.message), now
