@@ -18,6 +18,8 @@ tickers:
      modality: annealing, modality_fact: qbts_modality}
   - {symbol: INFQ, type: pure_play, cik: "0002007825", aliases: [Infleqtion],
      modality: neutral_atom, modality_fact: infq_modality}
+  - {symbol: QUBT, type: pure_play, cik: "0001758009", aliases: [Quantum Computing Inc, QCi],
+     modality: photonic, modality_fact: qubt_modality}
   # adjacent industries (M14; CIKs verified 2026-10-07 against company_tickers_exchange.json)
   - {symbol: KEYS, type: adjacent, cik: "0001601046", sector: test_measurement, aliases: [Keysight]}
   - {symbol: FEIM, type: adjacent, cik: "0000039020", sector: sensing_timing, aliases: [Frequency Electronics]}

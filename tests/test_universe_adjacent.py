@@ -1058,6 +1058,7 @@ def test_scheduled_monthly_review_gets_the_m14_rules(
         "RGTI",
         "QBTS",
         "INFQ",
+        "QUBT",
         "KEYS",
         "FEIM",
         "PANW",

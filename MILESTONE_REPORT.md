@@ -17,6 +17,8 @@
 - Red flags stay inputs, not gates. Optional `add_max_red_flags` (default null). The strong-candidate notification needs 0 flags.
 - $0 LLM; about 2–6 SEC requests per candidate.
 
+**Since this PR was opened, QUBT was added to the watchlist** (cjiefeng/aether#58). It's now a current name, so it gets the §6.10 red flags directly. The candidate examples are now XNDU (FPI) and HONA (recent separation).
+
 **Aligned with the fixes merged after this PR was opened** (review by the product-manager session, 2026-11-01):
 - **#51:** repeated issuance counts one offering filed as two 424Bs once (`offering_key`, a shared `financings_for`). That needs the 424B cover documents (up to 6 per candidate), so the SEC request estimate is now 2–12 per candidate.
 - **#49:** the 8-K 2.01 acquisitions count skips the company's own de-SPAC or separation closing (Item 5.06, or filed on or before the first trading session). This matters for recent listings and spin-offs such as HONA.
@@ -29,6 +31,31 @@
 **Owner checklist:**
 - [ ] Review §6.7.4.
 - [ ] Decide `add_max_red_flags`.
+
+## Watchlist change: add QUBT (photonic pure-play) (2026-11-01, owner decision)
+
+**Why:** the 2026-11-01 universe review rated QUBT `add` (all four §6.7 criteria). It fills the thesis's only empty modality, photonic (§6.10 gaps). The owner chose to add it after a manual red-flag check (portfolio-manager session, figures from SEC filings):
+- **Repeated issuance: flag.** Shares outstanding are up 41.6% YoY (159.9M on 2025-08-13 → 226.3M on 2026-08-07), from three 2025 private placements (8-K 3.02s on 06-25, 09-24 and 10-08). There's been no financing since 2025-11-01, so the flag should clear with the Q3 10-Q if the count holds (the year-ago count is 224.1M).
+- **Runway: ok.** About 22 years: $954M liquidity at 2026-06-30 ÷ about $10.8M quarterly operating burn.
+- **Revenue vs spending: ok.** TTM revenue $9.8M (up from about $0.1M in H1'25). TTM operating expenses $74M, rising fast.
+- **Acquisitions: ok.** $97.5M paid in H1'26, about 10% of liquidity, but two acquisitions closed in 2026.
+
+### Changed
+- `config/watchlist.yaml`: `QUBT` (CIK 0001758009, Nasdaq, checked against SEC `company_tickers_exchange.json` on 2026-11-01), aliases `Quantum Computing Inc` and `QCi` (word-boundary, case-insensitive; no bare "Quantum Computing"), `modality: photonic`.
+- `config/facts.yaml` + `FACTS.md` (`make facts`): new `qubt_modality` fact, quoting Item 1 of the FY2025 10-K (accession 0001213900-26-022417), `verified_by_claude`.
+- Tests that pin the real watchlist and facts (pure-play list, modality map, sleeve 9, facts 18, tickers 17, the review's sleeve set).
+- Name cap: **9 of 12** used.
+
+### Effects to expect after deploy
+- The worker backfills QUBT's prices (2 years), EDGAR filings since 2025-01-01, XBRL, dividends and options snapshots. QUBT joins the weekly research sweep and the Sunday conclusions.
+- The config-change rerun republishes targets. QUBT has 275+ sessions, so it's eligible at once.
+- **The overlay's dilution haircut** (fully diluted shares > +20% YoY → × 0.5) will likely halve QUBT's base weight until the YoY falls below 20%. In Medium that's about 5.8% → about 2.9%, with the freed weight going to the other pure-plays.
+- At the current sleeve size, about 2.9% falls below the planner's $100 minimum trade, so no QUBT buy may be suggested yet.
+
+### Owner checklist
+- [ ] Review the `qubt_modality` wording and set `status: signed_off` when you accept it (then `make facts`).
+- [ ] After merge: `./deploy.sh`, then check `/t/QUBT` (filings, scorecard), `/holdings` (target, overlay chain) and the thesis panel (photonic now covered).
+- [ ] Watch the Q3 10-Q (mid-November): does the dilution flag clear?
 
 ## Fix: two false removals in the 2026-11-01 universe review (#49, #50) (2026-11-01)
 

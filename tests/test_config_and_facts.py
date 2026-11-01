@@ -19,7 +19,14 @@ from tests.conftest import CONFIG_DIR, REPO
 def test_watchlist_matches_spec() -> None:
     wl = load_watchlist(CONFIG_DIR)
     assert [t.symbol for t in wl.by_type("etf")] == ["QTUM"]
-    assert [t.symbol for t in wl.by_type("pure_play")] == ["IONQ", "QNT", "RGTI", "QBTS", "INFQ"]
+    assert [t.symbol for t in wl.by_type("pure_play")] == [
+        "IONQ",
+        "QNT",
+        "RGTI",
+        "QBTS",
+        "INFQ",
+        "QUBT",
+    ]
     assert [t.symbol for t in wl.by_type("adjacent")] == ["KEYS", "FEIM", "PANW"]
     assert [t.symbol for t in wl.by_type("benchmark")] == ["QQQ", "SOXX"]
     assert [t.symbol for t in wl.by_type("context")] == ["IBM", "GOOGL", "MSFT", "AMZN", "NVDA"]
@@ -62,8 +69,8 @@ def test_secrets_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_facts_verified_and_partly_signed_off() -> None:
     facts = load_facts(CONFIG_DIR)
     assert (
-        len(facts) == 17
-    )  # M8 added darpa_qbi_stage_b_duration; M14 the 8 modality/evidence facts
+        len(facts) == 18
+    )  # M8: darpa_qbi_stage_b_duration; M14: 8 modality/evidence facts; 2026-11-01: qubt_modality
     # M2 verified every seed against a primary source; the owner signed off five (2026-10-05).
     assert {f.status for f in facts} == {"verified_by_claude", "signed_off"}
     assert sum(f.status == "signed_off" for f in facts) == 5
@@ -162,12 +169,13 @@ def test_ignore_files_cover_secrets() -> None:
 def test_m14_watchlist_tags_and_ciks() -> None:
     wl = load_watchlist(CONFIG_DIR)
     by = {t.symbol: t for t in wl.tickers}
-    assert {s: by[s].modality for s in ("IONQ", "QNT", "RGTI", "QBTS", "INFQ")} == {
+    assert {s: by[s].modality for s in ("IONQ", "QNT", "RGTI", "QBTS", "INFQ", "QUBT")} == {
         "IONQ": "trapped_ion",
         "QNT": "trapped_ion",
         "RGTI": "superconducting",
         "QBTS": "annealing",
         "INFQ": "neutral_atom",
+        "QUBT": "photonic",
     }
     assert {s: (by[s].cik, by[s].sector) for s in ("KEYS", "FEIM", "PANW")} == {
         "KEYS": ("0001601046", "test_measurement"),
@@ -178,7 +186,7 @@ def test_m14_watchlist_tags_and_ciks() -> None:
     for t in wl.by_type("pure_play"):
         assert t.modality_fact in facts
         assert all(u.startswith("https://www.sec.gov/") for u in facts[t.modality_fact].sources)
-    assert len(wl.sleeve()) == 8
+    assert len(wl.sleeve()) == 9
 
 
 def _wl(n_pure: int, extra: dict | None = None) -> dict:
