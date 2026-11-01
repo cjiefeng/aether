@@ -81,6 +81,15 @@ strong_candidate:
 # §6.7.3: the owner-triggered full re-evaluation runs at most once per this many days.
 full_review_cooldown_days: 7
 
+# §6.7.4 (M18): the four thesis red flags for every add-qualified candidate (thresholds in
+# thesis.yaml). Up to candidate_max_documents primary 424B covers (foreign private issuers: then
+# F-1/F-3) are read per candidate for the "same offering" rule; data whose period ended more than
+# candidate_stale_days before the review is "unknown (stale)". Red flags are inputs, not gates:
+# add_max_red_flags (null = no gate) turns an `add` with more flags into `watch`.
+candidate_max_documents: 6
+candidate_stale_days: 200
+add_max_red_flags: null
+
 # §6.7.1: the adjacent-industry track. Seeds are tickers from the owner's 2026-10-07 screen: inputs
 # to discovery, not opinions. Exclusions are checked in code before any research: hyperscalers and
 # cloud platforms, SIC 3674 (semiconductors), pure-plays and names already active.

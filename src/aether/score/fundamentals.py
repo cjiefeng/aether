@@ -32,16 +32,27 @@ from sqlalchemy import Connection, func, select
 
 from aether.db.models import fundamentals_q, prices_daily
 
+# M18: each list ends with the ifrs-full equivalents (foreign private issuers, spec §6.7.4); a
+# us-gaap filer never tags them, so its results are unchanged.
 REVENUE = (
     "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
     "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
     "us-gaap:Revenues",
+    "ifrs-full:RevenueFromContractsWithCustomers",
+    "ifrs-full:Revenue",
 )
-OCF = ("us-gaap:NetCashProvidedByUsedInOperatingActivities",)
+OCF = (
+    "us-gaap:NetCashProvidedByUsedInOperatingActivities",
+    "ifrs-full:CashFlowsFromUsedInOperatingActivities",
+)
 # M14 thesis red flags (spec §6.10). One concept per name, by priority, never summed.
-OPEX = ("us-gaap:OperatingExpenses", "us-gaap:CostsAndExpenses")
-ACQUISITIONS = ("us-gaap:PaymentsToAcquireBusinessesNetOfCashAcquired",)
-CASH = "us-gaap:CashAndCashEquivalentsAtCarryingValue"
+OPEX = ("us-gaap:OperatingExpenses", "us-gaap:CostsAndExpenses", "ifrs-full:OperatingExpense")
+ACQUISITIONS = (
+    "us-gaap:PaymentsToAcquireBusinessesNetOfCashAcquired",
+    "ifrs-full:CashFlowsUsedInObtainingControlOfSubsidiariesOrOtherBusinesses"
+    "ClassifiedAsInvestingActivities",
+)
+CASH = ("us-gaap:CashAndCashEquivalentsAtCarryingValue", "ifrs-full:CashAndCashEquivalents")
 # Priority order within each bucket; one concept per bucket is used, never summed (filers tag the
 # same holding under several of them). `LongTermInvestments` is left out: it can hold strategic
 # equity stakes, not just marketable debt.
@@ -50,6 +61,7 @@ SHORT_TERM = (
     "us-gaap:MarketableSecuritiesCurrent",
     "us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent",
     "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+    "ifrs-full:CurrentInvestments",
 )
 LONG_TERM = (
     "us-gaap:AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
@@ -63,7 +75,11 @@ CONVERTIBLE = (
     "us-gaap:ConvertibleSeniorNotesNoncurrent",
     "us-gaap:ConvertibleNotesPayableCurrent",
 )
-COMMON = ("dei:EntityCommonStockSharesOutstanding", "us-gaap:CommonStockSharesOutstanding")
+COMMON = (
+    "dei:EntityCommonStockSharesOutstanding",
+    "us-gaap:CommonStockSharesOutstanding",
+    "ifrs-full:NumberOfSharesOutstanding",
+)
 FD_COMPONENTS = {
     "warrants": "us-gaap:ClassOfWarrantOrRightOutstanding",
     "options": "us-gaap:ShareBasedCompensationArrangementByShareBasedPaymentAward"
@@ -401,7 +417,7 @@ class Snapshot:
 
 
 def _liquidity(facts: Sequence[Fact], snap: Snapshot) -> date | None:
-    cash = latest_instant(facts, CASH)
+    cash = next((f for c in CASH if (f := latest_instant(facts, c)) is not None), None)
     if cash is None:
         snap.reasons["liquidity"] = "cash not tagged"
         return None

@@ -102,6 +102,10 @@ def evaluate(
 
     bars = sorted(bars or [], key=lambda b: b.d)
     detail["sessions"] = len(bars)
+    # M18: the first bar in the price window. For a listing younger than the window it's the first
+    # trading session (share-count YoY base and the #49 own-closing rule); for an older one it's
+    # later than the real first session, which both rules tolerate.
+    detail["first_session"] = bars[0].d.isoformat() if bars else None
     detail["price_provider"] = bars[-1].provider if bars else None
     if price_error:
         detail["price_error"] = price_error[:200]

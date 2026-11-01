@@ -8,7 +8,7 @@ import re
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Engine, insert, select
+from sqlalchemy import Engine, insert, select, update
 from starlette.testclient import TestClient
 
 from aether.db.engine import write_tx
@@ -206,3 +206,71 @@ def test_review_pack_section(rw_engine: Engine) -> None:
     lines = universe_lines(sec)
     assert "- remove DEMO (DEMO Corp)" in lines and "- watch NEWQ (NEWQ Corp)" in lines
     assert "- No changes proposed." not in lines
+
+
+def test_universe_page_shows_candidate_red_flags(rw_engine: Engine, client: TestClient) -> None:
+    """M18: a candidate's computed red flags (status, text, period, data-as-of, SEC links, resale
+    overhang), escaped, with no inline script or style."""
+    rid = seed_review(rw_engine)
+    rf = {
+        "fpi": True,
+        "n_flags": 1,
+        "n_unknown": 1,
+        "checks": [
+            {
+                "key": "issuance",
+                "label": "Repeated share issuance",
+                "status": "flag",
+                "text": "2 dilutive financings in 365 days <b>x</b>",
+                "evidence": [
+                    {
+                        "accession": "0000000103-26-000001",
+                        "form": "424B5",
+                        "filed_at": "2026-06-01",
+                        "url": "https://www.sec.gov/Archives/edgar/data/103/000000010326000001/"
+                        "0000000103-26-000001-index.htm",
+                        "also": ["0000000103-26-000002"],
+                    }
+                ],
+                "period_end": "2026-06-30",
+                "basis": None,
+                "data_as_of": "2026-08-05",
+                "accessions": ["0000000103-26-000001", "0000000103-26-000002"],
+            },
+            {
+                "key": "runway",
+                "label": "Cash runway under ~2 years",
+                "status": "unknown",
+                "text": "runway unknown (stale)",
+                "evidence": [],
+                "period_end": None,
+                "basis": "period, not TTM",
+                "data_as_of": None,
+                "accessions": [],
+            },
+        ],
+        "resale_overhang": [
+            {
+                "accession": "0000000103-26-000009",
+                "form": "424B3",
+                "filed_at": "2026-08-21",
+                "url": "https://www.sec.gov/Archives/edgar/data/103/000000010326000009/"
+                "0000000103-26-000009-index.htm",
+            }
+        ],
+        "instances": [{"form": "6-K", "accession": "0000000103-26-000003", "filed": "2026-08-05"}],
+        "errors": [],
+    }
+    with write_tx(rw_engine) as conn:
+        where = (universe_candidates.c.review_id == rid, universe_candidates.c.symbol == "NEWQ")
+        raw = conn.execute(select(universe_candidates.c.criteria).where(*where)).scalar_one()
+        crit = {**json.loads(raw), "red_flags": rf}
+        conn.execute(update(universe_candidates).where(*where).values(criteria=json.dumps(crit)))
+    html = client.get("/universe").text
+    _no_inline(html)
+    assert "Red flags (computed, §6.10 thresholds)" in html and "foreign private issuer" in html
+    assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html
+    assert "424B5 2026-06-01" in html and "also 0000000103-26-000002" in html
+    assert "Resale overhang (424B3, not issuance)" in html and "424B3 2026-08-21" in html
+    assert "period, not TTM" in html and "2026-08-05" in html
+    assert "XBRL read from: 6-K 0000000103-26-000003" in html

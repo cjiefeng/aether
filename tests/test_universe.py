@@ -137,6 +137,7 @@ class FakeEdgar:
     companies: dict[str, Co] = field(default_factory=lambda: dict(COMPANIES))
     fts_extra: list[dict[str, Any]] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
+    requests_made: int = 0
 
     def _by_cik(self, cik: str) -> Co:
         return next(c for c in self.companies.values() if c.cik == cik)
@@ -924,3 +925,102 @@ def test_own_despac_closing_8k_is_not_an_acquired_trigger(rw_engine: Engine) -> 
     assert own_combination_closing({"2.01", "5.01"}, "2026-02-17", "2026-02-17")
     assert not own_combination_closing({"2.01", "5.01"}, "2026-02-18", "2026-02-17")
     assert not own_combination_closing({"2.01", "5.01"}, "2026-02-17", None)
+
+
+# --------------------------------------------------------------------------- M18 red flags
+
+
+def test_candidate_red_flags_reach_criteria_prompt_and_telegram(
+    rw_engine: Engine, migrated_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§6.7.4: an add-qualified candidate's red flags are computed before the proposal, with SEC
+    calls outside any write transaction, stored in `criteria`, shown to the model as a computed
+    line and counted in the Telegram text. Nothing else is written for the candidate."""
+    import aether.universe.common as common_mod
+    import aether.universe.run as run_mod
+    from aether.db.models import filings as filings_t
+    from aether.db.models import fundamentals_q
+
+    in_tx: list[bool] = [False]
+    real = write_tx
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def tracked(engine: Engine, **kw: Any) -> Any:
+        in_tx[0] = True
+        try:
+            with real(engine, **kw) as conn:
+                yield conn
+        finally:
+            in_tx[0] = False
+
+    monkeypatch.setattr(run_mod, "write_tx", tracked)
+    monkeypatch.setattr(common_mod, "write_tx", tracked)
+    h = _harness(rw_engine, migrated_db, {s: "add" for s in ALL})
+    edgar = h.deps.edgar
+    for name in ("submissions", "companyfacts", "document"):
+        orig = getattr(edgar, name)
+
+        def guard(*a: Any, _orig: Any = orig, **kw: Any) -> Any:
+            assert not in_tx[0], "SEC call inside a write transaction"
+            return _orig(*a, **kw)
+
+        monkeypatch.setattr(edgar, name, guard)
+    run_universe_review(rw_engine, h.deps, today=TODAY, now=NOW)
+    c = _cands(rw_engine)
+    rf = json.loads(c["NEWQ"].criteria)["red_flags"]
+    assert [x["key"] for x in rf["checks"]] == [
+        "issuance",
+        "runway",
+        "revenue_vs_spend",
+        "acquisitions",
+    ]
+    assert {x["status"] for x in rf["checks"]} <= {"flag", "ok", "unknown"}
+    # Tracked names and candidates failing a deterministic criterion get none.
+    assert json.loads(c["ACME"].criteria)["red_flags"] is None
+    assert json.loads(c["TINY"].criteria)["red_flags"] is None
+    prompt = next(b for b in h.api.bodies() if not b.get("tools"))
+    text = json.dumps(prompt)
+    assert "## Candidate NEWQ" in text and "Computed red flags: " in text
+    with rw_engine.connect() as conn:
+        tg = conn.execute(select(universe_reviews.c.telegram_text)).scalar_one()
+        for t in (filings_t, fundamentals_q):
+            n = conn.execute(select(t).where(t.c.symbol == "NEWQ")).all()
+            assert n == []
+    assert f"[red flags: {rf['n_flags']}, unknown: {rf['n_unknown']}]" in tg
+
+
+@pytest.mark.parametrize(("limit", "action"), [(1, "watch"), (None, "add")])
+def test_add_max_red_flags_downgrades_a_flagged_add(
+    rw_engine: Engine,
+    migrated_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit: int | None,
+    action: str,
+) -> None:
+    import aether.universe.run as run_mod
+
+    def two_flags(deps: Any, a: Any, today: date) -> dict[str, Any] | None:
+        if a.cand.symbol != "NEWQ":
+            return None
+        checks = [
+            {"key": k, "label": lbl, "status": st, "text": "synthetic", "evidence": []}
+            for k, lbl, st in (
+                ("issuance", "Repeated share issuance", "flag"),
+                ("runway", "Cash runway under ~2 years", "flag"),
+                ("revenue_vs_spend", "Revenue flat while spending rises", "ok"),
+                ("acquisitions", "Large cash-draining acquisitions", "ok"),
+            )
+        ]
+        return {"checks": checks, "n_flags": 2, "n_unknown": 0, "fpi": False}
+
+    monkeypatch.setattr(run_mod, "candidate_red_flags", two_flags)
+    h = _harness(rw_engine, migrated_db, {s: "add" for s in ALL})
+    h.deps.cfg = CFG.model_copy(update={"add_max_red_flags": limit})
+    run_universe_review(rw_engine, h.deps, today=TODAY, now=NOW)
+    newq = _cands(rw_engine)["NEWQ"]
+    assert newq.action == action
+    if limit is not None:
+        assert "2 computed red flag(s)" in newq.gate_note
+        assert "add_max_red_flags 1" in newq.gate_note

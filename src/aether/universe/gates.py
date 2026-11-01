@@ -212,3 +212,23 @@ def gate_adjacent(f: AdjFacts, entry: Mapping[str, Any], cited: Sequence[str]) -
     if blockers:
         return out("watch", "add blocked: " + "; ".join(blockers))
     return out("add", None)
+
+
+# --------------------------------------------------------------------------- M18 red flags
+
+
+def red_flag_gate(
+    action: str, note: str | None, red_flags: Mapping[str, Any] | None, max_flags: int | None
+) -> tuple[str, str | None]:
+    """§6.7.4: red flags are inputs, not gates, unless `add_max_red_flags` is set; then an `add`
+    with more computed flags becomes `watch`, with the reason."""
+    if action != "add" or max_flags is None or not red_flags:
+        return action, note
+    n = int(red_flags.get("n_flags", 0))
+    if n <= max_flags:
+        return action, note
+    flagged = [f["label"].lower() for f in red_flags.get("checks", []) if f["status"] == "flag"]
+    return "watch", (
+        f"add blocked: {n} computed red flag(s) ({', '.join(flagged)}), more than "
+        f"add_max_red_flags {max_flags}"
+    )

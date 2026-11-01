@@ -17,6 +17,21 @@
   <span class="muted small">[{{ ref }}]</span>
   {% if e.excerpt %}<br><span class="small">“{{ e.excerpt }}”</span>{% endif %}</li>
 {%- endmacro %}
+{% macro red_flags(rf) -%}
+<h3>Red flags (computed, §6.10 thresholds){% if rf.fpi %} <span class="muted small">· foreign private issuer</span>{% endif %}</h3>
+<table class="small criteria">
+  <thead><tr><th>Check</th><th>Result</th><th>Detail</th><th>Period</th><th>Data as of</th></tr></thead>
+  <tbody>{% for f in rf.checks %}<tr><td>{{ f.label }}</td>
+    <td class="{{ 'fail' if f.status == 'flag' else ('pass' if f.status == 'ok' else 'muted') }}">{{ f.status }}</td>
+    <td>{{ f.text }}{% for e in f.evidence if e.url is defined and e.url %}{% if loop.first %}<br>{% endif %}{{ e.url|extlink(e.form ~ " " ~ e.filed_at) }}{% if e.also %} <span class="muted">(also {{ e.also|join(", ") }})</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
+      {% if f.accessions %}<br><span class="muted">Accessions: {{ f.accessions|join(", ") }}</span>{% endif %}</td>
+    <td class="nowrap">{{ f.period_end or "—" }}{% if f.basis %}<br><span class="muted">{{ f.basis }}</span>{% endif %}</td>
+    <td class="nowrap">{{ f.data_as_of or "—" }}</td></tr>{% endfor %}</tbody>
+</table>
+{% if rf.resale_overhang %}<p class="small muted">Resale overhang (424B3, not issuance): {% for e in rf.resale_overhang %}{{ e.url|extlink(e.form ~ " " ~ e.filed_at) }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{% if rf.instances %}<p class="small muted">XBRL read from: {% for i in rf.instances %}{{ i.form }} {{ i.accession }} ({{ i.filed }}){% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+{% for e in rf.errors or [] %}<p class="banner stale small">{{ e }}</p>{% endfor %}
+{%- endmacro %}
 {% block content %}
 <h1>Universe review</h1>
 <p class="muted small">Once a month (the 1st, 10:00 SGT) Aether applies the same test to every current pure-play and every
@@ -100,6 +115,13 @@
   </div>
   {% if f.not_chosen %}<h3>Candidates not chosen</h3>
   <ul class="small">{% for n in f.not_chosen %}<li>{{ n.symbol }}: {{ n.reason.text }}{% if n.reason.evidence_ids %} <span class="muted">({{ n.reason.evidence_ids|join(", ") }})</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% set flagged = rows|selectattr("criteria.red_flags")|list %}
+  {% if flagged %}<h3>Candidates' red flags (computed)</h3>
+  <table class="small">
+    <thead><tr><th>Candidate</th>{% for f in flagged[0].criteria.red_flags.checks %}<th>{{ f.label }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for c in flagged %}<tr><td>{{ c.symbol }}{% if c.criteria.red_flags.fpi %} <span class="muted">(FPI)</span>{% endif %}</td>
+      {% for f in c.criteria.red_flags.checks %}<td class="{{ 'bad' if f.status == 'flag' else ('muted' if f.status == 'unknown' else '') }}" title="{{ f.text }}">{{ f.status }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>{% endif %}
 </section>
 {% endif %}
 
@@ -161,6 +183,7 @@
       <tr><td>4. History</td><td class="{{ 'pass' if k.c4 else 'fail' }}">{{ "met" if k.c4 else "not met" }}</td><td>{{ k.sessions }} sessions</td></tr>
     </tbody>
   </table>
+  {% if k.red_flags %}{{ red_flags(k.red_flags) }}{% endif %}
   {% if k.structural %}<p class="small bad">Filing triggers: {{ k.structural|join("; ") }}</p>{% endif %}
   {% if k.qualifying %}<p class="small bad">Qualifying events: {% for ref, t in k.qualifying.items() %}{{ ref }} {{ t }}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
   {% if c.reasons %}
