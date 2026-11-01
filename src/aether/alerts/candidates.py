@@ -39,6 +39,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Connection, Engine, select
 
 from aether.config import SLEEVE_TYPES, AlertsConfig, RiskFlagParams
+from aether.db.event_filters import dated_event
 from aether.db.models import (
     alerts,
     earnings_calendar,
@@ -179,6 +180,7 @@ def off_cycle_reviews(
             event_classifications.c.materiality >= min_materiality,
             events.c.quarantined == 0,
             events.c.injection_suspected == 0,
+            dated_event(conn.dialect.name),  # #50: no off-cycle review on a retrieval date
             events.c.published_at >= since,
         )
         .order_by(events.c.published_at, events.c.id, event_tickers.c.symbol)

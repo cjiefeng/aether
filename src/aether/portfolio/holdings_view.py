@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import Engine, func, select
 
 from aether.config import SLEEVE_TYPES
+from aether.db.event_filters import dated_event
 from aether.db.models import (
     commands,
     event_classifications,
@@ -134,6 +135,7 @@ def off_cycle_events(engine: Engine, since: str, min_materiality: int = 4) -> li
                 tickers.c.type.in_(SLEEVE_TYPES),
                 events.c.quarantined == 0,
                 event_classifications.c.materiality >= min_materiality,
+                dated_event(conn.dialect.name),  # #50: as the off-cycle alert
                 events.c.published_at >= since,
             )
             .order_by(events.c.published_at.desc(), events.c.id.desc())
