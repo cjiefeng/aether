@@ -165,6 +165,7 @@ def _doc(c: Co) -> str:
 class FakeEdgar:
     companies: dict[str, Co] = field(default_factory=lambda: dict(COMPANIES))
     calls: list[str] = field(default_factory=list)
+    requests_made: int = 0
 
     def _by_cik(self, cik: str) -> Co:
         return next(c for c in self.companies.values() if c.cik == cik)
@@ -203,9 +204,54 @@ class FakeEdgar:
     def companyfacts(self, cik: str) -> dict[str, Any]:
         c = self._by_cik(cik)
         u = {"val": c.shares, "end": "2026-02-15", "filed": "2026-03-01", "accn": "x-1"}
-        return {
-            "facts": {"dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [u]}}}}
+        facts: dict[str, Any] = {
+            "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [u]}}}
         }
+        if c.ticker in CLEAN_FUNDAMENTALS:
+            facts["us-gaap"] = clean_fundamentals()
+        return {"facts": facts}
+
+
+# M18: candidates whose companyfacts pass every red-flag check (cash generative, growing revenue,
+# no acquisitions); only the share YoY is unknown (listed < 1 year in the synthetic prices).
+CLEAN_FUNDAMENTALS = {"CLCK"}
+
+
+def clean_fundamentals() -> dict[str, Any]:
+    def fy(val: int, end: str, start: str, filed: str) -> dict[str, Any]:
+        return {
+            "val": val,
+            "start": start,
+            "end": end,
+            "filed": filed,
+            "form": "10-K",
+            "accn": "x-2",
+        }
+
+    def flows(this: int, last: int) -> dict[str, Any]:
+        return {
+            "units": {
+                "USD": [
+                    fy(last, "2025-06-30", "2024-07-01", "2025-08-01"),
+                    fy(this, "2026-06-30", "2025-07-01", "2026-08-01"),
+                ]
+            }
+        }
+
+    cash = {
+        "val": 900_000_000,
+        "end": "2026-06-30",
+        "filed": "2026-08-01",
+        "form": "10-K",
+        "accn": "x-2",
+    }
+    return {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [cash]}},
+        "NetCashProvidedByUsedInOperatingActivities": flows(120_000_000, 90_000_000),
+        "Revenues": flows(1_200_000_000, 1_000_000_000),
+        "OperatingExpenses": flows(800_000_000, 700_000_000),
+        "PaymentsToAcquireBusinessesNetOfCashAcquired": flows(0, 0),
+    }
 
 
 @dataclass
@@ -783,9 +829,19 @@ def test_adjacent_budget_cap_stops_only_the_adjacent_track(
 
 def test_strong_candidate_rules() -> None:
     rule = CFG.strong_candidate
-    row = {"exposure": "high", "criteria_obj": {"slot_blocked": True}}
+    clean = {"n_flags": 0, "n_unknown": 1}
+    row = {"exposure": "high", "criteria_obj": {"slot_blocked": True, "red_flags": clean}}
     ok, _ = slots.strong_candidate(row, slots.EvidenceCount(2, 1, "2026-10-01"), rule, [])
     assert ok
+    # M18: a computed red flag, 2 unknown checks, or no red flags at all -> not strong.
+    for rf, why in (
+        ({"n_flags": 1, "n_unknown": 0}, "1 computed red flag"),
+        ({"n_flags": 0, "n_unknown": 2}, "2 red-flag checks unknown"),
+        (None, "red flags not computed"),
+    ):
+        r = {**row, "criteria_obj": {"slot_blocked": True, "red_flags": rf}}
+        got = slots.strong_candidate(r, slots.EvidenceCount(3, 2, "2026-10-01"), rule, [])
+        assert got == (False, got[1]) and got[1].startswith(why)
     assert not slots.strong_candidate(row, slots.EvidenceCount(1, 1, "2026-10-01"), rule, [])[0]
     assert not slots.strong_candidate(row, slots.EvidenceCount(2, 0, "2026-10-01"), rule, [])[0]
     med = {**row, "exposure": "med"}
@@ -1063,3 +1119,18 @@ def test_scheduled_monthly_review_gets_the_m14_rules(
         "FEIM",
         "PANW",
     }
+
+
+def test_full_reevaluation_sees_candidate_red_flags(rw_engine: Engine, migrated_db: Path) -> None:
+    """§6.7.4: an add-qualified candidate competes in the full re-evaluation with its computed
+    red flags (current names keep their §6.10 lines); the stored row carries them too."""
+    plan = Plan(
+        full=_full_answer([("ACME", "keep", ""), ("DEMO", "keep", ""), ("KEYZ", "keep", "")], [])
+    )
+    h = _harness(rw_engine, migrated_db, plan)
+    run_universe_review(rw_engine, h.deps, today=TODAY, kind="full", now=NOW)
+    rf = json.loads(_cands(rw_engine)["CLCK"].criteria)["red_flags"]
+    # Clean synthetic fundamentals: no flag, only the share YoY unknown (listed < 1 year).
+    assert rf["n_flags"] == 0 and rf["n_unknown"] == 1
+    full_body = json.dumps(h.api.bodies()[-1])
+    assert "Computed: red flags: 0, unknown: 1 (repeated share issuance)." in full_body

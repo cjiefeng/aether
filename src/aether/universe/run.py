@@ -55,10 +55,15 @@ from aether.providers.edgar import EdgarClient
 from aether.providers.prices import PriceProvider, ProviderError
 from aether.review.pack import fit
 from aether.runs import JobResult
-from aether.universe import propose
+from aether.universe import candidate_checks, propose
 from aether.universe.adjacent import evidence_counts, run_adjacent_track
 from aether.universe.business import fetch_business
-from aether.universe.common import Assessed, assess_criteria, write_evidence
+from aether.universe.common import (
+    Assessed,
+    assess_criteria,
+    candidate_red_flags,
+    write_evidence,
+)
 from aether.universe.discover import (
     Candidate,
     ExchangeMap,
@@ -72,7 +77,7 @@ from aether.universe.full import assess as assess_full
 from aether.universe.full import build_context as full_context
 from aether.universe.full import cooldown_ok as full_cooldown_ok
 from aether.universe.full import prompt_version as full_prompt_version
-from aether.universe.gates import Facts, Gated, c3_streak, gate, is_change
+from aether.universe.gates import Facts, Gated, c3_streak, gate, is_change, red_flag_gate
 from aether.universe.research import WebEvidence, dossier, sweep
 from aether.universe.slots import (
     EvidenceCount,
@@ -452,6 +457,7 @@ def strong_text(row: Mapping[str, Any], items: Sequence[propose.EvidenceItem], w
             if row["overlap"].get("qtum_weight_pct") is not None
             else "not held"
         ),
+        "Red flags (computed): " + (candidate_checks.line(c.get("red_flags")) or "not computed"),
         "Compares least favourably with: "
         + (f"{wc['symbol']}: {_clip(wc.get('text') or '', 240)}" if wc else "not given"),
         "Adding needs a slot: remove a name or raise the cap. Review on /universe.",
@@ -470,6 +476,12 @@ def _clip(s: str, n: int) -> str:
 
 def _why(r: Mapping[str, Any]) -> str:
     return r["gate_note"] or (r["reasons"][0]["text"] if r["reasons"] else "")
+
+
+def _rf(r: Mapping[str, Any]) -> str:
+    """M18: " [red flags: N, unknown: M]" for a candidate whose red flags were computed."""
+    s = candidate_checks.short((r.get("criteria_obj") or {}).get("red_flags"))
+    return f" [{s}]" if s else ""
 
 
 def telegram_text(
@@ -498,11 +510,13 @@ def telegram_text(
         if group:
             lines.append(title_)
             for r in group:
-                lines.append(f"- {r['symbol']} ({r['name']}): {_clip(_why(r), DESC_TELEGRAM)}")
+                lines.append(
+                    f"- {r['symbol']} ({r['name']}): {_clip(_why(r), DESC_TELEGRAM)}{_rf(r)}"
+                )
     if watch:
         lines += ["", "Watch:"]
         for r in watch:
-            lines.append(f"- {r['symbol']}: {_clip(_why(r), DESC_TELEGRAM)}")
+            lines.append(f"- {r['symbol']}: {_clip(_why(r), DESC_TELEGRAM)}{_rf(r)}")
     anns = payload.get("announcements") or []
     if anns:
         lines += ["", f"Announced listings (web, unverified): {len(anns)}"]
@@ -520,6 +534,7 @@ def telegram_text(
                     f"- {r['action'].capitalize()} {r['symbol']} "
                     f"({(r.get('sector') or '').replace('_', ' ')}, {r.get('mcap_bucket') or '?'} "
                     f"cap, exposure {r.get('exposure') or '?'}): {_clip(_why(r), DESC_TELEGRAM)}"
+                    f"{_rf(r)}"
                 )
             short = payload.get("shortlist") or []
             if short:
@@ -599,6 +614,8 @@ def _pool(
             computed.append(
                 f"{len(flags)} red flag(s)" + (": " + ", ".join(flags) if flags else "")
             )
+        elif c.get("red_flags"):  # M18: an add-qualified candidate's computed red flags
+            computed.append(str(candidate_checks.line(c["red_flags"])))
         computed.append(
             f"fills an uncovered modality or industry: {'yes' if c.get('fills_gap') else 'no'}"
         )
@@ -725,6 +742,15 @@ def run_universe_review(
         payload["triggers"] = {s: [t.line() for t in ts] for s, ts in qual.items() if ts}
         payload["triggers_since"] = since.isoformat()
 
+        # M18 (§6.7.4): red flags for every untracked candidate passing the deterministic add
+        # criteria (1, 3, 4 and a T1 business excerpt), before the proposal so it sees them.
+        red: dict[str, dict[str, Any]] = {}
+        for a in chosen:
+            if a.excerpt is not None:
+                rf = candidate_red_flags(deps, a, today)
+                if rf is not None:
+                    red[a.cand.symbol] = rf
+
         ctxs: list[propose.CandidateContext] = []
         for a in chosen:
             assert a.criteria is not None
@@ -740,6 +766,7 @@ def run_universe_review(
                     history=[f"{h['month']}: {h['action']}" for h in hist[a.cand.symbol][:3]],
                     evidence=per[a.cand.symbol],
                     qualifying=[t.line() for t in qual.get(a.cand.symbol, [])],
+                    red_flags=candidate_checks.line(red.get(a.cand.symbol)),
                 )
             )
         context, known = propose.build_context(
@@ -776,6 +803,9 @@ def run_universe_review(
                 qualifying={t.ref: t.text for t in qual.get(sym, [])},
             )
             g: Gated = gate(facts, entry["action"], cited)
+            action, gate_note = red_flag_gate(
+                g.action, g.note, red.get(sym), deps.cfg.add_max_red_flags
+            )
             mcap = Decimal(crit.detail["market_cap"]) if crit.detail.get("market_cap") else None
             t1, t2, _refs, latest = evidence_counts(per[sym], today, 365)
             wc = entry.get("weakest_current") or {}
@@ -796,12 +826,13 @@ def run_universe_review(
                 "evidence_independent": (1 if t1 else 0) + t2,
                 "evidence_latest": latest,
                 "weakest_current": wc if wc.get("symbol") else None,
+                "red_flags": red.get(sym),
             }
             rows.append(
                 {
                     "symbol": sym,
                     "track": "pure_play",
-                    "action": g.action,
+                    "action": action,
                     "proposed_action": g.proposed,
                     "cik": a.cand.cik,
                     "name": entry["name"],
@@ -814,10 +845,10 @@ def run_universe_review(
                         for i in dict.fromkeys(cited + ([excerpt_ref] if excerpt_ref else []))
                         if i.startswith("U")
                     ],
-                    "gate_note": g.note,
+                    "gate_note": gate_note,
                     "sector": None,
                     # A pure-play's T1 excerpt shows quantum is its principal business.
-                    "exposure": "high" if g.action == "add" else None,
+                    "exposure": "high" if action == "add" else None,
                     "market_cap_micros": mcap,
                     "mcap_bucket": deps.cfg.mcap_buckets.bucket(mcap),
                 }

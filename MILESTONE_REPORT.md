@@ -1,5 +1,76 @@
 # Milestone report
 
+## M18: Candidate red-flag checks (2026-11-01)
+
+### Acceptance criteria
+All met on synthetic ACME-style fixtures (`tests/test_candidate_checks.py`, plus additions to `test_universe.py`, `test_universe_adjacent.py` and `test_web_universe.py`):
+- **Issuance:** two 8-K 3.02s in 12 months → `flag`. No financing but shares +40% YoY → `flag`, citing both share counts with their accessions. Listed under a year → share YoY `unknown`. 424B3s → "resale overhang", not issuance.
+- **#51:** a same-day, same-size 424B5 + 424B2 pair counts once, with the second under `also`. A different size, a different day or an unparsed size count separately. A cover past the document cap is counted as "size not parsed".
+- **#49:** a closing 8-K with Item 5.06, or a 2.01 filed on the first session, isn't counted as an acquisition; a later 2.01 is.
+- **#50:** a retrieval-dated research "offering" event leaves the result unchanged. The module never reads `events`.
+- **Runway:** (cash + short-term investments) ÷ TTM burn matches the hand computation (18 months → `flag`). Positive operating cash flow → `ok`.
+- **FPIs:** an FPI whose latest figures exist only in a 6-K XBRL instance gets its runway from the 6-K period, not the older companyfacts one. An `ifrs-full` instance maps all seven concepts.
+- **Fallbacks and freshness:** data older than 200 days → `unknown` ("stale"). Revenue falls back to "period, not TTM".
+- **Gate and strong candidate:** with `add_max_red_flags: 1`, a 2-flag `add` becomes `watch` with the reason; with `null` it stays `add`. A flagged candidate, or one with 2 unknowns, never gets the strong-candidate notification.
+- **Prompt:** the proposal prompt (pure-play and adjacent) and the full re-evaluation prompt carry the candidate's red-flag line. The existing STRATEGY.md test still finds no thesis text.
+- **Isolation:** the checks import nothing from `aether.llm`. In the end-to-end test, every SEC call is asserted outside a write transaction, and nothing is written to `filings` or `fundamentals_q` for the candidate.
+- **Active FPI:** an active FPI on the watchlist gets `fundamentals_q` rows from a 6-K instance.
+- `make test` (911 passed), `make lint` and `make secrets-scan` are clean. $0 LLM, **no migration** (the result lives in `universe_candidates.criteria` JSON).
+
+### What was built
+- **`universe/candidate_checks.py`:** `fetch` (network only) then `checks` (pure).
+  - The facts become the same `score/fundamentals.Fact`s and go through the same `fnd.compute` and `thesis.red_flags` as watchlist names.
+  - Each check carries status, text, evidence, period end, basis (TTM or "period, not TTM"), data-as-of date and accessions.
+  - The result is stored as `criteria.red_flags`.
+- **Shared financing count:** `thesis.count_financings` takes filing rows. `financings_for` (watchlist, DB) and the candidates both use it, so the #51 rule lives in one place. `NameInputs` gains issuance notes and the two share counts, so watchlist names now cite their share counts too.
+- **FPI XBRL:**
+  - `edgar/xbrl.py`: `instance_facts` parses an XBRL instance (non-dimensional contexts only, USD and shares, DTD refused) into companyfacts shape. `merge_companyfacts` merges it. The FPI forms and `ifrs-full` concepts are added, and `PARSER_VERSION` is bumped to `m18.1`.
+  - `edgar/fpi.py`: FPI detection, plus the latest 6-K / 20-F / F-1 instance found through the filing folder's `index.json`.
+  - `score/fundamentals.py`: the concept lists end with the IFRS equivalents.
+- **Ingest:** a new 20-F/40-F, or an XBRL-bearing 6-K, refetches companyfacts. FPIs get their instances merged first.
+- **Review wiring:**
+  - Red flags are computed before each track's proposal for untracked candidates passing the deterministic criteria (1, 3 and 4, plus the T1 excerpt or the adjacent evidence rule).
+  - They appear as a "Computed red flags: …" line in the prompt, "[red flags: N, unknown: M]" in Telegram and the strong-candidate text, and a computed line in the full re-evaluation pool.
+  - `gates.red_flag_gate` applies `add_max_red_flags`, and `slots.strong_candidate` requires 0 flags and ≤ 1 unknown.
+- **UI:** a Red flags table per candidate on `/universe` (SEC links via `extlink`, resale overhang, the instances read, errors) and a candidates' red-flag summary on the Full re-evaluation tab.
+- **Config** (`universe.yaml`): `candidate_max_documents: 6`, `candidate_stale_days: 200`, `add_max_red_flags: null`.
+
+### Verified at implementation (live SEC reads, 2026-11-01)
+- **XNDU** (CIK 2097163, Nasdaq) files 20-F/6-K/F-1. companyfacts has only F-1/20-F facts. The Q2 2026 statements are only in 6-K `0002097163-26-000020`, whose instance `xndu-20260630_htm.xml` is listed in the folder's `index.json`. That instance is tagged **us-gaap**, not IFRS.
+- **`ifrs-full` names** checked against the Arqit and Spotify companyfacts: `CashAndCashEquivalents`, `CurrentInvestments`, `CashFlowsFromUsedInOperatingActivities`, `Revenue`, `RevenueFromContractsWithCustomers`, `OperatingExpense`, `CashFlowsUsedInObtainingControlOfSubsidiariesOrOtherBusinessesClassifiedAsInvestingActivities` and `NumberOfSharesOutstanding`.
+- **Read-only dry run on real data** (nothing written; 6 SEC requests for XNDU, 2 for HONA):
+  - XNDU: 0 flags, 2 unknown (share YoY: listed 2026-03-27; acquisitions: not tagged). Runway `ok`, 61 months (the 6-K's 181-day H1 operating cash flow scaled to a quarter, $312.8M cash at 2026-06-30). Revenue vs spend `ok` (H1 vs H1). Financing count labelled partial, with 12 424B3s shown as resale overhang.
+  - HONA (CIK 2089271): 0 flags, 3 unknown (no year-ago share count, opex not tagged for the YTD period, no acquisition cash tagged). Runway `ok` (not burning).
+
+### Decisions
+1. **Red flags are computed before the proposal**, for candidates passing the *deterministic* add criteria, so the model sees them. The model's own `add`/`watch` doesn't decide whether they're computed.
+2. **USD only.** Money facts are read in USD only, as before, for both the ingest and the candidates. A non-USD IFRS reporter gets `unknown` money checks instead of mixed-currency ratios.
+3. **F-1/F-3 vs 424B:** an FPI's F-1/F-3 counts as a financing only when its cover reads "we are offering N shares" **and** no primary 424B follows it in the window. The 424B records the sale, so this avoids double counting.
+4. **Instances are skipped** when companyfacts already holds that accession's facts (no request). At most 3 instances per FPI, 2 requests each.
+5. **The "period, not TTM" fallback** applies to any candidate whose TTM isn't computable (fresh FPIs, recent listings), not only FPIs. It's always labelled. Acquisitions stay TTM-only, as §6.10.
+6. **A check that fails on unexpected data** makes all four `unknown`, with the error shown. The review carries on.
+7. **`criteria.first_session`** (the first bar in the 400-day price window) is now stored for every candidate. It's the YoY base and #49 cut-off; for older listings it's later than the true first session, which both rules tolerate.
+
+### Open questions
+- Should `add_max_red_flags` default to a number (e.g. 1) instead of `null`? It's unchanged here (`null`).
+- The acquisitions check is `unknown` for any company that never tags acquisition cash (XNDU, HONA). With the strong-candidate rule (≤ 1 unknown), a candidate with that and one other unknown can't be a strong candidate. Should "no acquisition cash tagged and no 8-K 2.01 in 12 months" count as `ok` for candidates and current names alike? It's a §6.10 change, so it wasn't made here.
+- Noticed in passing: the strong-candidate Telegram title still says "#10" (the cap is 12, so #13). A test pins the text; not changed in this milestone.
+
+### Facts
+No new facts. FACTS.md is unchanged.
+
+### Owner checklist
+- [ ] Review §6.7.4 as built, and decide `add_max_red_flags` (currently `null`).
+- [ ] Decide the acquisitions "untagged = unknown" question above.
+- [ ] After merge: `./deploy.sh`. On the next review (12-01, or a full re-evaluation), check XNDU and HONA's Red flags tables on `/universe`.
+
+### How to verify
+```bash
+make test            # 911 passed
+make lint
+make secrets-scan
+```
+
 ## Roadmap change: M18 candidate red-flag checks (2026-11-01, owner-approved, written by the portfolio-manager session)
 
 **Why:** the full re-evaluation and the monthly review computed the four thesis red flags (§6.10) only for **current** names. Add-qualified candidates were ranked without them, so the owner couldn't compare QUBT and XNDU on red flags before deciding on the 12-name cap's free slots. The owner asked for a manual check now (done in the portfolio-manager session) and a coded one for every future review.

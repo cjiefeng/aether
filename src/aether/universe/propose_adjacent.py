@@ -212,6 +212,7 @@ class AdjacentContext:
     triggers: list[str]  # "X3: …" and structural lines
     history: list[str]
     evidence: list[EvidenceItem] = field(default_factory=list)
+    red_flags: str | None = None  # M18: computed red-flag line (§6.7.4)
 
 
 def build_context(
@@ -241,6 +242,8 @@ def build_context(
         )
         if c.triggers:
             lines.append("Computed triggers: " + "; ".join(c.triggers) + ".")
+        if c.red_flags:
+            lines.append(f"Computed {c.red_flags}.")
         if c.history:
             lines.append("Previous reviews: " + "; ".join(c.history) + ".")
         if c.evidence:

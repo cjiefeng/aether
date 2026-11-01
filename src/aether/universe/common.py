@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
@@ -10,8 +11,9 @@ from sqlalchemy import Engine, insert
 
 from aether.db.engine import write_tx
 from aether.db.models import universe_evidence
+from aether.portfolio import thesis
 from aether.providers.prices import Bar, ProviderError
-from aether.universe import propose
+from aether.universe import candidate_checks, propose
 from aether.universe.business import BusinessExcerpt
 from aether.universe.criteria import (
     MIN_PLAUSIBLE_SHARES,
@@ -25,6 +27,8 @@ from aether.universe.research import WebEvidence
 
 if TYPE_CHECKING:
     from aether.universe.run import UniverseDeps
+
+log = logging.getLogger(__name__)
 
 PRICE_LOOKBACK_DAYS = 400
 
@@ -70,6 +74,42 @@ def assess_criteria(deps: UniverseDeps, kept: list[Assessed], today: date) -> No
             today=today,
             price_error=err,
         )
+
+
+def candidate_red_flags(deps: UniverseDeps, a: Assessed, today: date) -> dict[str, Any] | None:
+    """M18 (§6.7.4): the four red flags for an untracked candidate that passed the deterministic
+    criteria 1, 3 and 4 (the caller adds its track's evidence rule). None when not applicable.
+    Network inside; call with no transaction open."""
+    c, crit = a.cand, a.criteria
+    if c.on_watchlist or c.cik is None or crit is None or not (crit.c1 and crit.c3 and crit.c4):
+        return None
+    fs = crit.detail.get("first_session")
+    try:
+        return candidate_checks.run(
+            deps.edgar,
+            c.symbol,
+            c.cik,
+            as_of=today,
+            first_session=date.fromisoformat(fs) if fs else None,
+            cfg=deps.cfg,
+            thesis_cfg=deps.thesis,
+        )
+    except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
+        # Unexpected data: every check is unknown, with the reason; the review goes on.
+        log.warning("candidate red flags %s failed: %r", c.symbol, exc)
+        flags = thesis.red_flags(thesis.NameInputs(c.symbol), deps.thesis)
+        return {
+            "symbol": c.symbol,
+            "as_of": today.isoformat(),
+            "fpi": False,
+            "checks": flags,
+            "n_flags": 0,
+            "n_unknown": len(flags),
+            "resale_overhang": [],
+            "instances": [],
+            "requests": 0,
+            "errors": [f"checks failed: {exc!r}"[:200]],
+        }
 
 
 def write_evidence(

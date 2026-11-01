@@ -17,7 +17,8 @@ collapsed here, on read, without rewriting them.
 
 **Adds when the slots are full: notify, don't propose.** Free slots = cap - active names + this
 review's removals. Adds beyond the free slots become `watch`. A candidate that passed every add
-criterion is a **strong candidate** (#10) only when code confirms: exposure `high` (code-validated),
+criterion is a **strong candidate** (#13) only when code confirms: no computed red flag and at most
+one unknown red-flag check (M18, §6.7.4), exposure `high` (code-validated),
 >= `min_independent_sources` independent qualifying (T1/T2) evidence items in the last 12 months
 with >= `min_t1_sources` of them T1, floors met, not excluded, and not escalated in the last
 `cooldown_reviews` reviews unless there's newer qualifying evidence.
@@ -47,6 +48,7 @@ from aether.edgar.text import offering_key
 from aether.portfolio.overlay import layer1_findings
 
 EXPOSURE_RANK = {"high": 0, "med": 1, "low": 2, None: 3}
+MAX_STRONG_UNKNOWN = 1  # §6.7.4: a strong candidate has 0 red flags and at most 1 unknown check
 
 
 @dataclass(frozen=True)
@@ -242,6 +244,14 @@ def strong_candidate(
     c = row.get("criteria_obj") or {}
     if not c.get("slot_blocked"):
         return False, "not slot-blocked"
+    # M18 (§6.7.4): no computed red flag and at most one unknown check.
+    rf = c.get("red_flags")
+    if not rf:
+        return False, "red flags not computed"
+    if rf.get("n_flags", 0) > 0:
+        return False, f"{rf['n_flags']} computed red flag(s)"
+    if rf.get("n_unknown", 0) > MAX_STRONG_UNKNOWN:
+        return False, f"{rf['n_unknown']} red-flag checks unknown (at most {MAX_STRONG_UNKNOWN})"
     if row.get("exposure") != "high":
         return False, f"exposure {row.get('exposure') or 'unknown'}, not high"
     if ev.independent < rule.min_independent_sources:

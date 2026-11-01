@@ -1252,6 +1252,12 @@ class UniverseConfig(_Strict):
     strong_candidate: StrongCandidateRule = Field(default_factory=lambda: StrongCandidateRule())
     full_review_cooldown_days: int = Field(default=7, ge=1, le=90)
     adjacent: AdjacentTrack | None = None
+    # M18 (§6.7.4): candidate red-flag checks. Primary 424B (FPIs: then F-1/F-3) covers fetched
+    # per candidate, newest first; data older than `candidate_stale_days` is "unknown (stale)";
+    # `add_max_red_flags` (null = no gate) turns an `add` with more flags into `watch`.
+    candidate_max_documents: int = Field(default=6, ge=0, le=20)
+    candidate_stale_days: int = Field(default=200, ge=30, le=730)
+    add_max_red_flags: int | None = Field(default=None, ge=0, le=4)
 
 
 def load_universe_config(config_dir: Path) -> UniverseConfig:

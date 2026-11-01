@@ -39,7 +39,7 @@ from aether.db.models import (
     xbrl_fetches,
 )
 from aether.db.types import utcnow_iso
-from aether.edgar import xbrl
+from aether.edgar import fpi, xbrl
 from aether.edgar.form4 import Form4Error, InsiderTxn, parse_form4
 from aether.edgar.submissions import FilingMeta, iter_filings, older_pages
 from aether.edgar.text import (
@@ -72,6 +72,15 @@ OFFERING_FORMS = LOCKUP_FORMS | ATM_FORMS
 # statements); the second becomes another source on the first one's event, not a new event.
 FINANCING_424B = PRIMARY_PROSPECTUS_FORMS
 PERIODIC_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
+# M18: a new filing in these forms refetches companyfacts (and, for an FPI, its instances). A 6-K
+# counts only when it carries XBRL (results, not press releases); no 6-K document is parsed.
+FPI_PERIODIC_FORMS = fpi.ANNUAL_FPI | frozenset({"6-K", "6-K/A"})
+
+
+def triggers_xbrl(f: FilingMeta) -> bool:
+    return f.form in PERIODIC_FORMS or (f.form in FPI_PERIODIC_FORMS and f.is_xbrl)
+
+
 SHELF_FORMS = frozenset({"S-3", "S-3ASR", "F-3", "F-3ASR"})
 # M5 overlay: removal/deregistration notices (which security class?) and 8-K Item 3.01 bodies
 # (deficiency or voluntary transfer?).
@@ -493,7 +502,7 @@ def ingest_edgar(
     xbrl_data: dict[str, tuple[list[xbrl.XbrlFact], list[xbrl.XbrlInstrument]]] = {}
     for sym, cik in targets:
         new_periodic = any(
-            f.form in PERIODIC_FORMS and f.accession not in known for f in metas.get(sym, [])
+            triggers_xbrl(f) and f.accession not in known for f in metas.get(sym, [])
         )
         if sym not in metas or not (new_periodic or sym not in have_fundamentals):
             continue
@@ -503,6 +512,11 @@ def ingest_edgar(
             log.warning("edgar companyfacts %s failed: %s", sym, exc)
             errors.append(f"{sym} companyfacts: {exc}")
             continue
+        if fpi.is_fpi(metas[sym]):
+            # M18: interim figures only in a 6-K's (or 20-F's / F-1's) XBRL instance.
+            inst = fpi.fetch_instances(client, cik, metas[sym], cf)
+            errors += [f"{sym} {e}" for e in inst.errors]
+            cf = xbrl.merge_companyfacts(cf, *inst.facts)
         xbrl_data[sym] = (xbrl.fundamentals(cf), xbrl.capital_structure(cf))
 
     # 2) One short write transaction.

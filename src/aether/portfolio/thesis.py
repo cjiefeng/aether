@@ -232,6 +232,31 @@ class NameInputs:
     revenue_ttms: list[tuple[str, float]] = field(default_factory=list)  # newest first
     error_correction: list[dict[str, Any]] = field(default_factory=list)
     refs: dict[str, Any] = field(default_factory=dict)
+    # M18: extra issuance labels (resale overhang, partial count, share-count proxy) and the two
+    # share counts behind the YoY figure.
+    issuance_notes: list[str] = field(default_factory=list)
+    fd_refs: list[dict[str, Any]] = field(default_factory=list)
+
+
+def fd_refs(fd_yoy: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The year-ago and latest share counts behind an FD YoY figure (cited evidence)."""
+    out = []
+    for k in ("from", "to"):
+        v = fd_yoy.get(k)
+        if isinstance(v, Mapping):
+            c = v.get("common") or {}
+            out.append(
+                {
+                    "kind": f"shares_{k}",
+                    "fd_total": v.get("total"),
+                    "common": c.get("value"),
+                    "concept": c.get("concept"),
+                    "period_end": c.get("period_end"),
+                    "accession": c.get("accession"),
+                    "form": c.get("form"),
+                }
+            )
+    return out
 
 
 def _flag(key: str, fired: bool | None, text: str, evidence: Any = None) -> dict[str, Any]:
@@ -256,12 +281,13 @@ def red_flags(x: NameInputs, cfg: ThesisConfig) -> list[dict[str, Any]]:
     elif not fired:
         parts.append(f"FD YoY unknown ({x.fd_yoy_reason or 'not computable'})")
         fired = None  # under the financing bar, but the FD half can't be checked
+    parts += x.issuance_notes
     out.append(
         _flag(
             "issuance",
             fired,
             "; ".join(parts) + f" (flag at >= {cfg.financings_min} or > {cfg.fd_yoy_max:+.0%})",
-            x.financings,
+            [*x.financings, *x.fd_refs],
         )
     )
     # Runway.
@@ -374,7 +400,7 @@ def winner_signals(x: NameInputs, cfg: ThesisConfig) -> dict[str, Any]:
     return {"signals": signals, "present": present}
 
 
-def _growth(cur: fnd.Ttm | None, facts: Sequence[fnd.Fact]) -> tuple[float | None, str | None]:
+def ttm_growth(cur: fnd.Ttm | None, facts: Sequence[fnd.Fact]) -> tuple[float | None, str | None]:
     if cur is None:
         return None, "no TTM figure"
     prev = fnd.ttm_year_ago(facts, cur)
@@ -383,30 +409,33 @@ def _growth(cur: fnd.Ttm | None, facts: Sequence[fnd.Fact]) -> tuple[float | Non
     return float(cur.value / prev.value) - 1.0, None
 
 
-def financings_for(
-    conn: Connection, symbol: str, as_of: date, lookback_days: int
+@dataclass(frozen=True)
+class FilingRow:
+    """The fields the financing count reads, from `filings` (watchlist names) or from SEC
+    `submissions` plus fetched covers (M18 candidates)."""
+
+    accession: str
+    form: str
+    filed_at: str
+    items: tuple[str, ...]
+    url: str | None
+    parsed: str | dict[str, Any] | None = None
+
+
+def is_financing(r: FilingRow) -> bool:
+    return r.form in FINANCING_FORMS or (r.form in EIGHT_K and FINANCING_ITEM in r.items)
+
+
+def count_financings(
+    symbol: str, rows: Iterable[FilingRow], as_of: date, lookback_days: int
 ) -> list[dict[str, Any]]:
+    """Dilutive financings (primary 424B1/2/4/5, 8-K Item 3.02) filed in the lookback, oldest
+    first. Shared by watchlist names and candidates (M18) so the two can't diverge."""
     since = (as_of - timedelta(days=lookback_days)).isoformat()
     out: list[dict[str, Any]] = []
     seen: dict[tuple[str, str, int], dict[str, Any]] = {}
-    for r in conn.execute(
-        select(
-            filings.c.accession,
-            filings.c.form,
-            filings.c.filed_at,
-            filings.c["items"],
-            filings.c.url,
-            filings.c.parsed,
-        )
-        .where(
-            filings.c.symbol == symbol,
-            filings.c.form.in_((*FINANCING_FORMS, *EIGHT_K)),
-            filings.c.filed_at >= since,
-            filings.c.filed_at <= as_of.isoformat(),
-        )
-        .order_by(filings.c.filed_at, filings.c.accession)
-    ):
-        if r.form in EIGHT_K and FINANCING_ITEM not in (json.loads(r._mapping["items"]) or []):
+    for r in sorted(rows, key=lambda r: (r.filed_at, r.accession)):
+        if not since <= r.filed_at <= as_of.isoformat() or not is_financing(r):
             continue
         # Issue #51: one offering filed as two 424Bs the same day (same parsed size) is one
         # financing; the extra filing is listed under `also`.
@@ -424,6 +453,38 @@ def financings_for(
             seen[key] = item
         out.append(item)
     return out
+
+
+def financings_for(
+    conn: Connection, symbol: str, as_of: date, lookback_days: int
+) -> list[dict[str, Any]]:
+    since = (as_of - timedelta(days=lookback_days)).isoformat()
+    rows = [
+        FilingRow(
+            r.accession,
+            r.form,
+            r.filed_at,
+            tuple(json.loads(r._mapping["items"]) or []),
+            r.url,
+            r.parsed,
+        )
+        for r in conn.execute(
+            select(
+                filings.c.accession,
+                filings.c.form,
+                filings.c.filed_at,
+                filings.c["items"],
+                filings.c.url,
+                filings.c.parsed,
+            ).where(
+                filings.c.symbol == symbol,
+                filings.c.form.in_((*FINANCING_FORMS, *EIGHT_K)),
+                filings.c.filed_at >= since,
+                filings.c.filed_at <= as_of.isoformat(),
+            )
+        )
+    ]
+    return count_financings(symbol, rows, as_of, lookback_days)
 
 
 def _acquisition_8ks(conn: Connection, symbol: str, as_of: date) -> list[dict[str, Any]]:
@@ -470,6 +531,7 @@ def name_inputs(conn: Connection, symbol: str, as_of: date, cfg: ThesisConfig) -
     x.financings = financings_for(conn, symbol, as_of, cfg.financing_lookback_days)
     x.fd_yoy = snap.fd_yoy.get("value")
     x.fd_yoy_reason = snap.fd_yoy.get("reason")
+    x.fd_refs = fd_refs(snap.fd_yoy)
     x.runway_months = snap.runway_months
     x.not_burning = snap.not_burning
     x.runway_reason = snap.reasons.get("runway")
@@ -477,7 +539,7 @@ def name_inputs(conn: Connection, symbol: str, as_of: date, cfg: ThesisConfig) -
         x.refs["runway"] = snap.liquidity_refs
     x.revenue_growth = snap.revenue_growth
     opex = fnd.fresh(fnd.latest_ttm(facts, fnd.OPEX), as_of, snap, "opex")
-    x.opex_growth, opex_reason = _growth(opex, facts)
+    x.opex_growth, opex_reason = ttm_growth(opex, facts)
     reasons = []
     if snap.revenue_growth is None:
         reasons.append(

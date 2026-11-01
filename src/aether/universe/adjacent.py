@@ -33,9 +33,14 @@ from sqlalchemy import Engine
 from aether.config import AdjacentTrack, Watchlist
 from aether.llm.client import BudgetExceeded, LlmError, RunBudget
 from aether.providers.prices import ProviderError
-from aether.universe import gates, propose, propose_adjacent
+from aether.universe import candidate_checks, gates, propose, propose_adjacent
 from aether.universe.business import fetch_business
-from aether.universe.common import Assessed, assess_criteria, write_evidence
+from aether.universe.common import (
+    Assessed,
+    assess_criteria,
+    candidate_red_flags,
+    write_evidence,
+)
 from aether.universe.discover import Candidate, ExchangeMap
 from aether.universe.gates import AdjFacts, c3_streak
 from aether.universe.research import WebEvidence, adjacent_dossier, adjacent_sweep
@@ -378,6 +383,7 @@ def _run(
 
     ctxs: list[propose_adjacent.AdjacentContext] = []
     facts_by: dict[str, AdjFacts] = {}
+    red: dict[str, dict[str, Any]] = {}
     extra: dict[str, dict[str, Any]] = {}
     for a in chosen:
         assert a.criteria is not None
@@ -421,6 +427,12 @@ def _run(
             t1_quantum_refs=t1_refs,
             c3_streak=streak if a.cand.on_watchlist else False,
         )
+        # M18 (§6.7.4): red flags when the deterministic add criteria pass (1, 3, 4 and the
+        # quantum evidence rule), before the proposal so it sees them. No transaction is open.
+        if t1 >= 1 or t2 >= cfg.removal.min_independent_t2:
+            rf = candidate_red_flags(deps, a, today)
+            if rf is not None:
+                red[sym] = rf
         gap = fills_gap(sector)
         extra[sym] = {
             "mcap": mcap,
@@ -445,6 +457,7 @@ def _run(
                 triggers=[*structural, *(t.line() for t in triggers.get(sym, []))],
                 history=[f"{h['month']}: {h['action']}" for h in hist.get(sym, [])[:3]],
                 evidence=per[sym],
+                red_flags=candidate_checks.line(red.get(sym)),
             )
         )
     trigger_refs = {t.ref for ts in triggers.values() for t in ts}
@@ -474,6 +487,9 @@ def _run(
         entry = proposal.entries[sym]
         cited = propose.cited_ids(entry)
         g = gates.gate_adjacent(facts_by[sym], entry, cited)
+        action, gate_note = gates.red_flag_gate(
+            g.action, g.note, red.get(sym), cfg.add_max_red_flags
+        )
         x = extra[sym]
         crit = a.criteria
         wc = entry.get("weakest_current") or {}
@@ -495,12 +511,13 @@ def _run(
             "market_cap_note": entry.get("market_cap_note") or None,
             "weakest_current": wc if wc.get("symbol") else None,
             "sources": sorted(a.cand.sources),
+            "red_flags": red.get(sym),
         }
         res.rows.append(
             {
                 "symbol": sym,
                 "track": "adjacent",
-                "action": g.action,
+                "action": action,
                 "proposed_action": g.proposed,
                 "cik": a.cand.cik,
                 "name": entry["name"],
@@ -509,7 +526,7 @@ def _run(
                 "description": entry["description"],
                 "reasons": entry["reasons"],
                 "evidence_ids": [int(i[1:]) for i in dict.fromkeys(cited) if i.startswith("U")],
-                "gate_note": g.note,
+                "gate_note": gate_note,
                 "sector": x["sector"] or None,
                 "exposure": g.exposure,
                 "market_cap_micros": x["mcap"],

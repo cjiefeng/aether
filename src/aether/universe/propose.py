@@ -221,6 +221,7 @@ class CandidateContext:
     history: list[str]  # "2026-09: watch"
     evidence: list[EvidenceItem] = field(default_factory=list)
     qualifying: list[str] = field(default_factory=list)  # M14: "X3: …" (§6.7.2 triggers)
+    red_flags: str | None = None  # M18: computed red-flag line (§6.7.4)
 
 
 def _crit_line(c: Mapping[str, Any]) -> str:
@@ -266,6 +267,8 @@ def build_context(
             lines.append("Computed filing triggers: " + "; ".join(c.triggers) + ".")
         if c.qualifying:
             lines.append("Computed qualifying events: " + "; ".join(c.qualifying) + ".")
+        if c.red_flags:
+            lines.append(f"Computed {c.red_flags}.")
         if c.history:
             lines.append("Previous reviews: " + "; ".join(c.history) + ".")
         if c.evidence:

@@ -145,6 +145,11 @@ class EdgarClient:
     def companyfacts(self, cik: str) -> dict[str, Any]:
         return self.get_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10(cik)}.json")
 
+    def filing_index(self, cik: str, accession: str) -> dict[str, Any]:
+        """The filing folder's JSON listing (`directory.item[].name`), M18: locates the XBRL
+        instance of an FPI's 6-K / 20-F / F-1."""
+        return self.get_json(f"{filing_folder(cik, accession)}/index.json")
+
     def document(self, cik: str, accession: str, primary_doc: str, *, raw: bool = False) -> str:
         return self.get(document_url(cik, accession, primary_doc, raw=raw)).text
 
