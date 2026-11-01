@@ -5,7 +5,7 @@ This file holds the owner's investment beliefs and portfolio rules. **Every port
 **Scope.** These are the owner's views. Under the "No opinions in config or prompts" rule (CLAUDE.md, spec §1.2), this file is **never** copied into Aether's LLM prompts or config. Aether applies the rules only as **deterministic, numeric checks** (spec §6.10, M14): modality tags, concentration flags, red-flag monitors and gap detection. Prompts receive only the computed results, as facts and metrics.
 
 Standing constraints that apply alongside the thesis (spec §1.4, §6.7.1, §6.7.2):
-- **At most 9 names besides QTUM** (pure-plays + adjacent).
+- **At most 12 names besides QTUM** (pure-plays + adjacent; raised from 9 on 2026-11-01).
 - **Market cap is one input, never the deciding factor.**
   - Small (< $2B): flag volatility, liquidity and dilution risk.
   - Mid ($2–50B): often the best balance.
@@ -55,4 +55,4 @@ Buying "the current leader" is often an unintentional bet on one modality. "Mark
 - **Concentration:** flag a single modality or a single company dominating the portfolio.
 - **Red flags:** check every holding against the list above with current, dated, cited data.
 - **Gaps:** name the modalities and supplier categories with no exposure.
-- **Proposals only.** Within the 9-name cap, removals need serious, cited bad news (§6.7.2), and a strong #10 is a notification for the owner, not an add.
+- **Proposals only.** Within the 12-name cap, removals need serious, cited bad news (§6.7.2), and a strong #13 is a notification for the owner, not an add.

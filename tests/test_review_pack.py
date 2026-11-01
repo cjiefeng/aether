@@ -129,7 +129,7 @@ def test_m14_thesis_check_and_cap_in_the_pack(ready: Engine) -> None:
     with ready.connect() as conn:
         text = conn.execute(select(review_packs.c.telegram_text)).scalar_one()
         payload = json.loads(conn.execute(select(review_packs.c.payload)).scalar_one())
-    assert "Thesis check:" in text and "Names:" in text and "of 9 used (QTUM excluded)." in text
+    assert "Thesis check:" in text and "Names:" in text and "of 12 used (QTUM excluded)." in text
     assert "Holdings by modality" not in text and "safe targets by modality/sector" in text
     assert "QTUM hyperscaler weight" not in text or "limit 10%" in text
     th = payload["thesis"]

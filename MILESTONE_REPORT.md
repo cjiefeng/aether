@@ -5,7 +5,7 @@
 ### Built
 - **Ingest:** when a primary 424B (424B1/2/4/5) has the same issuer, filing date and parsed offering size as another 424B that already has an event, it's recorded as a second SEC source on that event (`event_sources`), not as a new event. One dilution event then lists both accessions, and the review, alerts and escalation see one financing.
 - **Thesis:** `financings_for` (the "repeated issuance" red flag, §6.10) counts such a pair once and lists the extra accession under `also`. It reads `filings` directly, so it's also right for duplicates stored before this fix.
-- **Lint unblocked:** `uv.lock` patch bumps for advisories published since the last green CI: certifi 2026.10.23, opentelemetry-api 1.45.2, pyasn1 0.6.5. `make lint`'s audit failed on `main` without them.
+- **Lockfile:** no change in the end. This branch made the same certifi / opentelemetry-api / pyasn1 bump as #52 on `main`, so after merging `main` the lockfile matches it.
 
 ### Decisions
 - **Merge only when the sizes agree:** if either cover's size couldn't be parsed, the filings stay separate, so different offerings are never merged on a guess.
@@ -19,6 +19,37 @@
 - `make test` (875 passed), `make lint` and `make secrets-scan` are clean.
 - **New tests:** a fake SEC client and synthetic ACME filings cover same-day same-size (one event, two sources, idempotent re-run); different size, different day or unparsed size (two events); and the thesis count for 424B5+424B5, 424B5+424B2, different size, different day and unparsed.
 - With the fix disabled, the three merge cases fail.
+
+## Config change: 12-name cap and supplier-gap review priorities (2026-11-01, owner-approved)
+
+Requested by the owner after the 2026-11-01 universe review, via the portfolio-manager session. No new behaviour: the cap and the sector priorities were already config-driven.
+
+### Changed
+- **Name cap 9 → 12** (`config/universe.yaml` `max_names_ex_qtum`; `DEFAULT_MAX_NAMES` in `config.py` to match). With 5 pure-plays and 3 adjacent names, **4 slots are free**. STRATEGY.md (owner-approved edit), spec §1.2, §1.4, §6.7.2, §6.7.3 and §6.9, and the README's full re-evaluation text now say 12. The strong-candidate notification is now for a #13.
+- **Adjacent-track priorities** (`config/universe.yaml`): `photonics_lasers` and `cryogenics_gases` go from 2 to **1**, the supplier categories the thesis check lists as gaps. `pqc_cyber` goes from 1 to **2**, because PANW already covers it and the owner declined NET and FTNT on 2026-11-01. `sensing_timing` stays at 1.
+- **Tests:** the loader test is now "a 13th active name fails" (12 load); the two real-config asserts read 12. Three web, thesis and review-pack tests that render "N of 9" now expect 12.
+- **Dependency security bump** (separate commit): `make lint` (pip-audit) started failing on 6 newly published advisories, unrelated to this change. `uv lock --upgrade-package` moves certifi 2026.7.22 → 2026.10.23, opentelemetry-api 1.45.0 → 1.45.2 and pyasn1 0.6.4 → 0.6.5. No new dependencies.
+
+### Why
+- The owner wants room for the thesis gaps: a photonic pure-play (QUBT and XNDU passed every coded add criterion on 2026-11-01), photonics/lasers and cryogenics suppliers, and watch names that may clear the liquidity floor later.
+- Owner decisions on the 2026-11-01 review: **don't act on the IONQ, INFQ and QNT removal proposals**, and **decline FTNT and NET**.
+  - INFQ's trigger is its own de-SPAC closing 8-K (`0001193125-26-053097`).
+  - QNT's trigger is its June IPO 424B4, re-stamped with a 2026-10-05 retrieval date by the research date fallback.
+  - IONQ's two 2026-10-14 424B5s (20.5M shares each) are real; the owner revisits IONQ after its earnings.
+
+### Effects to expect
+- **Smaller positions.** In Medium, the 35% pure-play bucket over 7–8 pure-plays is about 4.4–5% each. At the current sleeve size (~$1.4k), several targets fall below the planner's $100 minimum trade until the sleeve is about $2.3k.
+- **Floors still fit with 12 names.** Adjacent floors start to shrink (with a page note) only above 5 adjacent names in Aggressive or 6 in Medium.
+- **Cost.** Every added name adds research, classification and conclusion spend. The 2026-11-01 review cost about $9.42 (local DB) against the $10 `UNIVERSE_REVIEW_BUDGET_USD` default. Check the Ops page and consider raising that cap before the 12-01 review.
+
+### Not in this change
+- **No names are added.** QUBT, XNDU and HONA are add-qualified, but the owner picks after red-flag checks, through a separate watchlist PR, each name with its modality or sector fact.
+- **Bugs behind the false removal proposals** (de-SPAC closing counted as "acquired", undated research results dated at retrieval, one offering filed twice counted twice) are tracked in cjiefeng/aether#49, #50 and #51.
+
+### Owner checklist
+- [ ] Review the STRATEGY.md wording (your file).
+- [ ] After merge and `./deploy.sh`: `/universe` and the review pack show "N of 12".
+- [ ] Decide the budget cap for the 12-01 review.
 
 ## M17: Medium in the middle (2026-10-14)
 
