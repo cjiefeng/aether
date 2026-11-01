@@ -47,6 +47,7 @@ from aether.config import (
     UniverseConfig,
 )
 from aether.db.models import catalysts, filings, prices_daily, qtum_holdings, tickers
+from aether.edgar.text import offering_key
 from aether.score import fundamentals as fnd
 
 CORE = "QTUM"
@@ -386,7 +387,8 @@ def financings_for(
     conn: Connection, symbol: str, as_of: date, lookback_days: int
 ) -> list[dict[str, Any]]:
     since = (as_of - timedelta(days=lookback_days)).isoformat()
-    out = []
+    out: list[dict[str, Any]] = []
+    seen: dict[tuple[str, str, int], dict[str, Any]] = {}
     for r in conn.execute(
         select(
             filings.c.accession,
@@ -394,6 +396,7 @@ def financings_for(
             filings.c.filed_at,
             filings.c["items"],
             filings.c.url,
+            filings.c.parsed,
         )
         .where(
             filings.c.symbol == symbol,
@@ -405,14 +408,21 @@ def financings_for(
     ):
         if r.form in EIGHT_K and FINANCING_ITEM not in (json.loads(r._mapping["items"]) or []):
             continue
-        out.append(
-            {
-                "accession": r.accession,
-                "form": r.form if r.form not in EIGHT_K else f"{r.form} Item {FINANCING_ITEM}",
-                "filed_at": r.filed_at,
-                "url": r.url,
-            }
-        )
+        # Issue #51: one offering filed as two 424Bs the same day (same parsed size) is one
+        # financing; the extra filing is listed under `also`.
+        key = offering_key(symbol, r.form, r.filed_at, r.parsed)
+        if key is not None and key in seen:
+            seen[key].setdefault("also", []).append(r.accession)
+            continue
+        item = {
+            "accession": r.accession,
+            "form": r.form if r.form not in EIGHT_K else f"{r.form} Item {FINANCING_ITEM}",
+            "filed_at": r.filed_at,
+            "url": r.url,
+        }
+        if key is not None:
+            seen[key] = item
+        out.append(item)
     return out
 
 

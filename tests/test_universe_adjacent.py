@@ -672,6 +672,45 @@ def test_qualifying_triggers_cover_avoid_and_t2_pairs(rw_engine: Engine) -> None
     assert out["ACME"][0].ref == "X1"
 
 
+def test_one_offering_filed_twice_is_one_removal_trigger(rw_engine: Engine) -> None:
+    """Issue #51, read side: two same-day 424Bs with the same parsed size (stored as two events
+    before the ingest merge) are one trigger naming both events; other financings stay apart."""
+    from aether.config import RemovalRule
+
+    with write_tx(rw_engine) as conn:
+        upsert(
+            conn,
+            tickers,
+            [{"symbol": "ACME", "type": "pure_play", "active": 1}],
+            key_cols=["symbol"],
+        )
+    dil = ("RISK", "dilution", 4, "edgar_primary_prospectus")
+    size = {"offering": {"shares": 20_500_000, "prefunded": 0}}
+    _, first = add_filing(rw_engine, "ACME", "424B5", "2026-10-14", parsed=size, event=dil)
+    _, second = add_filing(rw_engine, "ACME", "424B5", "2026-10-14", parsed=size, event=dil)
+    other_size = {"offering": {"shares": 4_000_000, "prefunded": 0}}
+    _, third = add_filing(rw_engine, "ACME", "424B5", "2026-10-14", parsed=other_size, event=dil)
+    _, unparsed = add_filing(rw_engine, "ACME", "424B5", "2026-10-14", event=dil)
+    _, later = add_filing(rw_engine, "ACME", "424B2", "2026-10-20", parsed=size, event=dil)
+
+    out = slots.qualifying_triggers(
+        rw_engine,
+        ["ACME"],
+        date(2026, 10, 1),
+        TODAY,
+        load_strategies(CONFIG_DIR).overlay,
+        RemovalRule(),
+    )
+    texts = [t.text for t in out["ACME"]]
+    assert len(texts) == 4  # the pair once, plus the other size, the unparsed one, the later one
+    merged = [t for t in texts if f"event #{first} " in t]
+    assert merged and merged[0].endswith(f"(same offering also filed as event #{second})")
+    assert not any(f"event #{second} published" in t for t in texts)
+    for eid in (third, unparsed, later):
+        assert sum(f"event #{eid} published" in t for t in texts) == 1
+    assert [t.ref for t in out["ACME"]] == ["X1", "X2", "X3", "X4"]
+
+
 def test_all_slots_full_no_add_and_one_strong_candidate(
     rw_engine: Engine, migrated_db: Path
 ) -> None:

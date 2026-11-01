@@ -31,6 +31,7 @@ from decimal import Decimal
 from sqlalchemy import Connection, Engine, exists, select
 
 from aether.config import EscalationParams
+from aether.db.event_filters import dated_event
 from aether.db.models import (
     escalations,
     event_classifications,
@@ -230,6 +231,7 @@ def candidates(
                 event_classifications.c.materiality >= p.severe_min_materiality,
                 events.c.quarantined == 0,
                 events.c.injection_suspected == 0,
+                dated_event(conn.dialect.name),  # #50: never escalate on a retrieval date
                 events.c.published_at >= since,
                 event_tickers.c.symbol.in_(list(symbols)),
             )

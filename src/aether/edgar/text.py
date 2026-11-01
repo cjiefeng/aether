@@ -6,11 +6,13 @@ short excerpt (<= 600 chars, S6) so the dashboard can show the evidence next to 
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from typing import Any
 
 EXCERPT_MAX = 600
 
@@ -329,3 +331,31 @@ def extract_delisted_class(body: str) -> DelistedClass | None:
         title = " ".join(t.group(1).split()).strip(" _")
     covers = bool(_COMMON.search(_DERIVED.sub(" ", title)))
     return DelistedClass(title[:300], covers)
+
+
+def offering_shares(parsed: str | dict[str, Any] | None) -> int | None:
+    """The parsed base offering size stored in `filings.parsed` (a JSON string or the summary
+    dict); None when the document wasn't parsed or no size was found (issue #51)."""
+    body = json.loads(parsed) if isinstance(parsed, str) else parsed
+    off = body.get("offering") if isinstance(body, dict) else None
+    shares = off.get("shares") if isinstance(off, dict) else None
+    return (
+        int(shares)
+        if isinstance(shares, int) and not isinstance(shares, bool) and shares > 0
+        else None
+    )
+
+
+# Primary prospectus supplements: the rubric's `edgar_primary_prospectus` forms (issue #51).
+PRIMARY_PROSPECTUS_FORMS = frozenset({"424B1", "424B2", "424B4", "424B5"})
+
+
+def offering_key(
+    symbol: str, form: str | None, filed_at: str | None, parsed: str | dict[str, Any] | None
+) -> tuple[str, str, int] | None:
+    """(symbol, filing date, parsed offering size) for a primary 424B, or None when it isn't one
+    or the size wasn't parsed. Two filings with the same key are one offering filed twice."""
+    if form not in PRIMARY_PROSPECTUS_FORMS or not filed_at:
+        return None
+    shares = offering_shares(parsed)
+    return None if shares is None else (symbol, filed_at, shares)

@@ -17,6 +17,11 @@
 - Red flags stay inputs, not gates. Optional `add_max_red_flags` (default null). The strong-candidate notification needs 0 flags.
 - $0 LLM; about 2–6 SEC requests per candidate.
 
+**Aligned with the fixes merged after this PR was opened** (review by the product-manager session, 2026-11-01):
+- **#51:** repeated issuance counts one offering filed as two 424Bs once (`offering_key`, a shared `financings_for`). That needs the 424B cover documents (up to 6 per candidate), so the SEC request estimate is now 2–12 per candidate.
+- **#49:** the 8-K 2.01 acquisitions count skips the company's own de-SPAC or separation closing (Item 5.06, or filed on or before the first trading session). This matters for recent listings and spin-offs such as HONA.
+- **#50:** red flags come only from EDGAR-dated data. Retrieval-dated research events can't create, clear or date a flag (`dated_event`).
+
 **Open questions:**
 - Should `add_max_red_flags` default to a number (e.g. 1) instead of null?
 - The exact `ifrs-full` element names, and whether companyfacts ever includes 6-K inline XBRL, are to be verified at implementation.
@@ -24,6 +29,60 @@
 **Owner checklist:**
 - [ ] Review §6.7.4.
 - [ ] Decide `add_max_red_flags`.
+
+## Fix: two false removals in the 2026-11-01 universe review (#49, #50) (2026-11-01)
+
+The review proposed removing INFQ and QNT. The owner decided not to act on either. Both proposals came from code-found removal triggers that shouldn't have fired.
+
+### Built
+- **#49 (INFQ, de-SPAC):** the "acquired" trigger (8-K Items 2.01 + 5.01, `universe/triggers.py`) fired on Infleqtion's own business-combination closing 8-K (`0001193125-26-053097`). An 8-K is now skipped when it also reports **Item 5.06** (change in shell company status, filed only when a shell stops being one), or when it was filed on or before the stock's first stored trading session. A later acquisition 8-K still triggers. The overlay already treated de-SPAC 5.01 as alert-only, so it needed no change.
+- **#50 (QNT, undated research result):** QNT's June 2026 IPO 424B4, found by a research sweep with no `page_age`, was dated by its retrieval time and became a "new" RISK dilution event. Two fixes:
+  - **Dating:** an undated sec.gov result whose accession is in `filings` takes its EDGAR filing date (`raw.date_source = "edgar"`), and the normal window check then applies, so the June prospectus is dropped from an October sweep. This applies to sweeps, verification runs and the backfill.
+  - **Gate:** a retrieval-dated event (`raw.date_source = "retrieved"`) is still shown, but never drives a decision. One predicate, `db/event_filters.py::dated_event`, excludes it from removal triggers (§6.7.2), escalation candidates, off-cycle review alerts and the Holdings off-cycle list. The overlay's hard rules read EDGAR `filings`, so they're unaffected.
+
+### Decisions
+- **Undated results are still kept**, as before: an existing test pins this, and the review shows them as "retrieved" evidence. The fix stops them from triggering decisions instead of dropping them.
+- **An undated SEC URL whose accession isn't in `filings`** (e.g. a non-watchlist issuer) stays retrieval-dated, so the gate applies. There's no network lookup at parse time.
+- **Item 5.06 is the primary de-SPAC signal**, and the first-session rule is the backstop the issue suggested.
+
+### Open questions
+- **Existing retrieval-dated events** (for example the QNT one dated 2026-10-05, and those found on 2026-10-07) still inflate display-only counts: `risk_load`, "RISK filings, last 30 days" and the Feed. That lasts until they age out of those windows. The decision paths ignore them from this deploy on.
+
+### Owner checklist
+- Deploy. The 12-01 review shouldn't propose INFQ or QNT on these triggers.
+- `overlay.cleared_accessions` was never needed for these; the trigger honours it anyway.
+
+### How to verify
+- `make test` (882 passed), `make lint` and `make secrets-scan` are clean.
+- **#49:** a synthetic de-SPAC super 8-K (with 5.06), a 2.01 + 5.01 filed before trading starts, and 5.06 with no stored prices give no trigger. A later 2.01 + 5.01 gives one. With the fix disabled, the test fails.
+- **#50:**
+  - An undated sec.gov result in the window is dated from EDGAR, an old one is dropped, and an unknown accession or non-SEC host stays "retrieved".
+  - A retrieval-dated RISK event isn't a removal trigger, escalation candidate or off-cycle review, while the dated twin still is.
+  - Events without a `date_source` (EDGAR, RSS, manual) count as before.
+  - With either fix disabled, its tests fail.
+
+## Fix: one offering filed as two 424Bs counts once (#51) (2026-11-01)
+
+### Built
+- **Ingest:** when a primary 424B (424B1/2/4/5) has the same issuer, filing date and parsed offering size as another 424B that already has an event, it's recorded as a second SEC source on that event (`event_sources`), not as a new event. One dilution event then lists both accessions, and the review, alerts and escalation see one financing.
+- **Thesis:** `financings_for` (the "repeated issuance" red flag, §6.10) counts such a pair once and lists the extra accession under `also`. It reads `filings` directly, so it's also right for duplicates stored before this fix.
+- **Lockfile:** no change in the end. This branch made the same certifi / opentelemetry-api / pyasn1 bump as #52 on `main`, so after merging `main` the lockfile matches it.
+
+- **Universe review (read-side follow-up):** `slots.qualifying_triggers` collapses a same-day, same-size 424B pair into one removal trigger that names the other event ("same offering also filed as event #N"). This covers events stored before the ingest merge, including the live IONQ pair if it falls in a review window, and pairs left split because a document arrived late. Nothing is rewritten. One helper, `edgar.text.offering_key`, defines "same offering" for the ingest, the thesis count and the review.
+
+### Decisions
+- **Merge only when the sizes agree:** if either cover's size couldn't be parsed, the filings stay separate, so different offerings are never merged on a guess.
+- **Existing duplicates aren't rewritten:** the IONQ pair (#1141, #1142) stays as two events. Alerts and escalations reference events without cascade, and conclusions and reviews cite event ids, so deleting one would break those references. The thesis count is already correct for them.
+- **No independent-source bump:** both sources are the same issuer on sec.gov, so `independent_source_count` isn't incremented.
+
+### Open questions
+- **Deferred documents:** a merge needs both documents parsed. If the first filing's document fetch fails, or the second is classified before its document arrives (the 400-document per-run cap), the pair stays as two events. The thesis count and the review's removal triggers still count it once, once both documents are parsed.
+
+### How to verify
+- `make test` (876 passed), `make lint` and `make secrets-scan` are clean.
+- **New tests:** a fake SEC client and synthetic ACME filings cover same-day same-size (one event, two sources, idempotent re-run); different size, different day or unparsed size (two events); and the thesis count for 424B5+424B5, 424B5+424B2, different size, different day and unparsed.
+- **Review trigger test:** a same-size pair, a different size, an unparsed size and a later 424B2 give 4 triggers, with the pair merged; with the read-side merge disabled, it gets 5.
+- With the fix disabled, the three merge cases fail.
 
 ## Config change: 12-name cap and supplier-gap review priorities (2026-11-01, owner-approved)
 

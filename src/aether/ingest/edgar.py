@@ -43,6 +43,7 @@ from aether.edgar import xbrl
 from aether.edgar.form4 import Form4Error, InsiderTxn, parse_form4
 from aether.edgar.submissions import FilingMeta, iter_filings, older_pages
 from aether.edgar.text import (
+    PRIMARY_PROSPECTUS_FORMS,
     extract_atm,
     extract_delisted_class,
     extract_going_concern,
@@ -50,6 +51,7 @@ from aether.edgar.text import (
     extract_lockup,
     extract_offering,
     html_to_text,
+    offering_shares,
 )
 from aether.providers.edgar import EdgarClient
 from aether.providers.prices import ProviderError
@@ -65,6 +67,10 @@ LOCKUP_FORMS = frozenset({"424B4", "424B1"})
 ATM_FORMS = frozenset({"424B5", "424B2"})
 # M13: primary prospectuses whose cover size feeds the 10%-of-FD-shares dilution escalation.
 OFFERING_FORMS = LOCKUP_FORMS | ATM_FORMS
+# Primary prospectus supplements (rubric `edgar_primary_prospectus`, thesis financings). Issue
+# #51: an issuer can file one offering twice on the same day (e.g. under two registration
+# statements); the second becomes another source on the first one's event, not a new event.
+FINANCING_424B = PRIMARY_PROSPECTUS_FORMS
 PERIODIC_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
 SHELF_FORMS = frozenset({"S-3", "S-3ASR", "F-3", "F-3ASR"})
 # M5 overlay: removal/deregistration notices (which security class?) and 8-K Item 3.01 bodies
@@ -385,6 +391,50 @@ def write_event(conn: Connection, symbol: str, f: FilingMeta, hit: RuleHit, now:
     return event_id
 
 
+def _has_own_event(conn: Connection, f: FilingMeta) -> bool:
+    h = url_hash(f.url)
+    return conn.execute(select(events.c.id).where(events.c.url_hash == h)).first() is not None
+
+
+def same_offering_event(conn: Connection, symbol: str, f: FilingMeta, shares: int) -> int | None:
+    """The EDGAR event of another 424B the issuer filed the same day for the same parsed offering
+    size, if one exists. Unparsed sizes never match: a merge needs the size to agree."""
+    rows = conn.execute(
+        select(events.c.id, filings.c.parsed)
+        .select_from(events.join(filings, events.c.accession == filings.c.accession))
+        .where(
+            filings.c.symbol == symbol,
+            filings.c.filed_at == f.filed_at,
+            filings.c.form.in_(sorted(FINANCING_424B)),
+            filings.c.accession != f.accession,
+            events.c.origin == "edgar",
+        )
+        .order_by(events.c.id)
+    )
+    return next((eid for eid, parsed in rows if offering_shares(parsed) == shares), None)
+
+
+def add_filing_source(conn: Connection, event_id: int, f: FilingMeta, now: str) -> None:
+    """Record filing `f` as another SEC source of `event_id` (same issuer, not independent)."""
+    upsert(
+        conn,
+        event_sources,
+        [
+            {
+                "event_id": event_id,
+                "url": f.url,
+                "domain": SEC_DOMAIN,
+                "trust_tier": "T1",
+                "title": f"{f.form} {f.accession}",
+                "published_at": f.accepted_at or f"{f.filed_at}T00:00:00Z",
+                "origin": "edgar",
+                "added_at": now,
+            }
+        ],
+        key_cols=["event_id", "url"],
+    )
+
+
 # --------------------------------------------------------------------------- job
 
 
@@ -506,9 +556,17 @@ def ingest_edgar(
                     going_concern_excerpt=p.going_concern_excerpt if p else None,
                     lockup_excerpt=p.lockup_excerpt if p else None,
                 )
-                if hit is not None:
-                    write_event(conn, sym, f, hit, now)
-                    written += 1
+                if hit is None:
+                    continue
+                shares = offering_shares(p.summary) if p and f.form in FINANCING_424B else None
+                if shares is not None and not _has_own_event(conn, f):
+                    dup = same_offering_event(conn, sym, f, shares)
+                    if dup is not None:
+                        add_filing_source(conn, dup, f, now)
+                        written += 1
+                        continue
+                write_event(conn, sym, f, hit, now)
+                written += 1
         for sym, (facts, instruments) in xbrl_data.items():
             written += upsert(
                 conn,

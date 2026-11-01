@@ -51,6 +51,8 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
 | Filings since 2025-01-01 for the five pure-plays (QTUM is an ETF, so it has none) | SEC `submissions` API (CIKs in `config/watchlist.yaml`) | Every 30 min 21:00–05:00 SGT on US weekdays, 09:00 and 17:00 SGT every day, a startup run if stale, and **Refresh SEC filings** on the Overview |
 | Form 4 insider transactions (code, shares, price, 10b5-1 flag) | Raw ownership XML of each Form 4 | With the filings |
 | Lock-ups (final prospectus 424B4/424B1), ATM programs (424B5/424B2), going-concern language (10-K/10-Q) | Primary-document text, deterministic regex extractors; each stores a ≤600-char excerpt | When a new filing of that form lands |
+
+One offering filed as two primary 424Bs (424B1/2/4/5) on the same day with the same parsed offering size (for example under two registration statements) is **one** dilution event with both filings as sources, and one financing in the thesis "repeated issuance" count. If either size couldn't be parsed, they stay separate. The universe review's removal triggers apply the same rule on read, so pairs stored as two events (before the ingest merge, or when a document arrived late) are cited as one trigger naming both events (issue #51).
 | Fundamentals and XBRL-tagged warrants/convertibles | SEC XBRL `companyfacts` | When a new 10-K/10-Q lands (or no fundamentals yet) |
 | Earnings dates | Past: 8-K Item 2.02 filing dates. Upcoming: yfinance calendar | Daily 07:15 SGT |
 
@@ -173,7 +175,7 @@ How feeds are fetched:
 **Research runs (`research/`, `RESEARCH_MODEL`, default `claude-opus-5-5`).** Claude with the web-search tool, limited to the T1+T2 domains in `sources.yaml`, looks for reports about one name in a date window.
 - **Identifiers only:** the prompt carries the ticker, company name and dates, nothing else.
 - **No fabricated items:** events come only from the search engine's result blocks (URL and title), with the excerpt taken from a verbatim citation. The model's own text is kept for audit only and never becomes an item.
-- **Dates:** from the result's `page_age`. Items without a date are marked "found" and dated when Aether found them.
+- **Dates:** from the result's `page_age`. An undated SEC document already in `filings` takes its EDGAR filing date, and must fall inside the search window like any dated item, so an old prospectus is dropped. Other undated items are marked "found" and dated when Aether found them. They're shown, but they never drive a decision: no universe-review removal trigger, escalation or off-cycle review (issue #50).
 - **Sweep (M15):** weekly, Sunday 07:00 SGT, for QTUM, the pure-plays and the adjacent names, last 7 days, ≤3 searches each. A worker restart runs a catch-up sweep only if the last one is more than 8 days old, and `/news` shows a stale banner after 8 days. Roughly $0.2 per name per sweep with Opus, about $0.25/day averaged. There's also **Run research sweep now** on `/news`. Sunday order: sweep 07:00 → classification → calibration 08:00 → conclusions 08:30, which wait up to 60 minutes for the sweep's items to be classified.
 - **Backfill:** **runs once, automatically**, a couple of minutes after the worker first starts with `ANTHROPIC_API_KEY` set. It's one Message Batch: 6 names × 12 monthly windows, ≤5 searches each.
   - Estimated **$10–15 one-time** with Opus (tokens at the 50% batch price, searches at $10/1,000).
@@ -313,6 +315,8 @@ Research items dated only by retrieval time or a date-only `page_age` are flagge
 **Cost:** each run has its own cap, `UNIVERSE_REVIEW_BUDGET_USD` (default $10), **outside** the daily soft budget so it can't starve classification. Hitting the cap fails the run and sends nothing.
 
 ## Adjacent industries, slot rules & full re-evaluation (M14)
+
+**Removal triggers and de-SPACs (issue #49).** The universe review's "acquired" trigger (an 8-K reporting Items 2.01 and 5.01) ignores a company's own business-combination closing: an 8-K that also reports Item 5.06 (change in shell company status), or one filed on or before the stock's first stored trading session. A later acquisition 8-K still triggers.
 
 **Adjacent names** (`type: adjacent` in `watchlist.yaml`, each with a `sector`): KEYS (test & measurement), FEIM (sensing & timing) and PANW (PQC & cybersecurity). They get the whole per-name pipeline (prices, dividends, EDGAR, news and research sweeps, classification, scorecards, conclusions, options, holdings, Tiger sync, the strategy sleeve and the overlay). Their event reactions and track record use **QQQ**, and they stay **out of the pure-play basket** of the theme decomposition. Each has a fact in `facts.yaml` citing its own 10-K.
 

@@ -404,3 +404,42 @@ def test_backfill_switch_off(engine: Engine, migrated_db: Path) -> None:
     sched = build_scheduler(engine, settings)
     sched.get_job("research_backfill_submit").func()
     assert api.requests == [] and _runs(engine) == []
+
+
+# --------------------------------------------------------------------------- issue #50
+
+SEC = "https://www.sec.gov/Archives/edgar/data/9999999"  # synthetic CIK and accessions
+
+
+def test_undated_sec_result_takes_its_edgar_filing_date() -> None:
+    from aether.research.runner import sec_accession
+
+    filed = {"0009999999-26-000001": "2026-10-03", "0009999999-26-000002": "2026-06-10"}
+    msg = research_message(
+        [
+            # In the window by its EDGAR date: kept, dated from EDGAR.
+            search_result(f"{SEC}/000999999926000001/acme-424b5.htm", "ACME 424B5"),
+            # An old prospectus (the QNT case): its EDGAR date is outside the window, dropped.
+            search_result(f"{SEC}/0009999999-26-000002-index.htm", "ACME 424B4 FY2026"),
+            # Not in `filings`: no EDGAR date to use, so it stays retrieval-dated.
+            search_result(f"{SEC}/000999999926000077/x.htm", "ACME unknown filing"),
+            # Not an SEC host: never read as an accession.
+            search_result("https://example.test/0009999999-26-000001.htm", "ACME mirror"),
+        ]
+    )
+    items, seen = extract_items(
+        msg, "IONQ", date(2026, 10, 1), date(2026, 10, 5), NOW, run_id=1, kind="sweep", filed=filed
+    )
+    assert seen == 4
+    by_title = {i.title: i for i in items}
+    assert set(by_title) == {"ACME 424B5", "ACME unknown filing", "ACME mirror"}
+    assert by_title["ACME 424B5"].published_at == datetime(2026, 10, 3, 12, tzinfo=UTC)
+    assert by_title["ACME 424B5"].raw["date_source"] == "edgar"
+    for t in ("ACME unknown filing", "ACME mirror"):
+        assert by_title[t].raw["date_source"] == "retrieved" and by_title[t].published_at == NOW
+
+    assert sec_accession(f"{SEC}/000999999926000001/acme.htm") == "0009999999-26-000001"
+    assert sec_accession(f"{SEC}/0009999999-26-000002-index.htm") == "0009999999-26-000002"
+    assert sec_accession(f"{SEC}/000999999926000003.txt") == "0009999999-26-000003"
+    assert sec_accession("https://sec.gov/cgi-bin/browse-edgar?action=getcompany") is None
+    assert sec_accession("https://example.test/0009999999-26-000001.htm") is None

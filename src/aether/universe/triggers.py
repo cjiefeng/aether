@@ -7,7 +7,10 @@ acquired, 8-K Items 2.01 / 3.01, or a closed merger). Read-only, deterministic.
 - an 8-K reporting **both** Item 2.01 (completion of an acquisition or disposition) **and** Item
   5.01 (change in control of the registrant) within the lookback: the registrant itself was
   acquired. Item 2.01 alone isn't used: an acquirer files it too (IonQ's own 8-K closing the
-  SkyWater acquisition would read as IonQ being acquired).
+  SkyWater acquisition would read as IonQ being acquired). Not when the 8-K is the company's own
+  business-combination closing (issue #49: INFQ's de-SPAC 8-K carries 2.01 + 5.01): it also
+  reports Item 5.06 (change in shell company status, filed only when a shell stops being one), or
+  it was filed on or before the stock's first stored trading session.
 
 Quarantined filing events and owner-cleared accessions are ignored, as in the overlay.
 """
@@ -18,14 +21,22 @@ import json
 from collections.abc import Sequence
 from datetime import date, timedelta
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 
 from aether.config import OverlayParams
-from aether.db.models import filings
+from aether.db.models import filings, prices_daily
 from aether.portfolio.overlay import EIGHT_K, _event_for, layer1_findings
 
 STRUCTURAL_RULES = ("acquired_or_delisted", "compliance_notice")
 CHANGE_OF_CONTROL_DAYS = 400
+SHELL_STATUS_ITEM = "5.06"  # change in shell company status: a de-SPAC / shell closing (#49)
+
+
+def own_combination_closing(items: set[str], filed_at: str, first_session: str | None) -> bool:
+    """An 8-K 2.01 + 5.01 that records the filer's own business combination closing (a de-SPAC),
+    not the filer being acquired: Item 5.06 is reported too, or it was filed on or before the
+    stock's first stored session (the listed company didn't trade yet)."""
+    return SHELL_STATUS_ITEM in items or (first_session is not None and filed_at <= first_session)
 
 
 def structural_triggers(
@@ -45,6 +56,13 @@ def structural_triggers(
                 out[f.symbol].append(f"{label}: {f.form} {f.accession} filed {f.filed_at}")
         since = (as_of - timedelta(days=CHANGE_OF_CONTROL_DAYS)).isoformat()
         cleared = set(params.cleared_accessions)
+        first_session = dict(
+            conn.execute(
+                select(prices_daily.c.symbol, func.min(prices_daily.c.d))
+                .where(prices_daily.c.symbol.in_(list(symbols)))
+                .group_by(prices_daily.c.symbol)
+            ).all()
+        )
         for r in conn.execute(
             select(
                 filings.c.symbol,
@@ -63,6 +81,8 @@ def structural_triggers(
         ):
             items = set(json.loads(r._mapping["items"]) or [])
             if not {"2.01", "5.01"} <= items or r.accession in cleared:
+                continue
+            if own_combination_closing(items, r.filed_at, first_session.get(r.symbol)):
                 continue
             usable, _eid = _event_for(conn, r.accession)
             if usable:
