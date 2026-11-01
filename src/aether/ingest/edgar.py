@@ -43,6 +43,7 @@ from aether.edgar import xbrl
 from aether.edgar.form4 import Form4Error, InsiderTxn, parse_form4
 from aether.edgar.submissions import FilingMeta, iter_filings, older_pages
 from aether.edgar.text import (
+    PRIMARY_PROSPECTUS_FORMS,
     extract_atm,
     extract_delisted_class,
     extract_going_concern,
@@ -69,7 +70,7 @@ OFFERING_FORMS = LOCKUP_FORMS | ATM_FORMS
 # Primary prospectus supplements (rubric `edgar_primary_prospectus`, thesis financings). Issue
 # #51: an issuer can file one offering twice on the same day (e.g. under two registration
 # statements); the second becomes another source on the first one's event, not a new event.
-FINANCING_424B = frozenset({"424B1", "424B2", "424B4", "424B5"})
+FINANCING_424B = PRIMARY_PROSPECTUS_FORMS
 PERIODIC_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
 SHELF_FORMS = frozenset({"S-3", "S-3ASR", "F-3", "F-3ASR"})
 # M5 overlay: removal/deregistration notices (which security class?) and 8-K Item 3.01 bodies
