@@ -272,13 +272,13 @@ def test_thesis_report_is_read_only(rw_engine: Engine, migrated_db: Path) -> Non
     finally:
         ro.dispose()
     assert _counts(rw_engine) == before
-    assert rep["cap"] == {"used": 2, "max": 9}
+    assert rep["cap"] == {"used": 2, "max": 12}
     assert rep["hyperscaler"]["flag"] is True  # 11%
     assert "few_modalities" in {f["flag"] for f in rep["targets"]["medium"]["flags"]}
     assert set(rep["per_name"]) == {"ACMA", "ADJA"}
     assert rep["per_name"]["ADJA"]["winner"] is None
     lines = thesis.summary_lines(rep, "medium")
-    assert lines[0] == "Names: 2 of 9 used (QTUM excluded)."
+    assert lines[0] == "Names: 2 of 12 used (QTUM excluded)."
     assert any(line.startswith("QTUM hyperscaler weight 11.0%") for line in lines)
     # Nothing in the module issues SQL writes.
     src = Path(thesis.__file__).read_text(encoding="utf-8")

@@ -55,7 +55,7 @@ The build comes in five phases, so it's useful early. Each phase ends in somethi
 
 **Adjacent tickers (M14, §6.7.1)** are companies in industries around quantum computing (PQC, cryogenics, photonics, test & measurement, sensing & timing, quantum networking, end users, specialty materials) with documented quantum-related products or contracts. Each has a `sector` identifier from a fixed list. They get the full pure-play pipeline (prices, EDGAR, news, classification, scorecard, conclusions) and are holdable, but they stay **out of the pure-play basket** used by the theme decomposition (§6.1). The initial three (CIKs verified 2026-10-07 against SEC's `company_tickers_exchange.json`): KEYS `0001601046` (NYSE), FEIM `0000039020` (Nasdaq), PANW `0001327567` (Nasdaq).
 
-**Name cap:** at most **9 active `pure_play` + `adjacent` names** (QTUM excluded), `max_names_ex_qtum` in `config/universe.yaml`. The watchlist loader refuses a config over the cap. With 5 pure-plays and 3 adjacent names, 1 slot is free.
+**Name cap:** at most **12 active `pure_play` + `adjacent` names** (QTUM excluded; raised from 9 by the owner on 2026-11-01), `max_names_ex_qtum` in `config/universe.yaml`. The watchlist loader refuses a config over the cap. With 5 pure-plays and 3 adjacent names, 4 slots are free.
 
 **Monthly universe review (M12, §6.7; adjacent track M14, §6.7.1).** On the 1st of each month Aether proposes pure-plays and adjacent-industry names to add or remove, with sources. It **never edits the watchlist itself**: the owner applies a proposal by editing `watchlist.yaml` through a PR.
 
@@ -74,7 +74,7 @@ Holdings are used for drift vs target, the rebalance plan (§6.6) and "you're 2�
 The portfolio features serve one **family-fund sleeve**. These are owner parameters for the engineering, not opinions, and they never go into LLM prompts.
 
 - **Size:** 10–15% of the owner's total portfolio. The owner manages the rest outside Aether, so the sleeve holds **no cash or T-bill position** and stays fully invested in QTUM plus the pure-plays (and, from M14, the adjacent names).
-- **Concentration:** at most **9 names besides QTUM** (pure-plays + adjacent, amended 2026-10-08). The monthly review respects the cap (§6.7.2): it may propose removing **any** of the 9 on serious bad news, and when all 9 slots are full it never proposes an add, but sends a separate **strong-candidate** notification for an exceptional name, so the owner decides. Risk appetite is expressed through the size of the QTUM core (§6.5).
+- **Concentration:** at most **12 names besides QTUM** (pure-plays + adjacent; 9 from 2026-10-08, 12 from 2026-11-01). The monthly review respects the cap (§6.7.2): it may propose removing **any** of the 12 on serious bad news, and when all 12 slots are full it never proposes an add, but sends a separate **strong-candidate** notification for an exceptional name, so the owner decides. Risk appetite is expressed through the size of the QTUM core (§6.5).
 - **Investment thesis:** the owner's **Quantum Thesis** lives in `STRATEGY.md`: conviction in the technology, not one company; diversify across modalities; include picks-and-shovels suppliers; modest positions built stepwise; red flags. Aether applies it **only as deterministic checks** (§6.10, M14). The thesis text never goes into prompts or config.
 - **Market:** US-listed stocks only. Listed companies only; no private or pre-IPO holdings.
 - **Base currency:** SGD. Holdings, trades and targets are in USD; the dashboard also shows value and performance in SGD (reporting only, §6.6).
@@ -710,7 +710,7 @@ The same monthly run gets a second track that screens the **industries around qu
 
 ### 6.7.2 Slot rules: removals and the strong-candidate notification (M14; both tracks)
 
-The 9-name cap (§1.4) covers pure-plays and adjacent names together. These rules apply to both review tracks (§6.7, §6.7.1).
+The 12-name cap (§1.4) covers pure-plays and adjacent names together. These rules apply to both review tracks (§6.7, §6.7.1).
 
 **Removals: any of the 9, on serious bad news.** Besides each track's structural removal triggers, the review may propose `remove` for **any** active name when there's serious negative news. It doesn't need a replacement to do so. Code requires at least one of these since the previous review, cited in the proposal:
 
@@ -720,7 +720,7 @@ The 9-name cap (§1.4) covers pure-plays and adjacent names together. These rule
 
 A `remove` without a qualifying trigger is downgraded to a `watch` note ("concerns, no qualifying event"). Removal is still only a proposal: the owner decides, and the watchlist changes by PR.
 
-**Adds when all 9 slots are full: notify, don't propose.** If no slot is free after the month's removals, a candidate that passes every add criterion is shown as `watch`. It's escalated as a **strong candidate** (#10) only if code confirms all of:
+**Adds when all 12 slots are full: notify, don't propose.** If no slot is free after the month's removals, a candidate that passes every add criterion is shown as `watch`. It's escalated as a **strong candidate** (#13) only if code confirms all of:
 
 - exposure `high` (code-validated: a T1 excerpt shows a quantum-related principal product line);
 - at least **2 independent** qualifying evidence items in the last 12 months, at least **1 of them T1**;
@@ -740,7 +740,7 @@ The monthly review protects current names: a removal needs serious, cited bad ne
   - the add eligibility of §6.7 / §6.7.1
   - the hard exclusions (hyperscalers, semiconductors, private, non-US)
   - market cap as one input, with its bucket
-  - the 9-name cap
+  - the 12-name cap
   - the §6.10 thesis checks: modality and supplier coverage, concentration flags, red flags, winner signals
   - QTUM overlap
 - **Ranking inputs** (all shown): exposure, evidence strength, red flags, `fills_gap`, market cap and its bucket, overlap. The proposed set is checked in code against the concentration flags (a set that breaks one is marked, with the reason). It need not fill all 9 slots.
@@ -782,7 +782,7 @@ On the 1st of each month at 10:30 SGT (after the universe review, §6.7), Aether
 - **M10:** stances with track record, and the overlay's value-added line (§6.6.1, layer 3).
 - **M12:** the universe review's proposals.
 - **M16:** each profile's "QTUM / pure-play / adjacent %" split and the pure-play-share flag.
-- **M14:** the adjacent-industry proposals, the name-cap status (N of 9 used), and the **thesis check** (§6.10): weights by modality and supplier sector, concentration flags, red flags per holding, gaps, and winner signals.
+- **M14:** the adjacent-industry proposals, the name-cap status (N of 12 used), and the **thesis check** (§6.10): weights by modality and supplier sector, concentration flags, red flags per holding, gaps, and winner signals.
 
 **Delivery:** the dashboard **Review** page (full pack, archive) and a Telegram message (S7; plain text, no link previews, ≤4096 chars, overflow says "more on /review"). Holdings never leave the machine (§1.3), so the Telegram text carries target weights, flags, dates and the number of suggested trades only: no share counts, dollar values or account number. It's sent once per month (dedupe key); a failed publish is retried once the next day.
 

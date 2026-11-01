@@ -54,8 +54,8 @@ stale_running_hours: 3
 
 # ---- M14 (spec §1.2, §6.7.1-§6.7.3)
 # At most this many active pure_play + adjacent names besides QTUM (the watchlist loader refuses
-# more; the review never proposes an add without a free slot).
-max_names_ex_qtum: 9
+# more; the review never proposes an add without a free slot). Raised from 9 to 12 (owner, 2026-11-01).
+max_names_ex_qtum: 12
 
 # Market-cap buckets: one input, never decisive. small (< $2B) is flagged for volatility,
 # liquidity and dilution risk; large (> $50B) for diluted quantum exposure.
@@ -86,11 +86,13 @@ full_review_cooldown_days: 7
 # cloud platforms, SIC 3674 (semiconductors), pure-plays and names already active.
 adjacent:
   sectors:
-    pqc_cyber:          {priority: 1, seeds: [NET, PANW, FTNT, ZS]}
+    # Priorities (owner, 2026-11-01): the uncovered supplier gaps (photonics/lasers, cryogenics)
+    # go first; pqc_cyber is covered by PANW, so it moves to 2.
+    pqc_cyber:          {priority: 2, seeds: [NET, PANW, FTNT, ZS]}
     sensing_timing:     {priority: 1, seeds: [FEIM, LMT, NOC, RTX, HON, HONA]}
     test_measurement:   {priority: 2, seeds: [KEYS, EMR]}
-    photonics_lasers:   {priority: 2, seeds: [COHR, LITE, IPGP, MKSI, LASR]}
-    cryogenics_gases:   {priority: 2, seeds: [LIN, BKR]}
+    photonics_lasers:   {priority: 1, seeds: [COHR, LITE, IPGP, MKSI, LASR]}
+    cryogenics_gases:   {priority: 1, seeds: [LIN, BKR]}
     telecom_networking: {priority: 2, seeds: [SKM]}
     specialty_materials: {priority: 3, seeds: []}
     end_user:           {priority: 3, seeds: [JPM, HSBC]}

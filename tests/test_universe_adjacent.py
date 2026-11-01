@@ -1007,7 +1007,7 @@ def test_scheduled_monthly_review_gets_the_m14_rules(
     jobs.universe_review_job(rw_engine, settings, object(), lambda _c: None)  # type: ignore[arg-type]
     deps: UniverseDeps = seen["deps"]
     assert seen["kind"] == "monthly"
-    assert deps.cfg.max_names_ex_qtum == 9 and deps.cfg.adjacent is not None
+    assert deps.cfg.max_names_ex_qtum == 12 and deps.cfg.adjacent is not None
     assert deps.cfg.adjacent.excluded_symbols == ("AMZN", "MSFT", "GOOGL", "ORCL", "BABA")
     assert deps.cfg.removal.min_materiality == 4 and deps.cfg.strong_candidate.cooldown_reviews == 3
     assert deps.adjacent_budget_usd == Decimal("7.5")
