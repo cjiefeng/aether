@@ -1,5 +1,37 @@
 # Milestone report
 
+## Roadmap change: M18 candidate red-flag checks (2026-11-01, owner-approved, written by the portfolio-manager session)
+
+**Why:** the full re-evaluation and the monthly review computed the four thesis red flags (§6.10) only for **current** names. Add-qualified candidates were ranked without them, so the owner couldn't compare QUBT and XNDU on red flags before deciding on the 12-name cap's free slots. The owner asked for a manual check now (done in the portfolio-manager session) and a coded one for every future review.
+
+**What the manual check showed about the data:**
+- **US filers (QUBT):** submissions + companyfacts are enough for all four checks.
+- **Foreign private issuers (XNDU, 20-F/6-K):** companyfacts had only Q1 2026 figures (from the F-1). The Q2 2026 statements were only in a 6-K with inline XBRL. FPIs file no 8-K, so 3.02-style private placements aren't visible by item number, and 424B3 resale supplements aren't issuance.
+- **Recent listings:** share-count YoY has no valid pre-listing baseline.
+
+**M18 (spec §6.7.4, §6.10, §11):**
+- The four red flags for every add-qualified candidate (both tracks, monthly review and full re-evaluation), same `thesis.yaml` thresholds, each `flag` / `ok` / `unknown` with numbers, period, data-as-of date and accessions.
+- Stored in `universe_candidates.criteria`, shown on `/universe`, passed to the proposal, counted in the Telegram text.
+- FPI support: 6-K/20-F/F-1 inline XBRL, plus an `ifrs-full` mapping, in both the candidate checks and the EDGAR ingest for active names.
+- Rules for resale overhang (424B3), listings under a year old (`unknown`), stale data over 200 days (`unknown`), and "period, not TTM" fallbacks.
+- Red flags stay inputs, not gates. Optional `add_max_red_flags` (default null). The strong-candidate notification needs 0 flags.
+- $0 LLM; about 2–6 SEC requests per candidate.
+
+**Since this PR was opened, QUBT was added to the watchlist** (cjiefeng/aether#58). It's now a current name, so it gets the §6.10 red flags directly. The candidate examples are now XNDU (FPI) and HONA (recent separation).
+
+**Aligned with the fixes merged after this PR was opened** (review by the product-manager session, 2026-11-01):
+- **#51:** repeated issuance counts one offering filed as two 424Bs once (`offering_key`, a shared `financings_for`). That needs the 424B cover documents (up to 6 per candidate), so the SEC request estimate is now 2–12 per candidate.
+- **#49:** the 8-K 2.01 acquisitions count skips the company's own de-SPAC or separation closing (Item 5.06, or filed on or before the first trading session). This matters for recent listings and spin-offs such as HONA.
+- **#50:** red flags come only from EDGAR-dated data. Retrieval-dated research events can't create, clear or date a flag (`dated_event`).
+
+**Open questions:**
+- Should `add_max_red_flags` default to a number (e.g. 1) instead of null?
+- The exact `ifrs-full` element names, and whether companyfacts ever includes 6-K inline XBRL, are to be verified at implementation.
+
+**Owner checklist:**
+- [ ] Review §6.7.4.
+- [ ] Decide `add_max_red_flags`.
+
 ## Watchlist change: add QUBT (photonic pure-play) (2026-11-01, owner decision)
 
 **Why:** the 2026-11-01 universe review rated QUBT `add` (all four §6.7 criteria). It fills the thesis's only empty modality, photonic (§6.10 gaps). The owner chose to add it after a manual red-flag check (portfolio-manager session, figures from SEC filings):
@@ -24,6 +56,7 @@
 - [ ] Review the `qubt_modality` wording and set `status: signed_off` when you accept it (then `make facts`).
 - [ ] After merge: `./deploy.sh`, then check `/t/QUBT` (filings, scorecard), `/holdings` (target, overlay chain) and the thesis panel (photonic now covered).
 - [ ] Watch the Q3 10-Q (mid-November): does the dilution flag clear?
+
 ## Fix: two false removals in the 2026-11-01 universe review (#49, #50) (2026-11-01)
 
 The review proposed removing INFQ and QNT. The owner decided not to act on either. Both proposals came from code-found removal triggers that shouldn't have fired.
