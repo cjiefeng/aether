@@ -727,7 +727,8 @@ def test_all_slots_full_no_add_and_one_strong_candidate(
     strong = [a for a in h.sent if a.kind == "universe_strong_candidate"]
     assert len(strong) == 1
     text = strong[0].text
-    assert text.startswith("Aether · strong candidate (#10) · CLCK")
+    # cap=3 in this harness: the candidate would be name #4 (#13 with the real cap of 12).
+    assert text.startswith("Aether · strong candidate (#4) · CLCK")
     assert "Compares least favourably with: DEMO" in text
     assert "Adding needs a slot: remove a name or raise the cap. Review on /universe." in text
     assert "mid" in text and "1.50% of the fund" in text and len(text) <= 4096

@@ -426,13 +426,16 @@ def _evidence_note(items: Sequence[propose.EvidenceItem], cited: Sequence[str]) 
     return "; ".join(out[:4]) or "none cited"
 
 
-def strong_text(row: Mapping[str, Any], items: Sequence[propose.EvidenceItem], why: str) -> str:
+def strong_text(
+    row: Mapping[str, Any], items: Sequence[propose.EvidenceItem], why: str, cap: int
+) -> str:
     c = row["criteria_obj"]
     mcap = row.get("market_cap_micros")
     wc = c.get("weakest_current") or {}
     cited = [i for r in row["reasons"] for i in r["evidence_ids"]]
     lines = [
-        f"Aether · strong candidate (#10) · {row['symbol']} ({row['name']})",
+        # The name it would be beyond the cap (#13 with max_names_ex_qtum 12).
+        f"Aether · strong candidate (#{cap + 1}) · {row['symbol']} ({row['name']})",
         f"Track: {'pure-play' if row['track'] == 'pure_play' else 'adjacent'}"
         + (f" · {row['sector'].replace('_', ' ')}" if row.get("sector") else ""),
         f"What it does: {_clip(row['description'] or '', 300)}",
@@ -874,7 +877,9 @@ def run_universe_review(
                     AlertCandidate(
                         kind="universe_strong_candidate",
                         dedupe_key=f"universe_strong_candidate:{rid}:{r['symbol']}",
-                        text=strong_text(r, evidence.get(r["symbol"], []), why),
+                        text=strong_text(
+                            r, evidence.get(r["symbol"], []), why, deps.cfg.max_names_ex_qtum
+                        ),
                         payload={"review_id": rid, "symbol": r["symbol"]},
                     )
                 )
