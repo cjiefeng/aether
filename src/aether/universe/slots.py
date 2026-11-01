@@ -11,6 +11,10 @@ the previous review:
 Each trigger gets a citable ref `X<n>`; without one, a `remove` becomes `watch` ("concerns, no
 qualifying event").
 
+One offering filed as two same-day primary 424Bs with the same parsed size (issue #51) is one
+trigger: the first event's, naming the other event(s). Events stored before the ingest merge are
+collapsed here, on read, without rewriting them.
+
 **Adds when the slots are full: notify, don't propose.** Free slots = cap - active names + this
 review's removals. Adds beyond the free slots become `watch`. A candidate that passed every add
 criterion is a **strong candidate** (#10) only when code confirms: exposure `high` (code-validated),
@@ -36,7 +40,9 @@ from aether.db.models import (
     event_sources,
     event_tickers,
     events,
+    filings,
 )
+from aether.edgar.text import offering_key
 from aether.portfolio.overlay import layer1_findings
 
 EXPOSURE_RANK = {"high": 0, "med": 1, "low": 2, None: 3}
@@ -79,9 +85,13 @@ def qualifying_triggers(
                 event_tickers.c.symbol,
                 event_classifications.c.category,
                 event_classifications.c.materiality,
+                filings.c.form,
+                filings.c.filed_at,
+                filings.c.parsed,
             )
             .join(event_tickers, event_tickers.c.event_id == events.c.id)
             .join(event_classifications, event_classifications.c.event_id == events.c.id)
+            .outerjoin(filings, filings.c.accession == events.c.accession)
             .where(
                 event_tickers.c.symbol.in_(list(symbols)),
                 event_classifications.c["class"] == "RISK",
@@ -93,7 +103,14 @@ def qualifying_triggers(
             )
             .order_by(events.c.published_at, events.c.id)
         ).all()
+        offering_at: dict[tuple[str, str, int], int] = {}  # same offering -> index in `raw`
         for r in rows:
+            key = offering_key(r.symbol, r.form, r.filed_at, r.parsed)
+            if key is not None and key in offering_at:
+                i = offering_at[key]
+                sym, kind, text = raw[i]
+                raw[i] = (sym, kind, f"{text} (same offering also filed as event #{r.id})")
+                continue
             srcs = conn.execute(
                 select(event_sources.c.domain, event_sources.c.trust_tier).where(
                     event_sources.c.event_id == r.id, event_sources.c.syndicated == 0
@@ -106,6 +123,8 @@ def qualifying_triggers(
             if not t1 and len(t2) < rule.min_independent_t2:
                 continue
             backing = "T1 source" if t1 else f"{len(t2)} independent T2 sources"
+            if key is not None:
+                offering_at[key] = len(raw)
             raw.append(
                 (
                     r.symbol,
