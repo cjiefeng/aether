@@ -133,6 +133,14 @@ facts:
     status: verified_by_claude
     notes: "Business section and glossary ('neutral atoms' modality; Sqale neutral-atom computer)."
 
+  - id: qubt_modality
+    claim: "Quantum Computing Inc.'s FY2025 10-K (filed 2026-03-02) says it utilizes integrated photonics and non-linear quantum optics to develop and deliver machines for quantum computing, machine learning, remote sensing, imaging and cybersecurity applications (modality: photonic)"
+    sources:
+      - https://www.sec.gov/Archives/edgar/data/1758009/000121390026022417/ea0278445-10k_quantum.htm
+    retrieved_at: "2026-11-01"
+    status: verified_by_claude
+    notes: "Item 1, Business, 'Our Business': 'utilizing integrated photonics and non-linear quantum optics to develop and deliver machines for quantum computing'. The business also spans photonic chips (a TFLN foundry), sensing and cybersecurity; quantum computing is one of several applications. CIK 0001758009 per SEC submissions."
+
   - id: keys_quantum_evidence
     claim: "Keysight's FY2025 10-K (filed 2025-12-17) lists quantum communications and computing among its aerospace, defense and government customers' research applications, and quantum among the new communications technologies its Communications Solutions Group serves (sector: test_measurement)"
     sources:
