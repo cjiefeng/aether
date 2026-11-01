@@ -51,6 +51,8 @@ Open `http://<this-machine's-LAN-IP>:8080/` from a device on your LAN.
 | Filings since 2025-01-01 for the five pure-plays (QTUM is an ETF, so it has none) | SEC `submissions` API (CIKs in `config/watchlist.yaml`) | Every 30 min 21:00–05:00 SGT on US weekdays, 09:00 and 17:00 SGT every day, a startup run if stale, and **Refresh SEC filings** on the Overview |
 | Form 4 insider transactions (code, shares, price, 10b5-1 flag) | Raw ownership XML of each Form 4 | With the filings |
 | Lock-ups (final prospectus 424B4/424B1), ATM programs (424B5/424B2), going-concern language (10-K/10-Q) | Primary-document text, deterministic regex extractors; each stores a ≤600-char excerpt | When a new filing of that form lands |
+
+One offering filed as two primary 424Bs (424B1/2/4/5) on the same day with the same parsed offering size (for example under two registration statements) is **one** dilution event with both filings as sources, and one financing in the thesis "repeated issuance" count. If either size couldn't be parsed, they stay separate (issue #51).
 | Fundamentals and XBRL-tagged warrants/convertibles | SEC XBRL `companyfacts` | When a new 10-K/10-Q lands (or no fundamentals yet) |
 | Earnings dates | Past: 8-K Item 2.02 filing dates. Upcoming: yfinance calendar | Daily 07:15 SGT |
 

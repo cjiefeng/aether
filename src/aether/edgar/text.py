@@ -6,11 +6,13 @@ short excerpt (<= 600 chars, S6) so the dashboard can show the evidence next to 
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from typing import Any
 
 EXCERPT_MAX = 600
 
@@ -329,3 +331,16 @@ def extract_delisted_class(body: str) -> DelistedClass | None:
         title = " ".join(t.group(1).split()).strip(" _")
     covers = bool(_COMMON.search(_DERIVED.sub(" ", title)))
     return DelistedClass(title[:300], covers)
+
+
+def offering_shares(parsed: str | dict[str, Any] | None) -> int | None:
+    """The parsed base offering size stored in `filings.parsed` (a JSON string or the summary
+    dict); None when the document wasn't parsed or no size was found (issue #51)."""
+    body = json.loads(parsed) if isinstance(parsed, str) else parsed
+    off = body.get("offering") if isinstance(body, dict) else None
+    shares = off.get("shares") if isinstance(off, dict) else None
+    return (
+        int(shares)
+        if isinstance(shares, int) and not isinstance(shares, bool) and shares > 0
+        else None
+    )
