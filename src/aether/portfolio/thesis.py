@@ -47,7 +47,7 @@ from aether.config import (
     UniverseConfig,
 )
 from aether.db.models import catalysts, filings, prices_daily, qtum_holdings, tickers
-from aether.edgar.text import offering_shares
+from aether.edgar.text import offering_key
 from aether.score import fundamentals as fnd
 
 CORE = "QTUM"
@@ -388,7 +388,7 @@ def financings_for(
 ) -> list[dict[str, Any]]:
     since = (as_of - timedelta(days=lookback_days)).isoformat()
     out: list[dict[str, Any]] = []
-    seen: dict[tuple[str, int], dict[str, Any]] = {}
+    seen: dict[tuple[str, str, int], dict[str, Any]] = {}
     for r in conn.execute(
         select(
             filings.c.accession,
@@ -410,9 +410,8 @@ def financings_for(
             continue
         # Issue #51: one offering filed as two 424Bs the same day (same parsed size) is one
         # financing; the extra filing is listed under `also`.
-        shares = offering_shares(r.parsed) if r.form in FINANCING_FORMS else None
-        key = (str(r.filed_at), shares or 0)
-        if shares is not None and key in seen:
+        key = offering_key(symbol, r.form, r.filed_at, r.parsed)
+        if key is not None and key in seen:
             seen[key].setdefault("also", []).append(r.accession)
             continue
         item = {
@@ -421,7 +420,7 @@ def financings_for(
             "filed_at": r.filed_at,
             "url": r.url,
         }
-        if shares is not None:
+        if key is not None:
             seen[key] = item
         out.append(item)
     return out
