@@ -7,17 +7,20 @@
 - **Thesis:** `financings_for` (the "repeated issuance" red flag, §6.10) counts such a pair once and lists the extra accession under `also`. It reads `filings` directly, so it's also right for duplicates stored before this fix.
 - **Lockfile:** no change in the end. This branch made the same certifi / opentelemetry-api / pyasn1 bump as #52 on `main`, so after merging `main` the lockfile matches it.
 
+- **Universe review (read-side follow-up):** `slots.qualifying_triggers` collapses a same-day, same-size 424B pair into one removal trigger that names the other event ("same offering also filed as event #N"). This covers events stored before the ingest merge, including the live IONQ pair if it falls in a review window, and pairs left split because a document arrived late. Nothing is rewritten. One helper, `edgar.text.offering_key`, defines "same offering" for the ingest, the thesis count and the review.
+
 ### Decisions
 - **Merge only when the sizes agree:** if either cover's size couldn't be parsed, the filings stay separate, so different offerings are never merged on a guess.
 - **Existing duplicates aren't rewritten:** the IONQ pair (#1141, #1142) stays as two events. Alerts and escalations reference events without cascade, and conclusions and reviews cite event ids, so deleting one would break those references. The thesis count is already correct for them.
 - **No independent-source bump:** both sources are the same issuer on sec.gov, so `independent_source_count` isn't incremented.
 
 ### Open questions
-- **Deferred documents:** a merge needs both documents parsed. If the first filing's document fetch fails, or the second is classified before its document arrives (the 400-document per-run cap), the pair stays as two events. The thesis count still dedupes them once both are parsed.
+- **Deferred documents:** a merge needs both documents parsed. If the first filing's document fetch fails, or the second is classified before its document arrives (the 400-document per-run cap), the pair stays as two events. The thesis count and the review's removal triggers still count it once, once both documents are parsed.
 
 ### How to verify
-- `make test` (875 passed), `make lint` and `make secrets-scan` are clean.
+- `make test` (876 passed), `make lint` and `make secrets-scan` are clean.
 - **New tests:** a fake SEC client and synthetic ACME filings cover same-day same-size (one event, two sources, idempotent re-run); different size, different day or unparsed size (two events); and the thesis count for 424B5+424B5, 424B5+424B2, different size, different day and unparsed.
+- **Review trigger test:** a same-size pair, a different size, an unparsed size and a later 424B2 give 4 triggers, with the pair merged; with the read-side merge disabled, it gets 5.
 - With the fix disabled, the three merge cases fail.
 
 ## Config change: 12-name cap and supplier-gap review priorities (2026-11-01, owner-approved)
