@@ -1,5 +1,30 @@
 # Milestone report
 
+## Roadmap change: M18 candidate red-flag checks (2026-11-01, owner-approved, written by the portfolio-manager session)
+
+**Why:** the full re-evaluation and the monthly review computed the four thesis red flags (§6.10) only for **current** names. Add-qualified candidates were ranked without them, so the owner couldn't compare QUBT and XNDU on red flags before deciding on the 12-name cap's free slots. The owner asked for a manual check now (done in the portfolio-manager session) and a coded one for every future review.
+
+**What the manual check showed about the data:**
+- **US filers (QUBT):** submissions + companyfacts are enough for all four checks.
+- **Foreign private issuers (XNDU, 20-F/6-K):** companyfacts had only Q1 2026 figures (from the F-1). The Q2 2026 statements were only in a 6-K with inline XBRL. FPIs file no 8-K, so 3.02-style private placements aren't visible by item number, and 424B3 resale supplements aren't issuance.
+- **Recent listings:** share-count YoY has no valid pre-listing baseline.
+
+**M18 (spec §6.7.4, §6.10, §11):**
+- The four red flags for every add-qualified candidate (both tracks, monthly review and full re-evaluation), same `thesis.yaml` thresholds, each `flag` / `ok` / `unknown` with numbers, period, data-as-of date and accessions.
+- Stored in `universe_candidates.criteria`, shown on `/universe`, passed to the proposal, counted in the Telegram text.
+- FPI support: 6-K/20-F/F-1 inline XBRL, plus an `ifrs-full` mapping, in both the candidate checks and the EDGAR ingest for active names.
+- Rules for resale overhang (424B3), listings under a year old (`unknown`), stale data over 200 days (`unknown`), and "period, not TTM" fallbacks.
+- Red flags stay inputs, not gates. Optional `add_max_red_flags` (default null). The strong-candidate notification needs 0 flags.
+- $0 LLM; about 2–6 SEC requests per candidate.
+
+**Open questions:**
+- Should `add_max_red_flags` default to a number (e.g. 1) instead of null?
+- The exact `ifrs-full` element names, and whether companyfacts ever includes 6-K inline XBRL, are to be verified at implementation.
+
+**Owner checklist:**
+- [ ] Review §6.7.4.
+- [ ] Decide `add_max_red_flags`.
+
 ## Config change: 12-name cap and supplier-gap review priorities (2026-11-01, owner-approved)
 
 Requested by the owner after the 2026-11-01 universe review, via the portfolio-manager session. No new behaviour: the cap and the sector priorities were already config-driven.
